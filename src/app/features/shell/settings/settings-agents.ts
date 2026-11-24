@@ -1,5 +1,12 @@
 import { NgComponentOutlet } from '@angular/common';
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  effect,
+  inject,
+  signal,
+  viewChildren,
+} from '@angular/core';
 import { AgentTile } from '@ui/agent-tile';
 import { HlmButtonImports } from '@ui/button';
 import { HlmSelectImports } from '@ui/select';
@@ -24,6 +31,12 @@ const NEVER_RUN: AgentSettings = {
   models: [],
   ran: false,
 };
+
+interface InstallOfferInstance {
+  readonly installed?: {
+    subscribe: (next: () => void) => { unsubscribe: () => void };
+  };
+}
 
 /** Agents: one quiet row each; Configure opens its Model and Effort defaults in place. */
 @Component({
@@ -218,7 +231,22 @@ const NEVER_RUN: AgentSettings = {
 export class SettingsAgents {
   protected readonly store = inject(SettingsStore);
   protected readonly installOffer = inject(AGENT_INSTALL_OFFER);
+  private readonly installOutlets = viewChildren(NgComponentOutlet);
   protected readonly expanded = signal<ReadonlySet<string>>(new Set());
+
+  constructor() {
+    effect((onCleanup) => {
+      const subs = this.installOutlets().flatMap((outlet) => {
+        const instance = outlet.componentInstance as InstallOfferInstance | null | undefined;
+        return instance?.installed
+          ? [instance.installed.subscribe(() => void this.store.rescanAgents())]
+          : [];
+      });
+      onCleanup(() => {
+        for (const sub of subs) sub.unsubscribe();
+      });
+    });
+  }
 
   protected modelName(defaults: AgentSettings): string {
     return defaults.models.find((model) => model.id === defaults.model)?.name ?? defaults.model;

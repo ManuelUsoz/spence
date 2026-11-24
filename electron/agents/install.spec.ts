@@ -1,13 +1,130 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from '@effect/vitest';
-import { Effect, Layer, Stream } from 'effect';
-import { AgentId } from '../../src/shared/agents/agents.rpc';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from '@effect/vitest';
+import { Deferred, Effect, Fiber, Layer, Option, Stream } from 'effect';
+import { RpcTest } from 'effect/rpc';
+import { AgentId, AgentsRpcs } from '../../src/shared/agents/agents.rpc';
+import { layerAgentsHandlersWith } from '../rpc/agents';
 import { layerStore } from '../store/store';
-import { layerAgents } from './agents';
+import { Agents, layerAgents } from './agents';
 import { AgentInstall, layerAgentInstall } from './install';
-import { layerPathSources, MergedPath } from './merged-path';
+import { MergedPath, PathSources } from './merged-path';
+import {
+  AgentRuntime,
+  layerAgentRuntime,
+  MANAGED_NODE_VERSION,
+  type RuntimeArchiveError,
+  RuntimeArchiveSource,
+  runtimeSpecFor,
+} from './runtime';
+import { spawnAgent } from './spawn';
+
+let fixtures = '';
+let archivePath = '';
+let archiveSha256 = '';
+let specFilename = '';
+
+const isWindows = process.platform === 'win32';
+
+/**
+ * Builds a single local Node runtime fixture archive containing a real launchable `node` binary
+ * (POSIX shell wrapper or Windows node.exe) and an `npm-cli.js` stub controlled via `SPENCE_STUB_NPM_MODE`.
+ */
+beforeAll(async () => {
+  fixtures = await mkdtemp(join(tmpdir(), 'spence-install-fix-'));
+  const spec = runtimeSpecFor(MANAGED_NODE_VERSION, process.platform, process.arch);
+  if (spec === undefined)
+    throw new Error(`Unsupported test host: ${process.platform}/${process.arch}`);
+  specFilename = spec.filename;
+  const folderName = spec.filename.replace(/\.(tar\.gz|zip)$/, '');
+  const stage = join(fixtures, 'src');
+  const top = join(stage, folderName);
+  const npmDir = isWindows
+    ? join(top, 'node_modules', 'npm', 'bin')
+    : join(top, 'lib', 'node_modules', 'npm', 'bin');
+  await mkdir(join(top, isWindows ? '' : 'bin'), { recursive: true });
+  await mkdir(npmDir, { recursive: true });
+
+  if (isWindows) {
+    await copyFile(process.execPath, join(top, 'node.exe'));
+  } else {
+    await writeFile(join(top, 'bin', 'node'), `#!/bin/sh\nexec "${process.execPath}" "$@"\n`, {
+      mode: 0o755,
+    });
+  }
+
+  const stubNpmCli = [
+    "const fs = require('node:fs');",
+    "const path = require('node:path');",
+    'const args = process.argv.slice(2);',
+    "const prefixIdx = args.indexOf('--prefix');",
+    "const prefix = prefixIdx >= 0 ? args[prefixIdx + 1] : '';",
+    "const pkgSpec = args[args.length - 1] ?? '';",
+    "const atIdx = pkgSpec.lastIndexOf('@');",
+    'const pkgName = atIdx > 0 ? pkgSpec.slice(0, atIdx) : pkgSpec;',
+    "const pkgVersion = atIdx > 0 ? pkgSpec.slice(atIdx + 1) : '1.0.0';",
+    "process.stdout.write(`args: ${args.join(' ')}\\n`);",
+    "process.stdout.write(`env_npm_prefix: ${String(process.env.NPM_CONFIG_PREFIX ?? '')}\\n`);",
+    "process.stdout.write(`env_npm_lc: ${String(process.env.npm_config_prefix ?? '')}\\n`);",
+    "process.stdout.write(`env_appimage: ${String(process.env.APPIMAGE ?? '')}\\n`);",
+    "process.stdout.write(`env_path: ${String(process.env.PATH ?? '')}\\n`);",
+    "const mode = process.env.SPENCE_STUB_NPM_MODE ?? 'succeed';",
+    "if (mode === 'eacces') {",
+    "  process.stderr.write('npm error code EACCES\\n');",
+    "  process.stderr.write('npm error syscall mkdir\\n');",
+    '  process.stderr.write("npm error Error: EACCES: permission denied, mkdir \'/spence/agents\'\\n");',
+    '  process.exit(243);',
+    '}',
+    "if (mode === 'e404') {",
+    "  process.stderr.write('npm error code E404\\n');",
+    "  process.stderr.write('npm error 404 Not Found - GET https://registry.npmjs.org/x\\n');",
+    '  process.exit(1);',
+    '}',
+    "if (mode === 'hang') {",
+    "  process.stdout.write('STUB_NPM_READY\\n');",
+    '  setInterval(() => {}, 1000);',
+    '} else if (mode === "no-bin") {',
+    "  process.stdout.write('added 1 package\\n');",
+    '} else {',
+    "  const binName = pkgName.includes('codex') ? 'codex-acp' : 'claude-agent-acp';",
+    "  const pkgDir = path.join(prefix, 'node_modules', ...pkgName.split('/'));",
+    "  fs.mkdirSync(path.join(pkgDir, 'bin'), { recursive: true });",
+    "  const scriptPath = path.join(pkgDir, 'bin', `${binName}.js`);",
+    '  fs.writeFileSync(scriptPath, `#!/usr/bin/env node\\nconsole.log(JSON.stringify({ execPath: process.execPath, path: process.env.PATH }));\\nsetInterval(() => {}, 1000);\\n`);',
+    '  fs.writeFileSync(path.join(pkgDir, "package.json"), JSON.stringify({ name: pkgName, version: pkgVersion, bin: { [binName]: `./bin/${binName}.js` } }));',
+    "  process.stdout.write('added 1 package\\n');",
+    '}',
+  ].join('\n');
+  await writeFile(join(npmDir, 'npm-cli.js'), stubNpmCli);
+
+  archivePath = join(fixtures, spec.filename);
+  const tarCmd = isWindows ? 'tar.exe' : 'tar';
+  const tarArgs = isWindows
+    ? [
+        '--format=zip',
+        '--options',
+        'zip:compression=store',
+        '-cf',
+        archivePath,
+        '-C',
+        stage,
+        folderName,
+      ]
+    : ['-czf', archivePath, '-C', stage, folderName];
+  const res = spawnSync(tarCmd, tarArgs, { encoding: 'utf8' });
+  if (res.status !== 0) {
+    throw new Error(`tar fixture failed (${res.status}): ${res.stderr}`);
+  }
+  const bytes = await readFile(archivePath);
+  archiveSha256 = createHash('sha256').update(bytes).digest('hex');
+});
+
+afterAll(async () => {
+  await rm(fixtures, { recursive: true, force: true });
+});
 
 let bin = '';
 let root = '';
@@ -25,196 +142,341 @@ afterEach(async () => {
 const claude = AgentId.make('claude');
 const codex = AgentId.make('codex');
 const antigravity = AgentId.make('antigravity');
-const isWindows = process.platform === 'win32';
-const COMMAND = 'npm install -g @agentclientprotocol/claude-agent-acp';
-const CODEX_COMMAND = 'npm install -g @agentclientprotocol/codex-acp@2.6.0';
 
-/** A launchable, empty file named like the adapter's npm shim. */
-const adapterShim = () => join(bin, isWindows ? 'claude-agent-acp.cmd' : 'claude-agent-acp');
+interface TestLayerOptions {
+  readonly env?: Readonly<Record<string, string | undefined>>;
+  readonly fetchOverride?: (
+    destPath: string,
+  ) => Effect.Effect<{ readonly shasumsText: string }, RuntimeArchiveError>;
+  readonly onFetch?: () => void;
+}
 
-/**
- * A stub `npm` on the merged PATH, shaped like the real one (a shim that runs node). It never touches the network or
- * the real global folder: it echoes its arguments, then runs `body` (node code with `shim`, the adapter's shim path).
- */
-const installStubNpm = (body: string) =>
-  Effect.promise(async () => {
-    const script = join(bin, 'stub-npm.js');
-    await writeFile(
-      script,
-      [
-        `const shim = ${JSON.stringify(adapterShim())};`,
-        "const fs = require('node:fs');",
-        "process.stdout.write(`args: ${process.argv.slice(2).join(' ')}\\n`);",
-        body,
-      ].join('\n'),
-    );
-    if (isWindows) {
-      await writeFile(join(bin, 'npm.cmd'), `@"${process.execPath}" "${script}" %*\r\n`);
-    } else {
-      await writeFile(
-        join(bin, 'npm'),
-        `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`,
-        {
-          mode: 0o755,
-        },
-      );
-    }
+const makeTestLayers = (options?: TestLayerOptions) => {
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    ...(options?.env ?? {}),
+  };
+  const pathSources = Layer.succeed(PathSources, {
+    platform: process.platform,
+    env,
+    readRegistryPath: () => Effect.succeed(Option.none()),
+    readLoginShellPath: Effect.succeed(Option.none()),
   });
-
-const SUCCEEDS =
-  "fs.writeFileSync(shim, '', { mode: 0o755 }); process.stdout.write('added 1 package\\n');";
-
-const layerTest = () => {
-  const path = Layer.merge(
-    Layer.succeed(MergedPath, { get: Effect.succeed(bin) }),
-    layerPathSources,
+  const mergedPath = Layer.succeed(MergedPath, { get: Effect.succeed(bin) });
+  const store = layerStore(root);
+  const archiveSource = Layer.succeed(RuntimeArchiveSource, {
+    fetch: (_spec, destPath) =>
+      options?.fetchOverride !== undefined
+        ? options.fetchOverride(destPath)
+        : Effect.promise(async () => {
+            options?.onFetch?.();
+            await copyFile(archivePath, destPath);
+            return { shasumsText: `${archiveSha256}  ${specFilename}\n` };
+          }),
+  });
+  const runtime = layerAgentRuntime.pipe(
+    Layer.provideMerge(archiveSource),
+    Layer.provideMerge(store),
+    Layer.provideMerge(pathSources),
   );
-  return layerAgentInstall.pipe(
-    Layer.provide(layerAgents),
-    Layer.provide(layerStore(root)),
-    Layer.provide(path),
+  const agents = layerAgents.pipe(
+    Layer.provideMerge(mergedPath),
+    Layer.provideMerge(pathSources),
+    Layer.provideMerge(store),
+    Layer.provideMerge(runtime),
   );
+  const install = layerAgentInstall.pipe(
+    Layer.provideMerge(agents),
+    Layer.provideMerge(runtime),
+    Layer.provideMerge(store),
+    Layer.provideMerge(mergedPath),
+    Layer.provideMerge(pathSources),
+  );
+  return { install, agents, runtime, store, mergedPath, pathSources };
 };
 
 const logFile = () => join(root, 'logs', 'agents', 'install.log');
-
-const runInstall = AgentInstall.use((install) =>
-  Stream.runCollect(install.install(claude)).pipe(Effect.map((events) => Array.from(events))),
-);
-
 const readLog = () => Effect.promise(() => readFile(logFile(), 'utf8'));
 
-describe('AgentInstall.command', () => {
-  it.effect('gives the exact npm command and whether npm resolves on the merged PATH', () =>
-    Effect.gen(function* () {
-      const without = yield* AgentInstall.use((install) => install.command(claude));
-      expect(without).toEqual({ command: COMMAND, npmFound: false });
-      yield* installStubNpm(SUCCEEDS);
-      const withNpm = yield* AgentInstall.use((install) => install.command(claude));
-      expect(withNpm).toEqual({ command: COMMAND, npmFound: true });
-    }).pipe(Effect.provide(layerTest())),
+const collectInstall = (agentId: AgentId) =>
+  AgentInstall.use((install) =>
+    Stream.runCollect(install.install(agentId)).pipe(Effect.map((events) => Array.from(events))),
   );
 
-  it.effect('never runs npm for native Agents like Antigravity', () =>
-    Effect.gen(function* () {
-      yield* installStubNpm(SUCCEEDS);
-      const cmd = yield* AgentInstall.use((install) => install.command(antigravity));
-      expect(cmd.npmFound).toBe(false);
-      expect(cmd.command).not.toContain('npm install');
-      const events = yield* AgentInstall.use((install) =>
-        Stream.runCollect(install.install(antigravity)).pipe(Effect.map((e) => Array.from(e))),
-      );
-      expect(events[1]).toMatchObject({ _tag: 'failed', reason: 'NotOnPath' });
-    }).pipe(Effect.provide(layerTest())),
-  );
-});
+describe('AgentInstall.install (managed runtime & isolated prefixes)', () => {
+  it.effect(
+    'downloads runtime on cold setup, installs pinned adapter into isolated prefix, and spawns via managed node',
+    () =>
+      Effect.gen(function* () {
+        let fetches = 0;
+        const layers = makeTestLayers({
+          onFetch: () => {
+            fetches += 1;
+          },
+        });
+        const combined = Layer.mergeAll(
+          layers.install,
+          layers.agents,
+          layers.runtime,
+          layers.store,
+          layers.mergedPath,
+          layers.pathSources,
+        );
 
-describe('AgentInstall.install', () => {
-  it.effect('runs npm from the merged PATH, re-scans, and succeeds once the adapter resolves', () =>
-    Effect.gen(function* () {
-      yield* installStubNpm(SUCCEEDS);
-      expect(yield* runInstall).toEqual([{ _tag: 'started' }, { _tag: 'succeeded' }]);
-      const log = yield* readLog();
-      expect(log).toContain(COMMAND);
-      expect(log).toContain('args: install -g @agentclientprotocol/claude-agent-acp');
-      expect(log).toContain('added 1 package');
-    }).pipe(Effect.provide(layerTest())),
+        yield* Effect.gen(function* () {
+          const events = yield* collectInstall(claude);
+          expect(events.map((e) => e._tag)).toEqual([
+            'downloadingRuntime',
+            'installingAdapter',
+            'succeeded',
+          ]);
+          expect(fetches).toBe(1);
+
+          const log = yield* readLog();
+          expect(log).toContain('@agentclientprotocol/claude-agent-acp@0.106.0');
+          expect(log).toContain('added 1 package');
+
+          const listed = yield* Agents.use((a) => a.list);
+          const claudeInfo = listed.find((a) => a.id === claude);
+          expect(claudeInfo).toMatchObject({
+            id: claude,
+            installed: true,
+            installedVersion: '0.106.0',
+            versionQualification: 'qualified',
+          });
+
+          // Subsequent install skips downloadingRuntime when runtime is already cached.
+          const codexEvents = yield* collectInstall(codex);
+          expect(codexEvents.map((e) => e._tag)).toEqual(['installingAdapter', 'succeeded']);
+          expect(fetches).toBe(1);
+          const codexInfo = (yield* Agents.use((a) => a.list)).find((a) => a.id === codex);
+          expect(codexInfo).toMatchObject({
+            id: codex,
+            installed: true,
+            installedVersion: '2.6.0',
+            versionQualification: 'qualified',
+          });
+
+          // Installed adapter launches via managed node and sees user's Merged PATH.
+          const runtimePaths = Option.getOrThrow(yield* AgentRuntime.use((r) => r.inspect));
+          const output = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const child = yield* spawnAgent({
+                id: claude,
+                installKind: 'npm',
+                package: '@agentclientprotocol/claude-agent-acp',
+                binary: 'claude-agent-acp',
+                args: [],
+              });
+              return yield* Effect.callback<string>((resume) => {
+                let buf = '';
+                child.stdout.on('data', (chunk: Buffer) => {
+                  buf += chunk.toString('utf8');
+                  const nl = buf.indexOf('\n');
+                  if (nl >= 0) resume(Effect.succeed(buf.slice(0, nl)));
+                });
+              });
+            }),
+          );
+          const spawned = JSON.parse(output) as { execPath: string; path: string };
+          expect(spawned.execPath).toBe(runtimePaths.node);
+          expect(spawned.path).toBe(bin);
+        }).pipe(Effect.provide(combined));
+      }),
+    30_000,
   );
 
-  it.effect('recognises EACCES and fails with a one-line reason and the log path', () =>
-    Effect.gen(function* () {
-      yield* installStubNpm(
-        [
-          "process.stderr.write('npm error code EACCES\\n');",
-          "process.stderr.write('npm error syscall mkdir\\n');",
-          "process.stderr.write('npm error Error: EACCES: permission denied, mkdir \\'/usr/lib/node_modules\\'\\n');",
-          "process.stderr.write('npm error A complete log of this run can be found in: /x.log\\n');",
-          'process.exit(243);',
-        ].join('\n'),
-      );
-      const events = yield* runInstall;
-      expect(events).toEqual([
-        { _tag: 'started' },
-        {
-          _tag: 'failed',
-          reason: 'PermissionDenied',
-          detail: "Error: EACCES: permission denied, mkdir '/usr/lib/node_modules'",
-          logPath: logFile(),
-        },
-      ]);
-      expect(yield* readLog()).toContain('npm error code EACCES');
-    }).pipe(Effect.provide(layerTest())),
+  it.effect(
+    'strips inherited NPM_CONFIG_PREFIX, npm_* and AppImage vars while keeping Merged PATH',
+    () =>
+      Effect.gen(function* () {
+        const layers = makeTestLayers({
+          env: {
+            NPM_CONFIG_PREFIX: '/bad/global/prefix',
+            npm_config_prefix: '/bad/nvm/prefix',
+            APPIMAGE: '/tmp/Spence.AppImage',
+            APPDIR: '/tmp/.mount_Spence',
+          },
+        });
+        yield* collectInstall(claude).pipe(Effect.provide(layers.install));
+        const log = yield* readLog();
+        expect(log).toContain('env_npm_prefix: \n');
+        expect(log).toContain('env_npm_lc: \n');
+        expect(log).toContain('env_appimage: \n');
+        expect(log).toContain(`env_path: `);
+        expect(log).toContain(bin);
+      }),
   );
 
-  it.effect('fails as NpmFailed with npm’s first error line when it exits non-zero', () =>
+  it.effect('deduplicates runtime download across concurrent Claude and Codex installs', () =>
     Effect.gen(function* () {
-      yield* installStubNpm(
-        [
-          "process.stderr.write('npm error code E404\\n');",
-          "process.stderr.write('npm error 404 Not Found - GET https://registry.npmjs.org/x\\n');",
-          'process.exit(1);',
-        ].join('\n'),
-      );
-      const events = yield* runInstall;
-      expect(events[1]).toEqual({
-        _tag: 'failed',
-        reason: 'NpmFailed',
-        detail: '404 Not Found - GET https://registry.npmjs.org/x',
-        logPath: logFile(),
+      let fetches = 0;
+      const gate = Deferred.makeUnsafe<void>();
+      const fetchStarted = Deferred.makeUnsafe<void>();
+      const layers = makeTestLayers({
+        fetchOverride: (destPath) =>
+          Effect.gen(function* () {
+            fetches += 1;
+            yield* Deferred.succeed(fetchStarted, undefined);
+            yield* Deferred.await(gate);
+            yield* Effect.promise(() => copyFile(archivePath, destPath));
+            return { shasumsText: `${archiveSha256}  ${specFilename}\n` };
+          }),
       });
-    }).pipe(Effect.provide(layerTest())),
+      const combined = Layer.mergeAll(layers.install, layers.agents);
+
+      yield* Effect.gen(function* () {
+        const f1 = yield* Effect.forkChild(collectInstall(claude));
+        const f2 = yield* Effect.forkChild(collectInstall(codex));
+        yield* Deferred.await(fetchStarted);
+        yield* Deferred.succeed(gate, undefined);
+        const [e1, e2] = yield* Effect.all([Fiber.join(f1), Fiber.join(f2)]);
+        expect(e1.at(-1)?._tag).toBe('succeeded');
+        expect(e2.at(-1)?._tag).toBe('succeeded');
+        expect(fetches).toBe(1);
+      }).pipe(Effect.provide(combined));
+    }),
   );
 
-  it.effect('fails as NotOnPath when npm succeeds but the re-scan does not find the adapter', () =>
-    Effect.gen(function* () {
-      yield* installStubNpm("process.stdout.write('added 1 package\\n');");
-      const events = yield* runInstall;
-      expect(events[1]).toMatchObject({ _tag: 'failed', reason: 'NotOnPath', logPath: logFile() });
-    }).pipe(Effect.provide(layerTest())),
-  );
-
-  it.effect('fails as NoNpm, with a log, when npm is not on the merged PATH', () =>
-    Effect.gen(function* () {
-      const events = yield* runInstall;
-      expect(events).toEqual([
-        { _tag: 'started' },
-        {
+  it.effect(
+    'fails with ChecksumMismatch and writes log without leaving runtime or agent files',
+    () =>
+      Effect.gen(function* () {
+        const layers = makeTestLayers({
+          fetchOverride: (destPath) =>
+            Effect.promise(async () => {
+              await copyFile(archivePath, destPath);
+              return { shasumsText: `${'f'.repeat(64)}  ${specFilename}\n` };
+            }),
+        });
+        const events = yield* collectInstall(claude).pipe(Effect.provide(layers.install));
+        expect(events.map((e) => e._tag)).toEqual(['downloadingRuntime', 'failed']);
+        expect(events[1]).toMatchObject({
           _tag: 'failed',
-          reason: 'NoNpm',
-          detail: 'npm is not on PATH',
+          reason: 'ChecksumMismatch',
           logPath: logFile(),
+        });
+        expect(yield* readLog()).toContain('SHA-256');
+        const agentsEntries = yield* Effect.promise(() =>
+          readdir(join(root, 'agents')).catch(() => []),
+        );
+        expect(agentsEntries).toEqual([]);
+      }),
+  );
+
+  it.effect(
+    'recognises EACCES and NpmFailed and cleans adapter staging without leaving partial install',
+    () =>
+      Effect.gen(function* () {
+        const layersEacces = makeTestLayers({ env: { SPENCE_STUB_NPM_MODE: 'eacces' } });
+        const eaccesEvents = yield* collectInstall(claude).pipe(
+          Effect.provide(layersEacces.install),
+        );
+        expect(eaccesEvents).toEqual([
+          { _tag: 'downloadingRuntime', startedAt: expect.any(Number) },
+          { _tag: 'installingAdapter', startedAt: expect.any(Number) },
+          {
+            _tag: 'failed',
+            reason: 'PermissionDenied',
+            detail: "Error: EACCES: permission denied, mkdir '/spence/agents'",
+            logPath: logFile(),
+          },
+        ]);
+
+        const layersE404 = makeTestLayers({ env: { SPENCE_STUB_NPM_MODE: 'e404' } });
+        const e404Events = yield* collectInstall(codex).pipe(Effect.provide(layersE404.install));
+        expect(e404Events.at(-1)).toEqual({
+          _tag: 'failed',
+          reason: 'NpmFailed',
+          detail: '404 Not Found - GET https://registry.npmjs.org/x',
+          logPath: logFile(),
+        });
+
+        const agentsEntries = yield* Effect.promise(() =>
+          readdir(join(root, 'agents')).catch(() => []),
+        );
+        expect(agentsEntries).toEqual([]);
+      }),
+  );
+
+  it.effect('cleans staging and kills npm child when install stream is interrupted', () =>
+    Effect.gen(function* () {
+      const layers = makeTestLayers({ env: { SPENCE_STUB_NPM_MODE: 'hang' } });
+      const combined = Layer.mergeAll(layers.install, layers.agents);
+
+      yield* Effect.gen(function* () {
+        const fiber = yield* AgentInstall.use((install) =>
+          install.install(claude).pipe(Stream.runDrain, Effect.forkChild),
+        );
+        // Wait until stub npm writes STUB_NPM_READY to install.log
+        yield* Effect.promise(async () => {
+          for (let i = 0; i < 100; i += 1) {
+            const content = await readFile(logFile(), 'utf8').catch(() => '');
+            if (content.includes('STUB_NPM_READY')) return;
+            await new Promise((r) => setTimeout(r, 50));
+          }
+          throw new Error('stub npm did not start in time');
+        });
+        yield* Fiber.interrupt(fiber);
+
+        const agentsEntries = yield* Effect.promise(() =>
+          readdir(join(root, 'agents')).catch(() => []),
+        );
+        expect(agentsEntries).toEqual([]);
+        const claudeInfo = (yield* Agents.use((a) => a.list)).find((a) => a.id === claude);
+        expect(claudeInfo?.installed).toBe(false);
+      }).pipe(Effect.provide(combined));
+    }),
+  );
+
+  it.effect('never acquires runtime or runs npm for native Agents like Antigravity', () =>
+    Effect.gen(function* () {
+      let fetches = 0;
+      const layers = makeTestLayers({
+        onFetch: () => {
+          fetches += 1;
         },
-      ]);
-      expect(yield* readLog()).toContain('npm is not on PATH');
-    }).pipe(Effect.provide(layerTest())),
+      });
+      const events = yield* collectInstall(antigravity).pipe(Effect.provide(layers.install));
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ _tag: 'failed', reason: 'NotOnPath' });
+      expect(fetches).toBe(0);
+    }),
   );
 
-  it.effect('never runs npm for native Agents like Antigravity', () =>
-    Effect.gen(function* () {
-      yield* installStubNpm(SUCCEEDS);
-      const cmd = yield* AgentInstall.use((install) => install.command(antigravity));
-      expect(cmd.npmFound).toBe(false);
-      expect(cmd.command).not.toContain('npm install');
-      const events = yield* AgentInstall.use((install) =>
-        Stream.runCollect(install.install(antigravity)).pipe(Effect.map((e) => Array.from(e))),
-      );
-      expect(events[1]).toMatchObject({ _tag: 'failed', reason: 'NotOnPath' });
-    }).pipe(Effect.provide(layerTest())),
-  );
+  it.effect(
+    'serves Agents.list and Agents.install end-to-end through AgentsRpcs',
+    () =>
+      Effect.gen(function* () {
+        const layers = makeTestLayers();
+        const handlers = layerAgentsHandlersWith.pipe(
+          Layer.provide(layers.install),
+          Layer.provide(layers.agents),
+        );
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const client = yield* RpcTest.makeClient(AgentsRpcs);
+            const before = yield* client['Agents.list']();
+            expect(before.find((a) => a.id === claude)?.installed).toBe(false);
 
-  it.effect('pins Codex to @agentclientprotocol/codex-acp@2.6.0 for command and install', () =>
-    Effect.gen(function* () {
-      const codexShim = join(bin, isWindows ? 'codex-acp.cmd' : 'codex-acp');
-      yield* installStubNpm(
-        `fs.writeFileSync(${JSON.stringify(codexShim)}, '', { mode: 0o755 }); process.stdout.write('added 1 package\\n');`,
-      );
-      const cmd = yield* AgentInstall.use((install) => install.command(codex));
-      expect(cmd).toEqual({ command: CODEX_COMMAND, npmFound: true });
-      const events = yield* AgentInstall.use((install) =>
-        Stream.runCollect(install.install(codex)).pipe(Effect.map((e) => Array.from(e))),
-      );
-      expect(events).toEqual([{ _tag: 'started' }, { _tag: 'succeeded' }]);
-      expect(yield* readLog()).toContain('args: install -g @agentclientprotocol/codex-acp@2.6.0');
-    }).pipe(Effect.provide(layerTest())),
+            const events = yield* client['Agents.install']({ agentId: claude }).pipe(
+              Stream.runCollect,
+            );
+            expect(Array.from(events).map((e) => e._tag)).toEqual([
+              'downloadingRuntime',
+              'installingAdapter',
+              'succeeded',
+            ]);
+
+            const after = yield* client['Agents.list']();
+            expect(after.find((a) => a.id === claude)).toMatchObject({
+              installed: true,
+              installedVersion: '0.106.0',
+              versionQualification: 'qualified',
+            });
+          }).pipe(Effect.provide(handlers)),
+        );
+      }),
+    30_000,
   );
 });

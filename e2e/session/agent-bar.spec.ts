@@ -34,6 +34,9 @@ test.describe('Agent bar and Turn failures', () => {
     const bar = page.getByTestId('agent-bar');
     await expect(bar).toBeVisible();
     await expect(bar).toContainText('Fake');
+    await expect(bar.getByTestId('install')).toHaveText(spence.t({ en: 'Set up', es: 'Instalar' }));
+    await expect(bar.getByTestId('show-command')).toHaveCount(0);
+    await expect(bar.getByTestId('needs-node')).toHaveCount(0);
     await expect(page.getByTestId('composer-input')).toBeEditable();
     await page.getByTestId('composer-input').fill('Draft before install');
     await expect(page.getByTestId('send')).toBeDisabled();

@@ -20,7 +20,7 @@ const candidates = (name: string, platform: NodeJS.Platform): ReadonlyArray<stri
   platform === 'win32' ? WINDOWS_EXTENSIONS.map((ext) => name + ext) : [name];
 
 // Missing, unreadable or not executable: a PATH folder Spence cannot launch from is simply skipped.
-const isLaunchable = Effect.fnUntraced(function* (path: string, platform: NodeJS.Platform) {
+export const isLaunchable = Effect.fnUntraced(function* (path: string, platform: NodeJS.Platform) {
   const isFile = yield* Effect.promise(() =>
     stat(path).then(
       (stats) => stats.isFile(),

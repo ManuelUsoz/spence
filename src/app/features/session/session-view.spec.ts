@@ -359,7 +359,6 @@ const handlers = (served: Served) => {
       : [
           AgentsRpcs.toLayer({
             'Agents.list': () => Effect.succeed(served.agents ?? []),
-            'Agents.installCommand': () => Effect.die('unused'),
             'Agents.install': () => Effect.die('unused'),
             'Agents.openInstallLog': () => Effect.die('unused'),
           }),
@@ -2279,12 +2278,13 @@ describe('SessionView', () => {
     await vi.waitFor(() => expect(served.retries).toBe(1));
   });
 
-  it('shows the incompatible adapter message and @latest command with no Try again on protocolVersion error', async () => {
+  it('shows the incompatible adapter message without npm install -g and with no Try again on protocolVersion error', async () => {
     const served = serve([
       Stream.make(
         liveWith({
           agentName: 'Claude',
           agentPackage: '@agentclientprotocol/claude-agent-acp',
+          upgradeCommand: '@agentclientprotocol/claude-agent-acp@0.106.0',
           agentStatus: 'cantStart',
           cantStartReason: 'protocolVersion',
         }),
@@ -2296,9 +2296,8 @@ describe('SessionView', () => {
     );
     const bar = byTestId(fixture, 'agent-bar');
     expect(bar.textContent).toContain("Claude's adapter isn't compatible with this Spence");
-    expect(bar.textContent).toContain(
-      'npm install -g @agentclientprotocol/claude-agent-acp@latest',
-    );
+    expect(bar.textContent).toContain('@agentclientprotocol/claude-agent-acp@0.106.0');
+    expect(bar.textContent).not.toContain('npm install -g');
     expect(root(fixture).querySelector('[data-testid="agent-retry"]')).toBeNull();
   });
 
@@ -4920,7 +4919,6 @@ describe('SessionView', () => {
         }),
         AgentsRpcs.toLayer({
           'Agents.list': () => Effect.succeed([]),
-          'Agents.installCommand': () => Effect.die('unused'),
           'Agents.install': () => Effect.die('unused'),
           'Agents.openInstallLog': () => Effect.die('unused'),
         }),

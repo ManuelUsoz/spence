@@ -28,6 +28,7 @@ import { layerAgents } from '../agents/agents';
 import type { CatalogEntry } from '../agents/catalog';
 import { layerAgentInstall } from '../agents/install';
 import { layerPathSources, MergedPath } from '../agents/merged-path';
+import { AgentRuntime, RuntimeArchiveError } from '../agents/runtime';
 import { makeTestDevice, pairDevices, tempDataDir, type TestDevice } from '../devices/test-peer';
 import { layerFiles } from '../files/files';
 import { attachAgentTools } from '../messaging/agent-tools';
@@ -143,6 +144,12 @@ const makeParityDevice = Effect.fnUntraced(function* (agent: ParityAgent) {
     Layer.provide(layerSessionFoldersLive),
     Layer.provide(Layer.succeed(RecoveryRoot, { folder: path.join(root, 'discarded') })),
   );
+  const runtimeLayer = Layer.succeed(AgentRuntime, {
+    inspect: Effect.succeed(Option.none()),
+    ensure: Effect.fail(
+      new RuntimeArchiveError({ reason: 'DownloadFailed', detail: 'unused in parity device' }),
+    ),
+  });
   const serve = Layer.mergeAll(
     layerSessionsHandlersWith,
     layerProjectsHandlersWith,
@@ -154,6 +161,7 @@ const makeParityDevice = Effect.fnUntraced(function* (agent: ParityAgent) {
     layerWorktreesHandlersWith.pipe(Layer.provide(layerWorktrees)),
     layerAgentsHandlersWith.pipe(
       Layer.provide(layerAgentInstall.pipe(Layer.provideMerge(layerAgents))),
+      Layer.provide(runtimeLayer),
       Layer.provide(layerStore(root)),
       Layer.provide(pathLayers),
     ),

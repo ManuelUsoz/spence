@@ -141,7 +141,6 @@ const renderShell = async (options?: {
       }),
       AgentsRpcs.toLayer({
         'Agents.list': () => Effect.succeed([]),
-        'Agents.installCommand': () => Effect.die('unused'),
         'Agents.install': () => Stream.die('unused'),
         'Agents.openInstallLog': () => Effect.die('unused'),
       }),

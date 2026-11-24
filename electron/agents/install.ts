@@ -1,31 +1,33 @@
 import { shell } from 'electron';
-import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { createWriteStream, type WriteStream } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-import { Context, Effect, Layer, Option, Stream } from 'effect';
-import type {
-  AgentId,
-  InstallCommand,
-  InstallEvent,
-  InstallFailure,
-} from '../../src/shared/agents/agents.rpc';
+import { mkdir, rm } from 'node:fs/promises';
+import { delimiter, dirname, join } from 'node:path';
+import { Context, Effect, Layer, Option, Queue, Stream } from 'effect';
+import type { AgentId, InstallEvent, InstallFailure } from '../../src/shared/agents/agents.rpc';
 import { Store } from '../store/store';
 import { Agents } from './agents';
 import { catalog, type CatalogEntry } from './catalog';
+import { inspectManagedPrefix, managedAgentDir } from './managed';
 import { MergedPath, PathSources } from './merged-path';
-import { resolveExecutable } from './resolve';
-import { spawnAgent } from './spawn';
+import {
+  AgentRuntime,
+  type ManagedRuntimePaths,
+  type RuntimeArchiveError,
+  stripAppImageEnv,
+  stripNpmConfigEnv,
+  swapDirectory,
+} from './runtime';
+import { killChildProcessTree } from './spawn';
 
-/** Installs a Catalog Agent's adapter with the npm on the merged PATH. No updates, no version pinning. */
+/** Installs packaged (`npm`) Catalog Agents into isolated per-Agent prefixes using Spence's managed Node runtime. */
 export class AgentInstall extends Context.Service<
   AgentInstall,
   {
-    /** The exact command `install` runs, and whether npm is there to run it. */
-    readonly command: (agentId: AgentId) => Effect.Effect<InstallCommand>;
     /**
-     * `started`, then `succeeded` once a re-scan finds the adapter, or `failed`. npm's output goes to `logPath`.
-     * Interrupting the stream kills npm's process tree.
+     * Phased setup stream (`downloadingRuntime` -> `installingAdapter` -> `succeeded` | `failed`).
+     * Interrupting the stream aborts any active download or npm process tree and removes temporary staging.
      */
     readonly install: (agentId: AgentId) => Stream.Stream<InstallEvent>;
     /** `<userData>/spence/logs/agents/install.log`. */
@@ -35,15 +37,22 @@ export class AgentInstall extends Context.Service<
   }
 >()('agents/AgentInstall') {}
 
-const NPM = 'npm';
-
-const npmArgs = (entry: CatalogEntry): ReadonlyArray<string> => [
+const npmInstallArgs = (
+  npmCli: string,
+  stagingDir: string,
+  entry: CatalogEntry,
+): ReadonlyArray<string> => [
+  npmCli,
   'install',
-  '-g',
+  '--prefix',
+  stagingDir,
+  '--no-save',
+  '--no-package-lock',
+  '--no-audit',
+  '--no-fund',
+  '--no-update-notifier',
   entry.installPackage ?? entry.package,
 ];
-
-const commandLine = (entry: CatalogEntry): string => [NPM, ...npmArgs(entry)].join(' ');
 
 /** Unknown ids are a renderer bug: the renderer only ever names Agents it got from `Agents.list`. */
 const entryOf = (agentId: AgentId) =>
@@ -72,6 +81,9 @@ const oneLine = (output: string, code: number | null): string =>
 const failureOf = (output: string): InstallFailure =>
   /\b(EACCES|EPERM)\b/.test(output) ? 'PermissionDenied' : 'NpmFailed';
 
+const runtimeFailureReason = (error: RuntimeArchiveError): InstallFailure =>
+  error.reason === 'ChecksumMismatch' ? 'ChecksumMismatch' : 'RuntimeDownloadFailed';
+
 const openLogStream = (logPath: string) =>
   Effect.acquireRelease(
     Effect.promise(async () => {
@@ -97,11 +109,18 @@ const drain = (child: ChildProcessWithoutNullStreams, log: WriteStream) =>
     child.once('close', (code) => resume(Effect.succeed({ code, output })));
   });
 
+const swapAdapterPrefix = (stagingDir: string, targetDir: string) =>
+  Effect.tryPromise({
+    try: () => mkdir(dirname(targetDir), { recursive: true }),
+    catch: (error) => (error instanceof Error ? error.message : String(error)),
+  }).pipe(Effect.andThen(swapDirectory(stagingDir, targetDir)));
+
 export const layerAgentInstall = Layer.effect(
   AgentInstall,
   Effect.gen(function* () {
     const { root } = yield* Store;
     const agents = yield* Agents;
+    const runtime = yield* AgentRuntime;
     const mergedPath = yield* MergedPath;
     const sources = yield* PathSources;
     const logPath = join(root, 'logs', 'agents', 'install.log');
@@ -113,64 +132,154 @@ export const layerAgentInstall = Layer.effect(
       logPath,
     });
 
-    const command = Effect.fnUntraced(function* (agentId: AgentId) {
-      const entry = yield* entryOf(agentId);
-      if (entry.installKind === 'native') {
-        return {
-          command: entry.installInstructions ?? entry.binary,
-          npmFound: false,
-        };
-      }
-      const path = yield* mergedPath.get;
-      const npm = yield* resolveExecutable(NPM, path, sources.platform);
-      return { command: commandLine(entry), npmFound: Option.isSome(npm) };
-    });
-
     const isInstalled = (agentId: AgentId) =>
       agents.list.pipe(
         Effect.map((list) => list.some((agent) => agent.id === agentId && agent.installed)),
       );
 
-    const runNpm = (entry: CatalogEntry, log: WriteStream) =>
-      Effect.gen(function* () {
-        const child = yield* spawnAgent({ binary: NPM, args: npmArgs(entry) });
-        child.stdin.end();
-        const { code, output } = yield* drain(child, log);
-        log.write(`=== npm exited with code ${String(code)}\n`);
-        if (code !== 0) return failed(failureOf(output), oneLine(output, code));
-        if (!(yield* isInstalled(entry.id))) {
-          const detail = `${entry.binary} is not on PATH after npm install`;
-          log.write(`${detail}\n`);
-          return failed('NotOnPath', detail);
-        }
-        return { _tag: 'succeeded' } satisfies InstallEvent;
-      }).pipe(
-        Effect.catchTag('AgentLaunchError', (error) =>
+    const acquireRuntime = Effect.fnUntraced(function* (
+      log: WriteStream,
+      startedAt: number,
+      emit: (event: InstallEvent) => Effect.Effect<void>,
+    ) {
+      const existing = yield* runtime.inspect;
+      if (Option.isSome(existing)) return existing.value;
+      yield* emit({ _tag: 'downloadingRuntime', startedAt });
+      log.write(`=== Acquiring managed Node runtime\n`);
+      return yield* runtime.ensure.pipe(
+        Effect.tapError((error) =>
           Effect.sync(() => {
-            log.write(`${error.detail}\n`);
-            return failed(error.reason === 'NotInstalled' ? 'NoNpm' : 'NpmFailed', error.detail);
+            log.write(`=== Runtime acquisition failed (${error.reason}): ${error.detail}\n`);
           }),
         ),
-        Effect.provideService(MergedPath, mergedPath),
-        Effect.provideService(PathSources, sources),
+      );
+    });
+
+    const runManagedNpm = Effect.fnUntraced(function* (
+      entry: CatalogEntry,
+      managedRuntime: ManagedRuntimePaths,
+      log: WriteStream,
+    ) {
+      const agentsRoot = join(root, 'agents');
+      const stagingDir = yield* Effect.acquireRelease(
+        Effect.promise(async () => {
+          const dir = join(agentsRoot, `.staging-${entry.id}-${randomUUID()}`);
+          await mkdir(dir, { recursive: true });
+          return dir;
+        }),
+        (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
       );
 
-    const run = Effect.fnUntraced(function* (agentId: AgentId) {
-      const entry = yield* entryOf(agentId);
-      if (entry.installKind === 'native') {
-        return (yield* isInstalled(entry.id))
-          ? ({ _tag: 'succeeded' } satisfies InstallEvent)
-          : failed('NotOnPath', entry.installInstructions ?? `${entry.binary} is not on PATH`);
+      const path = yield* mergedPath.get;
+      const baseEnv = stripNpmConfigEnv(stripAppImageEnv(sources.env));
+      const cleanRest = Object.fromEntries(
+        Object.entries(baseEnv).filter(([key]) => key.toUpperCase() !== 'PATH'),
+      );
+      const childPath = [dirname(managedRuntime.node), path].filter(Boolean).join(delimiter);
+      const args = npmInstallArgs(managedRuntime.npmCli, stagingDir, entry);
+      log.write(`=== ${new Date().toISOString()} ${managedRuntime.node} ${args.join(' ')}\n`);
+
+      const child = yield* Effect.acquireRelease(
+        Effect.callback<ChildProcessWithoutNullStreams, InstallEvent>((resume) => {
+          const proc = spawn(managedRuntime.node, [...args], {
+            cwd: stagingDir,
+            env: { ...cleanRest, PATH: childPath },
+            stdio: 'pipe',
+            shell: false,
+            windowsHide: true,
+            detached: sources.platform !== 'win32',
+          });
+          proc.once('spawn', () => resume(Effect.succeed(proc)));
+          proc.once('error', (error) => {
+            log.write(`=== spawn error: ${error.message}\n`);
+            resume(Effect.fail(failed('NpmFailed', error.message)));
+          });
+        }),
+        (proc) =>
+          killChildProcessTree(proc, sources.platform, sources.env, 'npm').pipe(Effect.asVoid),
+      ).pipe(Effect.catch((failureEvent) => Effect.fail(failureEvent)));
+
+      child.stdin.end();
+      const { code, output } = yield* drain(child, log);
+      log.write(`=== npm exited with code ${String(code)}\n`);
+      if (code !== 0) {
+        return failed(failureOf(output), oneLine(output, code));
       }
-      const log = yield* openLogStream(logPath);
-      log.write(`\n=== ${new Date().toISOString()} ${commandLine(entry)}\n`);
-      return yield* runNpm(entry, log);
+
+      const inspected = yield* inspectManagedPrefix(stagingDir, entry);
+      if (Option.isNone(inspected)) {
+        const detail = `${entry.binary} was not found in installed package ${entry.package}`;
+        log.write(`${detail}\n`);
+        return failed('NpmFailed', detail);
+      }
+
+      const swapped = yield* swapAdapterPrefix(stagingDir, managedAgentDir(root, entry.id)).pipe(
+        Effect.as(true),
+        Effect.catch((errorDetail) =>
+          Effect.sync(() => {
+            log.write(`=== swap failed: ${errorDetail}\n`);
+            return false;
+          }),
+        ),
+      );
+      if (!swapped) {
+        return failed('PermissionDenied', `Could not move installed ${entry.name} into place`);
+      }
+
+      if (!(yield* isInstalled(entry.id))) {
+        const detail = `${entry.name} failed verification after setup`;
+        log.write(`${detail}\n`);
+        return failed('NpmFailed', detail);
+      }
+      return { _tag: 'succeeded' } satisfies InstallEvent;
     });
 
     const install = (agentId: AgentId): Stream.Stream<InstallEvent> =>
-      Stream.concat(
-        Stream.succeed<InstallEvent>({ _tag: 'started' }),
-        Stream.fromEffect(Effect.scoped(run(agentId))),
+      Stream.callback<InstallEvent>(
+        Effect.fnUntraced(function* (queue) {
+          const emit = (event: InstallEvent) => Queue.offer(queue, event).pipe(Effect.asVoid);
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const entry = yield* entryOf(agentId);
+              if (entry.installKind === 'native') {
+                const outcome: InstallEvent = (yield* isInstalled(entry.id))
+                  ? { _tag: 'succeeded' }
+                  : failed(
+                      'NotOnPath',
+                      entry.installInstructions ?? `${entry.binary} is not on PATH`,
+                    );
+                yield* emit(outcome);
+                return;
+              }
+
+              const startedAt = Date.now();
+              const log = yield* openLogStream(logPath);
+              const runtimeResult = yield* acquireRuntime(log, startedAt, emit).pipe(
+                Effect.map((paths) => ({ _tag: 'ok' as const, paths })),
+                Effect.catchTag('RuntimeArchiveError', (error) =>
+                  Effect.succeed({
+                    _tag: 'err' as const,
+                    event: failed(runtimeFailureReason(error), error.detail),
+                  }),
+                ),
+              );
+              if (runtimeResult._tag === 'err') {
+                yield* emit(runtimeResult.event);
+                return;
+              }
+
+              yield* emit({ _tag: 'installingAdapter', startedAt });
+              const result = yield* runManagedNpm(entry, runtimeResult.paths, log).pipe(
+                Effect.catch((failureEvent: InstallEvent) => Effect.succeed(failureEvent)),
+              );
+              yield* emit(result);
+            }),
+          ).pipe(
+            Effect.ensuring(Queue.end(queue)),
+            Effect.catchCause((cause) => Queue.failCause(queue, cause)),
+            Effect.forkScoped,
+          );
+        }),
       );
 
     const openLog = Effect.promise(() => shell.openPath(logPath)).pipe(
@@ -179,6 +288,6 @@ export const layerAgentInstall = Layer.effect(
       ),
     );
 
-    return { command, install, logPath, openLog };
+    return { install, logPath, openLog };
   }),
 );

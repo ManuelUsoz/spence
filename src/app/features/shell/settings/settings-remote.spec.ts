@@ -150,7 +150,6 @@ const handlers = (served: Served, connections: ReadonlyArray<DeviceConnection>) 
       // Claude is installed here, not on the Studio PC.
       'Agents.list': (_payload, { headers }) =>
         Effect.succeed([agent(deviceOf(headers) !== studio)]),
-      'Agents.installCommand': die,
       'Agents.install': () => Stream.die('unused'),
       'Agents.openInstallLog': die,
     }),

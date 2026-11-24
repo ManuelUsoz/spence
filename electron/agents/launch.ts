@@ -69,3 +69,40 @@ export const buildLaunch = Effect.fnUntraced(function* (
     windowsVerbatimArguments: true,
   } satisfies Launch;
 });
+
+/**
+ * Builds the spawn call for running a managed JS entrypoint directly through Spence's managed `node` binary
+ * (`shell: false`, never `#!/usr/bin/env node` on `PATH` and never `cmd.exe`).
+ */
+export const buildNodeLaunch = Effect.fnUntraced(function* (
+  nodeExecutable: string,
+  scriptPath: string,
+  args: ReadonlyArray<string>,
+  platform: NodeJS.Platform,
+) {
+  const unsafe = args.find((arg) => !SAFE_ARGUMENT.test(arg));
+  if (unsafe !== undefined) {
+    return yield* new AgentLaunchError({
+      reason: 'UnsafeArgument',
+      detail: `Not a constant argument: ${JSON.stringify(unsafe)}`,
+    });
+  }
+  const pathImpl = platform === 'win32' ? win32 : posix;
+  if (!pathImpl.isAbsolute(nodeExecutable)) {
+    return yield* new AgentLaunchError({
+      reason: 'UnsafePath',
+      detail: `Not absolute: ${nodeExecutable}`,
+    });
+  }
+  if (!pathImpl.isAbsolute(scriptPath)) {
+    return yield* new AgentLaunchError({
+      reason: 'UnsafePath',
+      detail: `Not absolute: ${scriptPath}`,
+    });
+  }
+  return {
+    command: nodeExecutable,
+    args: [scriptPath, ...args],
+    windowsVerbatimArguments: false,
+  } satisfies Launch;
+});

@@ -1,3 +1,4 @@
+import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { Effect, Stream } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -7,11 +8,11 @@ import {
   type Agent,
   type InstallEvent,
 } from '../../../shared/agents/agents.rpc';
+import { DEVICE_SCOPE_HEADER, DeviceId } from '../../../shared/devices/devices.rpc';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
+import { DeviceScopeDirective } from '../../core/device-scope.directive';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { AgentInstallOffer } from './agent-install';
-
-const COMMAND = 'npm install -g @agentclientprotocol/claude-agent-acp';
 
 const claude: Agent = {
   id: AgentId.make('claude'),
@@ -36,24 +37,24 @@ const claude: Agent = {
 };
 
 interface Served {
-  readonly npmFound: boolean;
-  readonly events: Stream.Stream<InstallEvent>;
+  readonly events: Stream.Stream<InstallEvent> | (() => Stream.Stream<InstallEvent>);
   readonly agent?: Agent;
   readonly rescanInstalled?: () => boolean;
+  readonly headersSeen?: Array<string | undefined>;
 }
 
 let logOpened = 0;
 
-const handlers = ({ npmFound, events, agent = claude, rescanInstalled }: Served) =>
+const handlers = ({ events, agent = claude, rescanInstalled, headersSeen }: Served) =>
   AgentsRpcs.toLayer({
-    'Agents.list': () =>
-      Effect.succeed([{ ...agent, installed: rescanInstalled?.() ?? agent.installed }]),
-    'Agents.installCommand': () =>
-      Effect.succeed({
-        command: agent.installInstructions ?? COMMAND,
-        npmFound,
-      }),
-    'Agents.install': () => events,
+    'Agents.list': (_payload, { headers }) => {
+      headersSeen?.push(headers[DEVICE_SCOPE_HEADER]);
+      return Effect.succeed([{ ...agent, installed: rescanInstalled?.() ?? agent.installed }]);
+    },
+    'Agents.install': (_payload, { headers }) => {
+      headersSeen?.push(headers[DEVICE_SCOPE_HEADER]);
+      return typeof events === 'function' ? events() : events;
+    },
     'Agents.openInstallLog': () =>
       Effect.sync(() => {
         logOpened += 1;
@@ -66,28 +67,53 @@ const mount = (served: Served): ComponentFixture<AgentInstallOffer> => {
   });
   const fixture = TestBed.createComponent(AgentInstallOffer);
   fixture.componentRef.setInput('agent', served.agent ?? claude);
+  fixture.detectChanges();
   return fixture;
 };
 
-const text = (fixture: ComponentFixture<AgentInstallOffer>): string => {
+@Component({
+  selector: 'app-remote-host',
+  imports: [DeviceScopeDirective, AgentInstallOffer],
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  template: `
+    <div [appDeviceScope]="device()">
+      <app-agent-install [agent]="agent()" />
+    </div>
+  `,
+})
+class RemoteHost {
+  readonly device = input<DeviceId | undefined>(undefined);
+  readonly agent = input.required<Agent>();
+}
+
+const mountOnDevice = (served: Served, device: DeviceId): ComponentFixture<RemoteHost> => {
+  TestBed.configureTestingModule({
+    providers: [{ provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers(served)) }],
+  });
+  const fixture = TestBed.createComponent(RemoteHost);
+  fixture.componentRef.setInput('device', device);
+  fixture.componentRef.setInput('agent', served.agent ?? claude);
+  fixture.detectChanges();
+  return fixture;
+};
+
+const text = (fixture: ComponentFixture<unknown>): string => {
   fixture.detectChanges();
   return (fixture.nativeElement as HTMLElement).textContent ?? '';
 };
 
-const byTestId = (fixture: ComponentFixture<AgentInstallOffer>, id: string): HTMLElement | null =>
+const byTestId = (fixture: ComponentFixture<unknown>, id: string): HTMLElement | null =>
   (fixture.nativeElement as HTMLElement).querySelector(`[data-testid="${id}"]`);
 
-const click = (fixture: ComponentFixture<AgentInstallOffer>, id: string): void => {
+const click = (fixture: ComponentFixture<unknown>, id: string): void => {
   const button = byTestId(fixture, id);
   if (button === null) throw new Error(`no ${id}`);
   button.click();
   fixture.detectChanges();
 };
 
-const waitForText = (fixture: ComponentFixture<AgentInstallOffer>, expected: string) =>
+const waitForText = (fixture: ComponentFixture<unknown>, expected: string) =>
   vi.waitFor(() => expect(text(fixture)).toContain(expected));
-
-const started: InstallEvent = { _tag: 'started' };
 
 beforeEach(() => {
   logOpened = 0;
@@ -98,36 +124,38 @@ afterEach(() => {
 });
 
 describe('AgentInstallOffer', () => {
-  it('offers Install and Show command, and shows the exact command before installing', async () => {
+  it('offers one-click Set up without confirmation modal, noNpm dead-end, or npm install -g command', async () => {
     const fixture = mount({
-      npmFound: true,
-      events: Stream.make(started, { _tag: 'succeeded' }),
+      events: Stream.make(
+        { _tag: 'downloadingRuntime' },
+        { _tag: 'installingAdapter' },
+        { _tag: 'succeeded' },
+      ),
     });
-    await waitForText(fixture, "Claude isn't installed. Install it?");
-    expect(text(fixture)).not.toContain(COMMAND);
-
-    click(fixture, 'show-command');
-    expect(byTestId(fixture, 'install-command')?.textContent).toContain(COMMAND);
+    expect(text(fixture)).toContain("Claude isn't installed.");
+    expect(byTestId(fixture, 'install')?.textContent?.trim()).toBe('Set up');
+    expect(byTestId(fixture, 'show-command')).toBeNull();
+    expect(byTestId(fixture, 'confirm-install')).toBeNull();
+    expect(byTestId(fixture, 'needs-node')).toBeNull();
+    expect(text(fixture)).not.toContain('npm install');
 
     const installed = vi.fn();
     fixture.componentInstance.installed.subscribe(installed);
     click(fixture, 'install');
-    expect(byTestId(fixture, 'install-command')?.textContent).toContain(COMMAND);
-    click(fixture, 'confirm-install');
     await vi.waitFor(() => expect(installed).toHaveBeenCalledOnce());
     expect(text(fixture)).toContain('Claude is installed.');
   });
 
-  it('shows an indeterminate bar while installing, and the elapsed time after about 10 s', async () => {
+  it('shows phased progress (downloadingRuntime -> installingAdapter) and elapsed timer after 10 s', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
     const fixture = mount({
-      npmFound: true,
-      events: Stream.concat(Stream.make(started), Stream.never),
+      events: Stream.concat(
+        Stream.make({ _tag: 'downloadingRuntime' as const, startedAt: Date.now() }),
+        Stream.never,
+      ),
     });
-    await waitForText(fixture, 'Install it?');
     click(fixture, 'install');
-    click(fixture, 'confirm-install');
-    await waitForText(fixture, 'Installing Claude…');
+    await waitForText(fixture, 'Downloading runtime…');
     expect(byTestId(fixture, 'install-progress')).not.toBeNull();
     expect(byTestId(fixture, 'install-elapsed')).toBeNull();
 
@@ -137,32 +165,73 @@ describe('AgentInstallOffer', () => {
     fixture.destroy();
   });
 
-  it('on failure shows the reason, the command and Open log', async () => {
+  it('shows Installing <Agent>… during installingAdapter phase', async () => {
     const fixture = mount({
-      npmFound: true,
-      events: Stream.make(started, {
-        _tag: 'failed',
-        reason: 'PermissionDenied',
-        detail: 'Error: EACCES: permission denied',
-        logPath: '/data/spence/logs/agents/install.log',
-      }),
+      events: Stream.concat(Stream.make({ _tag: 'installingAdapter' as const }), Stream.never),
     });
-    await waitForText(fixture, 'Install it?');
     click(fixture, 'install');
-    click(fixture, 'confirm-install');
-    await waitForText(fixture, "npm isn't allowed to write to its global folder.");
-    expect(text(fixture)).toContain('Error: EACCES: permission denied');
-    expect(byTestId(fixture, 'install-command')?.textContent).toContain(COMMAND);
+    await waitForText(fixture, 'Installing Claude…');
+    fixture.destroy();
+  });
+
+  it('on failure shows concise reason, Try again, and Open log (without manual command), and retries on Try again', async () => {
+    let attempt = 0;
+    const fixture = mount({
+      events: () => {
+        attempt += 1;
+        return attempt === 1
+          ? Stream.make(
+              { _tag: 'downloadingRuntime' as const },
+              {
+                _tag: 'failed' as const,
+                reason: 'ChecksumMismatch' as const,
+                detail: 'SHA-256 mismatch for node-v22.14.0',
+                logPath: '/data/spence/logs/agents/install.log',
+              },
+            )
+          : Stream.make({ _tag: 'installingAdapter' as const }, { _tag: 'succeeded' as const });
+      },
+    });
+    const installed = vi.fn();
+    fixture.componentInstance.installed.subscribe(installed);
+
+    click(fixture, 'install');
+    await waitForText(fixture, 'The downloaded Node runtime failed verification.');
+    expect(text(fixture)).toContain('SHA-256 mismatch for node-v22.14.0');
+    expect(byTestId(fixture, 'install-command')).toBeNull();
+    expect(byTestId(fixture, 'retry-install')).not.toBeNull();
 
     click(fixture, 'open-log');
     await vi.waitFor(() => expect(logOpened).toBe(1));
+
+    click(fixture, 'retry-install');
+    await vi.waitFor(() => expect(installed).toHaveBeenCalledOnce());
+    expect(text(fixture)).toContain('Claude is installed.');
   });
 
-  it('without npm offers only the command and says Node.js is needed', async () => {
-    const fixture = mount({ npmFound: false, events: Stream.empty });
-    await waitForText(fixture, 'Node.js');
-    expect(byTestId(fixture, 'install-command')?.textContent).toContain(COMMAND);
-    expect(byTestId(fixture, 'install')).toBeNull();
+  it('routes Agents.install with DeviceScope header and hides Open log when targeting a Remote device', async () => {
+    const remoteId = DeviceId.make('dev-studio');
+    const headersSeen: Array<string | undefined> = [];
+    const fixture = mountOnDevice(
+      {
+        headersSeen,
+        events: Stream.make(
+          { _tag: 'downloadingRuntime' },
+          {
+            _tag: 'failed',
+            reason: 'RuntimeDownloadFailed',
+            detail: 'Network error',
+            logPath: '/remote/install.log',
+          },
+        ),
+      },
+      remoteId,
+    );
+    click(fixture, 'install');
+    await waitForText(fixture, "Couldn't download the Node runtime for Claude.");
+    expect(headersSeen).toContain(remoteId);
+    expect(byTestId(fixture, 'open-log')).toBeNull();
+    expect(byTestId(fixture, 'retry-install')).not.toBeNull();
   });
 
   it('shows official non-npm instructions and Re-scan for native Agents', async () => {
@@ -177,7 +246,6 @@ describe('AgentInstallOffer', () => {
         'Install Antigravity from https://antigravity.google/download and ensure `agy` is on PATH.',
     };
     const fixture = mount({
-      npmFound: false,
       events: Stream.empty,
       agent: nativeAgent,
       rescanInstalled: () => installedNow,

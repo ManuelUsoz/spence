@@ -342,9 +342,10 @@ export class AgentBar {
   });
 
   protected readonly updateCommand = computed(() => {
-    if (this.live()?.installKind === 'native') return this.upgradeCommand();
+    const upgrade = this.upgradeCommand();
+    if (upgrade !== null) return upgrade;
     const pkg = this.live()?.agentPackage;
-    return pkg !== undefined && pkg !== '' ? `npm install -g ${pkg}@latest` : this.upgradeCommand();
+    return pkg !== undefined && pkg !== '' ? pkg : null;
   });
 
   protected readonly otherWays = computed(() => {

@@ -141,8 +141,10 @@ const launch = async (options: LaunchOptions, peer: () => Promise<Spence>): Prom
   const agentBin = path.join(userData, 'bin');
   installFakeAgent(agentBin);
   const env: NodeJS.ProcessEnv = { ...process.env };
+  let installedBin: string | undefined;
   if (options.installedAgents.length > 0) {
     const pathBin = path.join(userData, 'path-bin');
+    installedBin = pathBin;
     for (const name of options.installedAgents) installFakeAgent(pathBin, name);
     // Windows spells it `Path`; keep whichever key the environment already uses.
     const pathKey = Object.keys(env).find((key) => key.toLowerCase() === 'path') ?? 'PATH';
@@ -168,6 +170,7 @@ const launch = async (options: LaunchOptions, peer: () => Promise<Spence>): Prom
       // Where the in-app folder browser starts: the folder `pickNext` creates folders in.
       SPENCE_E2E_HOME: path.dirname(pickFolder),
       SPENCE_E2E_AGENT_BIN: agentBin,
+      ...(installedBin === undefined ? {} : { SPENCE_E2E_INSTALLED_BIN: installedBin }),
     },
   });
   const page = await app.firstWindow();

@@ -28,9 +28,12 @@ const claude: Agent = {
 
 const handlers = AgentsRpcs.toLayer({
   'Agents.list': () => Effect.succeed([claude]),
-  'Agents.installCommand': () =>
-    Effect.succeed({ command: 'npm install -g ' + claude.package, npmFound: true }),
-  'Agents.install': () => Stream.make({ _tag: 'started' } as const, { _tag: 'succeeded' } as const),
+  'Agents.install': () =>
+    Stream.make(
+      { _tag: 'downloadingRuntime' } as const,
+      { _tag: 'installingAdapter' } as const,
+      { _tag: 'succeeded' } as const,
+    ),
   'Agents.openInstallLog': () => Effect.void,
 });
 
@@ -48,7 +51,11 @@ describe('DesktopApi Agents', () => {
     Effect.gen(function* () {
       const api = yield* DesktopApi;
       const events = yield* Stream.runCollect(api['Agents.install']({ agentId: claude.id }));
-      expect(Array.from(events)).toEqual([{ _tag: 'started' }, { _tag: 'succeeded' }]);
+      expect(Array.from(events)).toEqual([
+        { _tag: 'downloadingRuntime' },
+        { _tag: 'installingAdapter' },
+        { _tag: 'succeeded' },
+      ]);
     }).pipe(Effect.provide(makeDesktopTestLayer(handlers))),
   );
 });

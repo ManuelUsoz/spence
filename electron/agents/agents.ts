@@ -3,17 +3,20 @@ import type { Agent } from '../../src/shared/agents/agents.rpc';
 import { agentCopy } from '../i18n/agent-copy';
 import { resolveLocale, type Locale } from '../i18n/locale';
 import { Settings } from '../settings/settings';
+import { Store } from '../store/store';
 import { catalog, type CatalogEntry } from './catalog';
-import { MergedPath, PathSources } from './merged-path';
-import { resolveExecutable } from './resolve';
+import { e2eAgentBin, e2eFakeAgent, e2eInstalledBin } from './e2e-agent';
 import { execStdout, system32 } from './exec';
 import { buildLaunch } from './launch';
+import { inspectManagedAgent } from './managed';
+import { MergedPath, PathSources } from './merged-path';
+import { resolveExecutable } from './resolve';
+import { AgentRuntime } from './runtime';
 import {
   inspectNpmPackageVersion,
   makeNativeVersionCache,
   parseSemver,
   qualifyVersion,
-  type NativeVersionCache,
 } from './version';
 
 /** The Catalog with each Agent's installed state and static/cached version qualification. */
@@ -27,41 +30,36 @@ export class Agents extends Context.Service<
   }
 >()('agents/Agents') {}
 
-const inspectEntry = Effect.fnUntraced(function* (
-  entry: CatalogEntry,
-  resolved: Option.Option<string>,
-  nativeCache: NativeVersionCache,
-  locale: Locale,
-) {
-  const installed = Option.isSome(resolved);
-  const installedVersion = Option.isNone(resolved)
-    ? undefined
-    : entry.installKind === 'npm'
-      ? yield* inspectNpmPackageVersion(resolved.value, entry.package)
-      : yield* nativeCache.peek(resolved.value);
+interface InspectionOutcome {
+  readonly installed: boolean;
+  readonly installedVersion: string | undefined;
+}
+
+const inspectEntry = (entry: CatalogEntry, outcome: InspectionOutcome, locale: Locale): Agent => {
   const versionQualification =
-    installedVersion === undefined
+    outcome.installedVersion === undefined
       ? undefined
-      : qualifyVersion(installedVersion, entry.qualification);
+      : qualifyVersion(outcome.installedVersion, entry.qualification);
   const copy = agentCopy(locale, entry.id);
   const upgradeCommand = copy?.upgradeCommand ?? entry.upgradeCommand;
   const installInstructions = copy?.installInstructions ?? entry.installInstructions;
-  const agent: Agent = {
+  return {
     id: entry.id,
     name: entry.name,
     installKind: entry.installKind,
     package: entry.package,
-    installed,
+    installed: outcome.installed,
     imageLimits: entry.imageLimits,
     capabilities: entry.capabilities,
     qualifiedVersion: entry.qualification.version,
-    ...(installedVersion === undefined ? {} : { installedVersion }),
+    ...(outcome.installedVersion === undefined
+      ? {}
+      : { installedVersion: outcome.installedVersion }),
     ...(versionQualification === undefined ? {} : { versionQualification }),
     ...(upgradeCommand === undefined ? {} : { upgradeCommand }),
     ...(installInstructions === undefined ? {} : { installInstructions }),
   };
-  return agent;
-});
+};
 
 export const layerAgents = Layer.effect(
   Agents,
@@ -85,6 +83,45 @@ export const layerAgents = Layer.effect(
     );
 
     const settingsOption = yield* Effect.serviceOption(Settings);
+    const storeOption = yield* Effect.serviceOption(Store);
+    const runtimeOption = yield* Effect.serviceOption(AgentRuntime);
+    const isE2e = e2eAgentBin(env) !== undefined;
+
+    const inspectNpm = Effect.fnUntraced(function* (entry: CatalogEntry, path: string) {
+      if (Option.isSome(storeOption) && Option.isSome(runtimeOption)) {
+        const runtime = yield* runtimeOption.value.inspect;
+        if (Option.isSome(runtime)) {
+          const managed = yield* inspectManagedAgent(storeOption.value.root, entry);
+          if (Option.isSome(managed)) {
+            return { installed: true, installedVersion: managed.value.version };
+          }
+        }
+        if (!isE2e) return { installed: false, installedVersion: undefined };
+      } else if (!isE2e) {
+        const found = yield* resolveExecutable(entry.binary, path, platform);
+        if (Option.isNone(found)) return { installed: false, installedVersion: undefined };
+        const installedVersion = yield* inspectNpmPackageVersion(found.value, entry.package);
+        return { installed: true, installedVersion };
+      }
+
+      // E2E mode (`SPENCE_E2E=1`): honour e2e bin (`MergedPath`) and `spenceInstalledAgents` (`SPENCE_E2E_INSTALLED_BIN`).
+      let found = yield* resolveExecutable(entry.binary, path, platform);
+      const extraBin = e2eInstalledBin(env);
+      if (Option.isNone(found) && entry.id !== e2eFakeAgent.id && extraBin !== undefined) {
+        found = yield* resolveExecutable(entry.binary, extraBin, platform);
+      }
+      if (Option.isNone(found)) return { installed: false, installedVersion: undefined };
+      const installedVersion = yield* inspectNpmPackageVersion(found.value, entry.package);
+      return { installed: true, installedVersion };
+    });
+
+    const inspectNative = Effect.fnUntraced(function* (entry: CatalogEntry, path: string) {
+      const found = yield* resolveExecutable(entry.binary, path, platform);
+      if (Option.isNone(found)) return { installed: false, installedVersion: undefined };
+      const installedVersion = yield* nativeCache.peek(found.value);
+      return { installed: true, installedVersion };
+    });
+
     const list = Effect.gen(function* () {
       const language = Option.isSome(settingsOption)
         ? (yield* settingsOption.value.get).language
@@ -92,8 +129,8 @@ export const layerAgents = Layer.effect(
       const locale = resolveLocale(language, env);
       const path = yield* mergedPath.get;
       return yield* Effect.forEach(catalog, (entry) =>
-        resolveExecutable(entry.binary, path, platform).pipe(
-          Effect.flatMap((found) => inspectEntry(entry, found, nativeCache, locale)),
+        (entry.installKind === 'npm' ? inspectNpm(entry, path) : inspectNative(entry, path)).pipe(
+          Effect.map((outcome) => inspectEntry(entry, outcome, locale)),
         ),
       );
     });

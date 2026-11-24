@@ -273,7 +273,6 @@ const makeLayer = (options: MountOptions = {}) => {
     }),
     AgentsRpcs.toLayer({
       'Agents.list': () => Effect.succeed([agent]),
-      'Agents.installCommand': () => Effect.die('unused'),
       'Agents.install': () => Stream.die('unused'),
       'Agents.openInstallLog': () => Effect.die('unused'),
     }),

@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { toast } from '@ui/toast';
 import { Effect, Layer, Stream } from 'effect';
@@ -93,10 +93,14 @@ const defaults: Settings = {
 @Component({
   selector: 'app-install-offer-stub',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `<p data-testid="install-offer-stub">Install {{ agent().name }}</p>`,
+  template: `
+    <p data-testid="install-offer-stub">Set up {{ agent().name }}</p>
+    <button type="button" data-testid="stub-emit-installed" (click)="installed.emit()"></button>
+  `,
 })
 class InstallOfferStub {
   readonly agent = input.required<Agent>();
+  readonly installed = output<void>();
 }
 
 let patches: SettingsPatch[] = [];
@@ -180,7 +184,6 @@ const handlers = (
     }),
     AgentsRpcs.toLayer({
       'Agents.list': () => Effect.succeed(typeof agents === 'function' ? agents() : agents),
-      'Agents.installCommand': () => Effect.die('not served'),
       'Agents.install': () => Effect.die('not served'),
       'Agents.openInstallLog': () => Effect.die('not served'),
     }),
@@ -457,7 +460,7 @@ describe('SettingsPage', () => {
     expect(byTestId('agent-claude-configure')).toBeNull();
     expect(
       get('agent-claude').querySelector('[data-testid="install-offer-stub"]')?.textContent,
-    ).toBe('Install Claude');
+    ).toBe('Set up Claude');
   });
 
   it('closes on Escape, without locking global shortcuts', async () => {
@@ -571,6 +574,31 @@ describe('SettingsPage', () => {
 
     click(fixture, 'agent-codex-configure');
     expect(get('agent-codex').textContent).toContain('Not supported by Codex');
+  });
+
+  it('refreshes Agent status when embedded install offer emits installed and keeps Configure for Model/Effort', async () => {
+    let installedNow = false;
+    const fixture = await open(defaults, () => [
+      {
+        ...agent(installedNow),
+        ...(installedNow
+          ? { installedVersion: '0.106.0', versionQualification: 'qualified' as const }
+          : {}),
+      },
+    ]);
+    expect(get('agent-claude-status').textContent).toContain('Not installed');
+    expect(byTestId('agent-claude-configure')).toBeNull();
+
+    installedNow = true;
+    click(fixture, 'stub-emit-installed');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(get('agent-claude-status').textContent).toContain('Installed');
+    });
+    expect(byTestId('agent-claude-configure')).not.toBeNull();
+    click(fixture, 'agent-claude-configure');
+    expect(byTestId('agent-claude-model')).not.toBeNull();
+    expect(byTestId('agent-claude-effort')).not.toBeNull();
   });
 
   describe('Permissions', () => {
