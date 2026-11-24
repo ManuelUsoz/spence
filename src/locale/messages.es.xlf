@@ -1198,6 +1198,10 @@
         <source><x id="INTERPOLATION" equiv-text="{{ device() }}"/> is offline. Sending is paused.</source>
         <target><x id="INTERPOLATION" equiv-text="{{ device() }}"/> está desconectado. El envío está en pausa.</target>
       </trans-unit>
+      <trans-unit id="6140953764473210721" datatype="html">
+        <source>Working directory</source>
+        <target state="translated">Directorio de trabajo</target>
+      </trans-unit>
       <trans-unit id="2718257856590555379" datatype="html">
         <source> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> of <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </source>
         <target> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> de <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </target>
@@ -1509,10 +1513,6 @@
       <trans-unit id="1476165955678270014" datatype="html">
         <source>rejected</source>
         <target>rechazado</target>
-      </trans-unit>
-      <trans-unit id="6140953764473210721" datatype="html">
-        <source>Working directory</source>
-        <target state="translated">Directorio de trabajo</target>
       </trans-unit>
       <trans-unit id="1386306711019304612" datatype="html">
         <source>Input</source>
@@ -2177,6 +2177,30 @@
       <trans-unit id="5050354799603630449" datatype="html">
         <source>Writing</source>
         <target>Escribiendo</target>
+      </trans-unit>
+      <trans-unit id="3590288020667398750" datatype="html">
+        <source> No steps yet. </source>
+        <target state="translated"> Todavía no hay pasos. </target>
+      </trans-unit>
+      <trans-unit id="3992517163368458304" datatype="html">
+        <source>Truncated</source>
+        <target state="translated">Truncado</target>
+      </trans-unit>
+      <trans-unit id="7348713368420660074" datatype="html">
+        <source>Showing the last 32 KB.</source>
+        <target state="translated">Mostrando los últimos 32 KB.</target>
+      </trans-unit>
+      <trans-unit id="3397978303015980248" datatype="html">
+        <source> Waiting for output… </source>
+        <target state="translated"> Esperando salida… </target>
+      </trans-unit>
+      <trans-unit id="2300779668270933480" datatype="html">
+        <source>Files touched</source>
+        <target state="translated">Archivos tocados</target>
+      </trans-unit>
+      <trans-unit id="4043049091728011235" datatype="html">
+        <source>Cancelled</source>
+        <target state="translated">Cancelado</target>
       </trans-unit>
       <trans-unit id="5780646452197477641" datatype="html">
         <source><x id="INTERPOLATION" equiv-text="{{ runningCount() }}"/> running</source>

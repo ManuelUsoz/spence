@@ -56,6 +56,7 @@
 //   "markdown:long" streams a long Markdown reply in small chunks for renderer profiling
 //   "echo:<text>" (or anything else) streams the text back in three chunks and ends `end_turn`
 import * as acp from '@agentclientprotocol/sdk/unstable';
+import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { Readable, Writable } from 'node:stream';
@@ -232,6 +233,29 @@ const cancelled = new Map();
 const waitForCancel = (sessionId) =>
   new Promise((resolve) => {
     cancelled.set(sessionId, resolve);
+  });
+
+const waitForFileOrCancel = (filePath, cancelPromise) =>
+  new Promise((resolve) => {
+    if (existsSync(filePath)) {
+      resolve('file');
+      return;
+    }
+    let settled = false;
+    const timer = setInterval(() => {
+      if (existsSync(filePath) && !settled) {
+        settled = true;
+        clearInterval(timer);
+        resolve('file');
+      }
+    }, 25);
+    void cancelPromise.then(() => {
+      if (!settled) {
+        settled = true;
+        clearInterval(timer);
+        resolve('cancelled');
+      }
+    });
   });
 
 /** Per session: steered texts waiting for the scripted Turn, and Turns waiting for one. */
@@ -1108,6 +1132,113 @@ const app = acp
         if (cancel === undefined) return { stopReason: 'end_turn' };
         await cancel;
         return { stopReason: 'cancelled' };
+      }
+      if (text === 'ticker-live') {
+        const cwd = folders.get(sessionId) ?? process.cwd();
+        const cancel = waitForCancel(sessionId);
+        let isCancelled = false;
+        void cancel.then(() => {
+          isCancelled = true;
+        });
+        await client.notify(
+          'session/update',
+          update(sessionId, thought('Hidden live reasoning prose')),
+        );
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'read-live-1',
+            title: 'Read src/view.ts',
+            kind: 'read',
+            status: 'in_progress',
+            locations: [{ path: join(cwd, 'src', 'view.ts') }],
+          }),
+        );
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'read-live-1',
+            status: 'completed',
+          }),
+        );
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'edit-live-1',
+            title: 'Edit src/live.ts',
+            kind: 'edit',
+            status: 'in_progress',
+            locations: [{ path: join(cwd, 'src', 'live.ts') }],
+          }),
+        );
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'edit-live-1',
+            status: 'completed',
+            content: [
+              {
+                type: 'diff',
+                path: join(cwd, 'src', 'live.ts'),
+                oldText: 'const x = 1;\n',
+                newText: 'const x = 2;\n',
+              },
+            ],
+          }),
+        );
+        const step2File = join(cwd, '.ticker-step2');
+        const finishFile = join(cwd, '.ticker-finish');
+        const { terminalId } = await client.request('terminal/create', {
+          sessionId,
+          command: process.execPath,
+          args: [
+            '-e',
+            `const fs = require('fs');
+process.stdout.write('live-chunk-1\\n');
+const step2 = ${JSON.stringify(step2File)};
+const timer = setInterval(() => {
+  if (fs.existsSync(step2)) {
+    clearInterval(timer);
+    process.stdout.write('live-chunk-2\\n');
+    process.exit(0);
+  }
+}, 25);`,
+          ],
+        });
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'term-live-1',
+            title: 'node live-task',
+            kind: 'execute',
+            status: 'in_progress',
+            content: [{ type: 'terminal', terminalId }],
+          }),
+        );
+        await Promise.race([
+          client.request('terminal/wait_for_exit', { sessionId, terminalId }).catch(() => {}),
+          cancel,
+        ]);
+        await client.request('terminal/release', { sessionId, terminalId }).catch(() => {});
+        if (isCancelled) return { stopReason: 'cancelled' };
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'term-live-1',
+            status: 'completed',
+            content: [{ type: 'terminal', terminalId }],
+          }),
+        );
+        const outcome = await waitForFileOrCancel(finishFile, cancel);
+        if (outcome === 'cancelled') return { stopReason: 'cancelled' };
+        await client.notify('session/update', chunk(sessionId, 'All live checks passed.'));
+        return { stopReason: 'end_turn' };
       }
       if (text === 'ask') {
         const cancel = waitForCancel(sessionId);

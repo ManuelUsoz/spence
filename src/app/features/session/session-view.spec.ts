@@ -16,6 +16,7 @@ import {
   SessionsRpcs,
   StepId,
   STOP_AGENT_INTERRUPTED_DETAIL,
+  ThoughtId,
   TurnId,
   type Command,
   type HandoffAttempt,
@@ -1593,6 +1594,255 @@ describe('SessionView', () => {
     await vi.waitFor(() => expect(receipt(fixture)).not.toBeNull());
     expect(ticker(fixture)).toBeNull();
     expect(dock(fixture)?.textContent?.trim()).toBe('');
+  });
+
+  it('keeps the Ticker collapsed by default, toggles an inline drawer with ordered Steps and tabular-nums timers, and excludes live Thought prose', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const fixture = mount(serve([Stream.fromQueue(queue)]));
+    const baseNow = Date.now();
+
+    Queue.offerAllUnsafe(queue, [
+      live,
+      started(),
+      userMessage('Check files'),
+      step({
+        id: StepId.make('step-done'),
+        kind: 'read',
+        title: 'Read src/view.ts',
+        status: 'done',
+        files: ['src/view.ts'],
+        startedAt: baseNow - 5_000,
+        endedAt: baseNow - 3_500,
+      }),
+      step({
+        id: StepId.make('step-running'),
+        kind: 'execute',
+        title: 'npm test',
+        status: 'running',
+        files: [],
+        startedAt: baseNow - 2_000,
+      }),
+      event({
+        _tag: 'Thought',
+        id: ThoughtId.make('thought-1'),
+        turnId,
+        text: 'Secret internal reasoning',
+      }),
+    ]);
+
+    await vi.waitFor(() => expect(ticker(fixture)).not.toBeNull());
+    const tick = ticker(fixture)!;
+    const toggle = tick.querySelector<HTMLButtonElement>('[data-testid="ticker-toggle"]');
+    expect(toggle?.getAttribute('aria-expanded')).toBe('false');
+    expect(tick.querySelector('[data-testid="ticker-drawer"]')).toBeNull();
+
+    toggle?.click();
+    fixture.detectChanges();
+    expect(toggle?.getAttribute('aria-expanded')).toBe('true');
+
+    const drawer = tick.querySelector('[data-testid="ticker-drawer"]');
+    expect(drawer).not.toBeNull();
+    expect(drawer?.textContent).not.toContain('Secret internal reasoning');
+
+    const steps = [...drawer!.querySelectorAll<HTMLElement>('[data-testid="ticker-step"]')];
+    expect(steps).toHaveLength(2);
+    expect(steps[0]?.querySelector('[data-testid="ticker-step-title"]')?.textContent?.trim()).toBe(
+      'src/view.ts',
+    );
+    expect(steps[0]?.querySelector('[data-testid="ticker-step-status"]')?.textContent?.trim()).toBe(
+      'Done',
+    );
+    const doneDuration = steps[0]?.querySelector<HTMLElement>(
+      '[data-testid="ticker-step-duration"]',
+    );
+    expect(doneDuration?.textContent?.trim()).toBe('1.5s');
+    expect(doneDuration?.classList.contains('tabular-nums')).toBe(true);
+
+    expect(steps[1]?.querySelector('[data-testid="ticker-step-title"]')?.textContent?.trim()).toBe(
+      'npm test',
+    );
+    expect(steps[1]?.querySelector('[data-testid="ticker-step-status"]')?.textContent?.trim()).toBe(
+      'Running',
+    );
+    const liveDuration = steps[1]?.querySelector<HTMLElement>(
+      '[data-testid="ticker-step-duration"]',
+    );
+    expect(liveDuration?.classList.contains('tabular-nums')).toBe(true);
+    expect(liveDuration?.textContent?.trim()).toMatch(/^\d+(\.\d+)?s$/);
+
+    toggle?.click();
+    fixture.detectChanges();
+    expect(toggle?.getAttribute('aria-expanded')).toBe('false');
+    expect(tick.querySelector('[data-testid="ticker-drawer"]')).toBeNull();
+  });
+
+  it('streams live StepDelta command output tails and truncation indicator when clicking an execute Step in the expanded Ticker', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const fixture = mount(serve([Stream.fromQueue(queue)]));
+    const execId = StepId.make('exec-live');
+    const readId = StepId.make('read-with-output');
+
+    Queue.offerAllUnsafe(queue, [
+      live,
+      started(),
+      userMessage('Run tests'),
+      step({
+        id: StepId.make('read-empty'),
+        kind: 'read',
+        title: 'Read src/a.ts',
+        status: 'done',
+        files: ['src/a.ts'],
+        output: '',
+      }),
+      step({
+        id: readId,
+        kind: 'read',
+        title: 'Read src/b.ts',
+        status: 'done',
+        files: ['src/b.ts'],
+        output: 'file contents here',
+      }),
+      step({
+        id: execId,
+        kind: 'execute',
+        title: 'npm test',
+        status: 'running',
+        files: [],
+        output: '',
+        startedAt: Date.now() - 1_000,
+      }),
+    ]);
+
+    await vi.waitFor(() => expect(ticker(fixture)).not.toBeNull());
+    const tick = ticker(fixture)!;
+    tick.querySelector<HTMLButtonElement>('[data-testid="ticker-toggle"]')?.click();
+    fixture.detectChanges();
+
+    const stepRows = [...tick.querySelectorAll<HTMLElement>('[data-testid="ticker-step"]')];
+    expect(stepRows).toHaveLength(3);
+    expect(stepRows[0]?.getAttribute('aria-expanded')).toBeNull();
+    expect(stepRows[1]?.getAttribute('aria-expanded')).toBe('false');
+    expect(stepRows[2]?.getAttribute('aria-expanded')).toBe('false');
+
+    // Click the running execute step before output arrives.
+    stepRows[2]?.click();
+    fixture.detectChanges();
+    expect(stepRows[2]?.getAttribute('aria-expanded')).toBe('true');
+    expect(tick.querySelector('[data-testid="ticker-step-output-empty"]')).not.toBeNull();
+
+    // Stream live StepDelta chunks while Turn is running.
+    Queue.offerAllUnsafe(queue, [event({ _tag: 'StepDelta', id: execId, output: 'first-line\n' })]);
+    await vi.waitFor(() =>
+      expect(tick.querySelector('[data-testid="ticker-step-output"]')?.textContent).toContain(
+        'first-line',
+      ),
+    );
+    expect(tick.querySelector('[data-testid="ticker-step-truncated"]')).toBeNull();
+
+    Queue.offerAllUnsafe(queue, [
+      event({ _tag: 'StepDelta', id: execId, output: 'second-line\n', truncated: true }),
+      step({
+        id: execId,
+        kind: 'execute',
+        title: 'npm test',
+        status: 'failed',
+        files: [],
+        output: '',
+        exitCode: 1,
+        startedAt: 1_000,
+        endedAt: 2_500,
+      }),
+    ]);
+    await vi.waitFor(() =>
+      expect(tick.querySelector('[data-testid="ticker-step-output"]')?.textContent).toContain(
+        'second-line',
+      ),
+    );
+    expect(tick.querySelector('[data-testid="ticker-step-truncated"]')).not.toBeNull();
+    expect(tick.querySelector('[data-testid="ticker-step-exit-code"]')?.textContent).toContain('1');
+  });
+
+  it('shows touched files in the expanded Ticker, toggles inline @ui/diff mid-Turn, and resets on Turn end and next Turn', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const fixture = mount(serve([Stream.fromQueue(queue)]));
+
+    Queue.offerAllUnsafe(queue, [
+      live,
+      started(),
+      userMessage('Inspect and edit'),
+      step({
+        id: StepId.make('step-read'),
+        kind: 'read',
+        title: 'Read src/read-only.ts',
+        status: 'done',
+        files: ['src/read-only.ts'],
+        diffs: [],
+      }),
+      step({
+        id: StepId.make('step-edit'),
+        kind: 'edit',
+        title: 'Edit src/edit.ts',
+        status: 'running',
+        files: ['src/edit.ts'],
+        diffs: [{ path: 'src/edit.ts', before: 'const x = 1;\n', after: 'const x = 2;\n' }],
+      }),
+    ]);
+
+    await vi.waitFor(() => expect(ticker(fixture)).not.toBeNull());
+    const tick = ticker(fixture)!;
+    tick.querySelector<HTMLButtonElement>('[data-testid="ticker-toggle"]')?.click();
+    fixture.detectChanges();
+
+    const touchedRow = tick.querySelector('[data-testid="ticker-touched-files"]');
+    expect(touchedRow).not.toBeNull();
+    const touchedItems = [
+      ...touchedRow!.querySelectorAll<HTMLElement>('[data-testid="ticker-touched-file"]'),
+    ];
+    expect(touchedItems).toHaveLength(2);
+    expect(touchedItems[0]?.tagName).toBe('SPAN');
+    expect(touchedItems[0]?.textContent?.trim()).toBe('read-only.ts');
+    expect(touchedItems[1]?.tagName).toBe('BUTTON');
+    expect(touchedItems[1]?.textContent).toContain('edit.ts');
+    expect(touchedItems[1]?.textContent).toContain('+1');
+    expect(touchedItems[1]?.getAttribute('aria-expanded')).toBe('false');
+    expect(tick.querySelector('[data-testid="ticker-file-diff"]')).toBeNull();
+
+    touchedItems[1]?.click();
+    fixture.detectChanges();
+    expect(touchedItems[1]?.getAttribute('aria-expanded')).toBe('true');
+    const diff = tick.querySelector('[data-testid="ticker-file-diff"] app-diff-patch');
+    expect(diff).not.toBeNull();
+    expect(diff?.textContent).toContain('const x = 2;');
+
+    // Finish the Turn cleanly -> Receipt collapses by default, Ticker gone.
+    Queue.offerAllUnsafe(queue, [agentMessage('Edited'), ended()]);
+    await vi.waitFor(() => expect(receipt(fixture)).not.toBeNull());
+    expect(ticker(fixture)).toBeNull();
+    expect(
+      receipt(fixture)
+        ?.querySelector('[hlmTraceCollapsibleTrigger]')
+        ?.getAttribute('aria-expanded'),
+    ).toBe('false');
+
+    // Start a second Turn -> its Ticker starts collapsed by default.
+    const turn2 = TurnId.make('turn-2');
+    Queue.offerAllUnsafe(queue, [
+      event({ _tag: 'TurnStarted', turnId: turn2, permissionMode: 'auto' }),
+      event({
+        _tag: 'Message',
+        id: MessageId.make('user-2'),
+        turnId: turn2,
+        role: 'user',
+        parts: [{ _tag: 'text', text: 'Next' }],
+      }),
+      step({ id: StepId.make('step-turn-2'), turnId: turn2 }),
+    ]);
+    await vi.waitFor(() => expect(ticker(fixture)).not.toBeNull());
+    const nextTick = ticker(fixture)!;
+    expect(
+      nextTick.querySelector('[data-testid="ticker-toggle"]')?.getAttribute('aria-expanded'),
+    ).toBe('false');
+    expect(nextTick.querySelector('[data-testid="ticker-drawer"]')).toBeNull();
   });
 
   it('shows Notices and Compactions in the thread', async () => {
