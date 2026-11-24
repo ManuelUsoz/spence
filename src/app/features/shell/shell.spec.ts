@@ -13,7 +13,9 @@ import {
   PageId,
   type BrowserState,
 } from '../../../shared/browser/browser.rpc';
+import { toast } from '@ui/toast';
 import { DevicesRpcs, DeviceId } from '../../../shared/devices/devices.rpc';
+import { NotificationsRpcs } from '../../../shared/notifications/notifications.rpc';
 import { ProjectId, ProjectsRpcs, type Project } from '../../../shared/projects/projects.rpc';
 import {
   SessionId,
@@ -21,6 +23,7 @@ import {
   TurnId,
   type LiveState,
   type SessionChange,
+  type SessionNotification,
   type SessionSummary,
 } from '../../../shared/sessions/sessions.rpc';
 import { SettingsRpcs, type Settings } from '../../../shared/settings/settings.rpc';
@@ -238,6 +241,7 @@ interface DesktopFixtureOptions {
   readonly changesBySession?: (sessionId: SessionId) => ChangesResult;
   readonly changes?: Stream.Stream<SessionChange>;
   readonly activations?: Stream.Stream<TabActivation>;
+  readonly notifications?: Stream.Stream<SessionNotification>;
   readonly browserSpy?: BrowserTestSpy;
 }
 
@@ -401,6 +405,9 @@ const desktopLayer = (options: DesktopFixtureOptions = {}) => {
             options.visibilityUpdates?.push(obscured);
           }),
         'Tabs.activations': () => options.activations ?? Stream.empty,
+      }),
+      NotificationsRpcs.toLayer({
+        'Notifications.events': () => options.notifications ?? Stream.empty,
       }),
       SessionsRpcs.toLayer({
         'Session.changes': () => options.changes ?? Stream.empty,
@@ -2353,6 +2360,184 @@ describe('Shell Browser split pane & PanelHeader toggle', () => {
       expect(root.querySelector('[data-testid="browser-pane-stub"]')?.textContent).toContain(
         sLocal,
       );
+    });
+  });
+});
+
+describe('Shell in-app Session notifications', () => {
+  afterEach(() => {
+    toast.dismiss();
+  });
+
+  const findNotificationToasts = () =>
+    [
+      ...document.querySelectorAll<HTMLElement>('[data-testid="session-notification-toast"]'),
+    ].filter((el) => el.getAttribute('data-removed') !== 'true');
+
+  it('renders localized toasts for blocked, turnFinished, and error (including New Session fallback) and navigates with turn scroll on Open', async () => {
+    const notifications = Queue.make<SessionNotification>().pipe(Effect.runSync);
+    const updates: WorkspaceState[] = [];
+    const spy: BrowserTestSpy = {
+      activeSessions: [],
+      widths: [],
+      occludedCalls: [],
+      states: new Map(),
+    };
+
+    const s1 = SessionId.make('s1');
+    const s2 = SessionId.make('s2');
+    const sRemote = SessionId.make('s-remote');
+    const pRemote = ProjectId.make('p-remote');
+
+    const { fixture, tabs } = await mountShell('other', {
+      projects: [project1, project2],
+      notifications: Stream.fromQueue(notifications),
+      updates,
+      browserSpy: spy,
+      restored: makeRestored(
+        [
+          {
+            projectId: p1,
+            activeTabId: 't1',
+            tabs: [
+              { tabId: 't1', paneId: 'pane1', panelId: 'panel1', sessionId: s1, title: 'Active' },
+            ],
+          },
+          {
+            projectId: p2,
+            activeTabId: 't2',
+            tabs: [
+              { tabId: 't2', paneId: 'pane2', panelId: 'panel2', sessionId: s2, title: 'Other' },
+            ],
+          },
+        ],
+        p1,
+      ),
+    });
+
+    const settings = TestBed.inject(SettingsState);
+    const root = fixture.nativeElement as HTMLElement;
+    // Open Browser pane on s1 so we verify toast occlusion interacts cleanly with WebContentsView.
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="toggle-browser"]')).not.toBeNull();
+    });
+    (root.querySelector('[data-testid="toggle-browser"]') as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="browser-pane-container"]')).not.toBeNull();
+    });
+
+    // Open Settings while on t1, so clicking Open must exit Settings and switch to p2 / s2.
+    settings.show();
+    fixture.detectChanges();
+    expect(settings.open()).toBe(true);
+
+    const turnBlocked = TurnId.make('turn-blocked');
+    Queue.offerUnsafe(notifications, {
+      sessionId: s2,
+      projectId: p2,
+      turnId: turnBlocked,
+      cause: 'blocked',
+      title: 'Other',
+      sessionTitle: { auto: 'Other', autoIsPlaceholder: false },
+    });
+
+    const blockedToast = await vi.waitFor(() => {
+      fixture.detectChanges();
+      const found = findNotificationToasts();
+      expect(found.length).toBeGreaterThanOrEqual(1);
+      return found.find((el) => el.textContent?.includes('Other'))!;
+    });
+    expect(blockedToast).toBeDefined();
+    expect(blockedToast.textContent).toContain('Waiting for your answer');
+    const openBtn = [...blockedToast.querySelectorAll('button')].find(
+      (btn) => btn.textContent?.trim() === 'Open',
+    );
+    expect(openBtn).toBeDefined();
+    await vi.waitFor(() => expect(spy.occludedCalls.at(-1)).toBe(true));
+
+    // Clicking Open exits Settings, switches to p2 / s2, and requests turn scroll.
+    openBtn?.click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(settings.open()).toBe(false);
+      expect(tabs.activeProjectId()).toBe(p2);
+      expect(tabs.active()?.session).toBe(s2);
+      expect(tabs.pendingTurnScroll()).toEqual({ sessionId: s2, turnId: turnBlocked });
+    });
+
+    // Dismissing/closing toasts restores Browser occlusion state when returning to s1.
+    toast.dismiss();
+    tabs.open({ id: s1, projectId: p1, title: 'Active' });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(spy.occludedCalls.at(-1)).toBe(false);
+    });
+
+    // Notification targeting s1 while t1 is covered by Changes overlay -> Open exits the overlay and scrolls.
+    tabs.openChangesPanel(s1);
+    fixture.detectChanges();
+    expect(tabs.activeTabOverlay()).not.toBeNull();
+    const turnErr = TurnId.make('turn-err');
+    Queue.offerUnsafe(notifications, {
+      sessionId: s1,
+      projectId: p1,
+      turnId: turnErr,
+      cause: 'error',
+      title: '',
+      sessionTitle: { auto: '', autoIsPlaceholder: true },
+    });
+
+    const errToast = await vi.waitFor(() => {
+      fixture.detectChanges();
+      const found = findNotificationToasts();
+      expect(found.length).toBeGreaterThanOrEqual(1);
+      return found[found.length - 1]!;
+    });
+    expect(errToast.textContent).toContain('New Session');
+    expect(errToast.textContent).toContain('Stopped with an error');
+    const errOpen = [...errToast.querySelectorAll('button')].find(
+      (btn) => btn.textContent?.trim() === 'Open',
+    );
+    errOpen?.click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(tabs.activeTabOverlay()).toBeNull();
+      expect(tabs.active()?.session).toBe(s1);
+      expect(tabs.pendingTurnScroll()).toEqual({ sessionId: s1, turnId: turnErr });
+    });
+
+    // Remote Session turnFinished notification -> Open activates Remote Project, opens Session Tab, and scrolls.
+    const turnDone = TurnId.make('turn-done');
+    Queue.offerUnsafe(notifications, {
+      device: dRemote,
+      sessionId: sRemote,
+      projectId: pRemote,
+      turnId: turnDone,
+      cause: 'turnFinished',
+      title: 'Remote deploy',
+      sessionTitle: { user: 'Remote deploy', autoIsPlaceholder: false },
+    });
+
+    const remoteToast = await vi.waitFor(() => {
+      fixture.detectChanges();
+      const found = findNotificationToasts();
+      const match = found.find((el) => el.textContent?.includes('Remote deploy'));
+      expect(match).toBeDefined();
+      return match!;
+    });
+    expect(remoteToast.textContent).toContain('Turn finished');
+    const remoteOpen = [...remoteToast.querySelectorAll('button')].find(
+      (btn) => btn.textContent?.trim() === 'Open',
+    );
+    remoteOpen?.click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(tabs.activeProjectId()).toBe(pRemote);
+      expect(tabs.projectDevice(pRemote)).toBe(dRemote);
+      expect(tabs.active()?.session).toBe(sRemote);
+      expect(tabs.pendingTurnScroll()).toEqual({ sessionId: sRemote, turnId: turnDone });
     });
   });
 });

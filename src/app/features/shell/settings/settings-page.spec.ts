@@ -334,6 +334,8 @@ describe('SettingsPage', () => {
 
   it('turns Notifications off', async () => {
     const fixture = await open();
+    const label = document.querySelector('label[for="settings-notifications"]');
+    expect(label?.textContent?.trim()).toBe('Notify me about background Sessions');
     flip(fixture, 'settings-notifications');
     await expectPatch({ notifications: false });
   });

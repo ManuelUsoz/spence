@@ -1092,6 +1092,15 @@ export const parityMatrix: ReadonlyArray<ParityRow> = [
     },
   },
   {
+    id: 'notifications',
+    title: 'in-app Session notifications',
+    covers: rpc('Notifications.events'),
+    parity: {
+      _tag: 'LocalOnly',
+      why: 'In-app toast notifications belong to the viewing Device’s focused window; Remote Session changes are observed locally by RemoteNotifier.',
+    },
+  },
+  {
     id: 'shell',
     title: 'app info, updates and external links',
     covers: rpc('AppInfo.get', 'Update.check', 'Update.install', 'Links.openExternal'),

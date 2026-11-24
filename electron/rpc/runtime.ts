@@ -14,6 +14,7 @@ import { layerPowerEventsLive } from '../lan/power';
 import { layerRemoteNotifier } from '../lan/remote-notifier';
 import { layerStoreUserData } from '../store/store';
 import { layerAutoArchiveLive } from '../sessions/auto-archive';
+import { layerInAppNotificationChannelLive } from '../sessions/in-app-notifications';
 import { layerNotificationDispatcherLive, layerNotifierLive } from '../sessions/os-notifier';
 import { layerWindowFocus } from '../sessions/window-focus';
 import { layerSettingsMain } from '../settings/window';
@@ -86,6 +87,7 @@ export const MainRuntime = ManagedRuntime.make(
   Layer.mergeAll(
     layerRpcServer,
     layerNotificationDispatcherLive,
+    layerInAppNotificationChannelLive,
     layerWindowFocus,
     layerNotifierLive,
     layerRemoteNotifierLive,

@@ -21,10 +21,17 @@ import { Projects } from '../projects/projects';
 import { layerProjectsHandlersWith } from '../rpc/projects';
 import { layerSessionsHandlersWith } from '../rpc/sessions';
 import {
+  InAppNotifications,
+  layerInAppNotificationChannel,
+  layerInAppNotifications,
+} from '../sessions/in-app-notifications';
+import {
   layerNotificationDispatcher,
+  makeOsNotificationChannel,
   NotificationChannel,
   NotificationDispatcher,
 } from '../sessions/notifier';
+import { layerTabActivations } from '../sessions/tab-activations';
 import { AgentCatalog, makeAgentCatalog } from '../sessions/session-agent';
 import { layerSessionVisibility, SessionVisibility } from '../sessions/session-visibility';
 import { layerSessionsWithFakeAgent } from '../sessions/sessions-fakes';
@@ -323,6 +330,148 @@ describe('Remote Permissions, Attention and concurrent viewers', () => {
           }),
         );
         yield* untilTurnEnds(api, hostId, sessionId);
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+
+  it.live(
+    'routes Remote Session notifications to InAppNotifications when focused and off-screen, and to OS when unfocused',
+    () =>
+      Effect.gen(function* () {
+        const host = yield* makeDeviceWithSessions;
+        const viewer = yield* makeDeviceWithSessions;
+        const hostId = yield* connected(host.device, viewer.device);
+        const hosted = yield* host.run(Projects.use((projects) => projects.add));
+        if (hosted === null) return yield* Effect.die('no Project');
+        const api = viewer.device.desktop;
+        const remote = onDevice(hostId);
+
+        const settingsLayer = Layer.succeed(Settings, {
+          get: Effect.succeed<SettingsValue>({
+            language: 'en',
+            theme: 'system',
+            notifications: true,
+            sendMode: 'queue',
+            projectOrder: { by: 'lastUsed', direction: 'desc' },
+            defaultPermissionMode: 'auto',
+            defaultAgent: 'claude',
+            autoArchiveDays: null,
+            subagents: 'workers',
+            crossProjectAccess: [],
+            browserAllowedOrigins: [],
+            agents: {},
+          }),
+          update: () => Effect.die('unused'),
+          changes: Stream.empty,
+        });
+
+        let focused = false;
+        const osShown: Array<{ readonly title: string; readonly body: string }> = [];
+        const osChannel = makeOsNotificationChannel({
+          platform: 'win32',
+          systemLanguages: () => ['en-US'],
+          isFocused: () => focused,
+          focusWindow: () => undefined,
+          flashFrame: () => undefined,
+          setDockBadge: () => undefined,
+          showNotification: ({ title, body }) => {
+            osShown.push({ title, body });
+          },
+        }).pipe(Layer.provideMerge(Layer.mergeAll(settingsLayer, layerTabActivations)));
+
+        const dispatcherLayer = layerNotificationDispatcher.pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(settingsLayer, layerSessionVisibility, layerWindowFocus, osChannel),
+          ),
+        );
+        const inAppLayer = layerInAppNotificationChannel.pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(
+              dispatcherLayer,
+              layerInAppNotifications,
+              settingsLayer,
+              layerWindowFocus,
+            ),
+          ),
+        );
+        const appLayer = yield* Layer.build(
+          Layer.mergeAll(
+            dispatcherLayer,
+            inAppLayer,
+            layerRemoteNotifier.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  Layer.succeed(DeviceConnections, viewer.device.deviceConnections),
+                  dispatcherLayer,
+                ),
+              ),
+            ),
+          ),
+        );
+
+        const inAppQueue = yield* Queue.unbounded<SessionNotification>();
+        yield* Effect.provide(
+          Effect.gen(function* () {
+            const inApp = yield* InAppNotifications;
+            const focus = yield* WindowFocus;
+            const dispatcher = yield* NotificationDispatcher;
+            yield* Stream.runForEach(inApp.stream, (n) =>
+              Effect.asVoid(Queue.offer(inAppQueue, n)),
+            ).pipe(Effect.forkScoped);
+            focused = true;
+            yield* focus.setFocused(true);
+            yield* Effect.yieldNow;
+            yield* dispatcher.sync;
+          }),
+          appLayer,
+        );
+
+        const sessionId = yield* remote(api['Session.create']({ projectId: hosted.id }));
+        yield* remote(
+          api['Session.setOption']({ sessionId, option: 'permissionMode', value: 'ask' }),
+        );
+        yield* Effect.sleep('200 millis');
+        yield* remote(
+          api['Session.prompt']({ sessionId, parts: [{ _tag: 'text', text: 'permit' }] }),
+        );
+
+        // Focused + off-screen Remote Session -> in-app only, no OS notification.
+        const blocked = yield* Queue.take(inAppQueue);
+        expect(blocked).toMatchObject({
+          device: hostId,
+          sessionId,
+          projectId: hosted.id,
+          cause: 'blocked',
+        });
+        expect(blocked.turnId).toBeDefined();
+        expect(osShown).toEqual([]);
+
+        // Unfocus before answering permission -> turnFinished goes to OS only.
+        yield* Effect.provide(
+          Effect.gen(function* () {
+            const focus = yield* WindowFocus;
+            const dispatcher = yield* NotificationDispatcher;
+            focused = false;
+            yield* focus.setFocused(false);
+            yield* Effect.yieldNow;
+            yield* dispatcher.sync;
+          }),
+          appLayer,
+        );
+
+        const pending = yield* pendingRequest(api, hostId, sessionId);
+        yield* remote(
+          api['Session.answerPermission']({ sessionId, requestId: pending.id, optionId: 'allow' }),
+        );
+        yield* untilTurnEnds(api, hostId, sessionId);
+        yield* Effect.provide(
+          NotificationDispatcher.use((d) => d.sync),
+          appLayer,
+        );
+
+        expect(osShown).toHaveLength(1);
+        expect(osShown[0]?.body).toBe('Turn finished');
+        expect(yield* Queue.clear(inAppQueue)).toEqual([]);
       }).pipe(Effect.scoped),
     TIMEOUT,
   );

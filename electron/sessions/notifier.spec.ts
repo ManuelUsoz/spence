@@ -19,6 +19,11 @@ import {
 } from '../../src/shared/tabs/tabs.rpc';
 import { Settings } from '../settings/settings';
 import {
+  InAppNotifications,
+  layerInAppNotificationChannel,
+  layerInAppNotifications,
+} from './in-app-notifications';
+import {
   layerNotificationDispatcher,
   layerNotifier,
   makeOsNotificationChannel,
@@ -925,6 +930,157 @@ describe('makeOsNotificationChannel', () => {
             title: title1,
             turnId: turn1,
           });
+        }).pipe(Effect.provide(appLayer));
+      }),
+  );
+});
+
+describe('InAppNotifications channel routing', () => {
+  it.effect(
+    'routes solely to InAppNotifications when focused and off-screen, solely to OS when unfocused, and mutes both when visible or disabled',
+    () =>
+      Effect.gen(function* () {
+        const bus = yield* PubSub.unbounded<SessionChange>();
+        const settingsLayer = makeSettingsStub(baseSettings({ language: 'en' }));
+
+        let focused = false;
+        const shown: Array<{ readonly title: string; readonly body: string }> = [];
+        const host: OsNotificationHost = {
+          platform: 'win32',
+          systemLanguages: () => ['en-US'],
+          isFocused: () => focused,
+          focusWindow: () => undefined,
+          flashFrame: () => undefined,
+          setDockBadge: () => undefined,
+          showNotification: ({ title, body }) => {
+            shown.push({ title, body });
+          },
+        };
+
+        const osChannelLayer = makeOsNotificationChannel(host).pipe(
+          Layer.provideMerge(Layer.mergeAll(settingsLayer, layerTabActivations)),
+        );
+        const dispatcherLayer = layerNotificationDispatcher.pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(settingsLayer, layerSessionVisibility, layerWindowFocus, osChannelLayer),
+          ),
+        );
+        const inAppLayer = layerInAppNotificationChannel.pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(
+              dispatcherLayer,
+              layerInAppNotifications,
+              settingsLayer,
+              layerWindowFocus,
+            ),
+          ),
+        );
+        const appLayer = Layer.mergeAll(
+          dispatcherLayer,
+          inAppLayer,
+          layerNotifier.pipe(
+            Layer.provide(Layer.mergeAll(stubSessions(Stream.fromPubSub(bus)), dispatcherLayer)),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          yield* Notifier;
+          const dispatcher = yield* NotificationDispatcher;
+          const focus = yield* WindowFocus;
+          const visibility = yield* SessionVisibility;
+          const inApp = yield* InAppNotifications;
+
+          const received = yield* Queue.unbounded<SessionNotification>();
+          yield* Stream.runForEach(inApp.stream, (item) =>
+            Effect.asVoid(Queue.offer(received, item)),
+          ).pipe(Effect.forkScoped);
+          yield* Effect.yieldNow;
+
+          // 1. Focused + Session in background (not visible) -> in-app only, no OS banner.
+          focused = true;
+          yield* focus.setFocused(true);
+          yield* visibility.setWorkspace(
+            singleSessionWorkspace({ projectId: PROJECT, sessionId: SESSION }),
+            false,
+          );
+          yield* Effect.yieldNow;
+          yield* dispatcher.sync;
+
+          const turn1 = TurnId.make('t1');
+          yield* PubSub.publish(bus, {
+            sessionId: SESSION_2,
+            projectId: PROJECT_2,
+            state: liveState({
+              status: 'blocked',
+              runningTurn: turn1,
+              title: { auto: 'Background task', autoIsPlaceholder: false },
+            }),
+          });
+
+          const inAppBlocked = yield* Queue.take(received);
+          expect(inAppBlocked).toMatchObject({
+            sessionId: SESSION_2,
+            projectId: PROJECT_2,
+            turnId: turn1,
+            cause: 'blocked',
+            title: 'Background task',
+          });
+          expect(shown).toEqual([]);
+
+          // 2. Focused + Session visible in active Tab -> muted on both channels.
+          yield* PubSub.publish(bus, {
+            sessionId: SESSION,
+            projectId: PROJECT,
+            state: liveState({
+              status: 'error',
+              lastTurn: { turnId: TurnId.make('t-vis'), outcome: 'failed' },
+            }),
+          });
+          yield* Effect.yieldNow;
+          yield* dispatcher.sync;
+          expect(shown).toEqual([]);
+          expect(yield* Queue.clear(received)).toEqual([]);
+
+          // 3. Unfocused -> OS banner only, nothing on in-app stream.
+          focused = false;
+          yield* focus.setFocused(false);
+          yield* Effect.yieldNow;
+          yield* dispatcher.sync;
+
+          const turn2 = TurnId.make('t2');
+          yield* PubSub.publish(bus, {
+            sessionId: SESSION_2,
+            projectId: PROJECT_2,
+            state: liveState({
+              status: 'idle',
+              lastTurn: { turnId: turn2, outcome: 'done' },
+              title: { auto: 'Background task', autoIsPlaceholder: false },
+            }),
+          });
+          yield* Effect.yieldNow;
+          yield* dispatcher.sync;
+          expect(shown).toEqual([{ title: 'Background task', body: 'Turn finished' }]);
+          expect(yield* Queue.clear(received)).toEqual([]);
+
+          // 4. Settings.notifications = false while focused -> muted on both channels.
+          focused = true;
+          yield* focus.setFocused(true);
+          yield* Settings.use((settings) => settings.update({ notifications: false }));
+          yield* Effect.yieldNow;
+          yield* dispatcher.sync;
+
+          yield* PubSub.publish(bus, {
+            sessionId: SESSION_2,
+            projectId: PROJECT_2,
+            state: liveState({
+              status: 'error',
+              lastTurn: { turnId: TurnId.make('t3'), outcome: 'failed' },
+            }),
+          });
+          yield* Effect.yieldNow;
+          yield* dispatcher.sync;
+          expect(shown).toEqual([{ title: 'Background task', body: 'Turn finished' }]);
+          expect(yield* Queue.clear(received)).toEqual([]);
         }).pipe(Effect.provide(appLayer));
       }),
   );
