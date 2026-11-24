@@ -849,6 +849,7 @@ export const parityMatrix: ReadonlyArray<ParityRow> = [
       'transcript:ThoughtDelta',
       'transcript:Plan',
       'transcript:Step',
+      'transcript:StepDelta',
     ],
     parity: { _tag: 'Same' },
     case: agentWork,

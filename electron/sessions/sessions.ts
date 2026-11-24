@@ -85,15 +85,20 @@ import {
 } from '../../src/shared/sessions/sessions.rpc';
 import type { AcpSessionEvent, PendingPermission } from '../acp/acpClientDispatcher';
 import { AcpError } from '../acp/acpErrors';
+import { capOutputTail, MAX_STEP_OUTPUT_BYTES } from '../../src/shared/sessions/output-tail';
 import {
   applyCompactionUpdate,
+  applyTerminalExit,
+  bindStepTerminals,
   cancelSteps,
   cancelledOutcome,
   foldUpdate,
+  markStepStreamed,
   openTurn,
   outcomeOf,
   promptOutcome,
   selectedOutcome,
+  stepIdForTerminal,
   stepOfToolCall,
   toAcpPrompt,
   toContextUsage,
@@ -431,6 +436,11 @@ interface LiveSession {
   liveActivity: LiveActivity | undefined;
   /** Step id backing `liveActivity` when `liveActivity` came from an active `Step`. */
   liveActivityStepId: StepId | undefined;
+  /** Output/exit buffered from hosted terminals before a tool_call binds `terminalId` to a `StepId`. */
+  readonly terminalBuffers: Map<
+    string,
+    { readonly output: string; readonly truncated: boolean; readonly exitCode?: number }
+  >;
 }
 
 /** A Permission request shown pending: answering it completes `answer`, which replies to the Agent. */
@@ -856,6 +866,7 @@ export const layerSessions = Layer.effect(
         cancelGraceFiber: undefined,
         liveActivity: undefined,
         liveActivityStepId: undefined,
+        terminalBuffers: new Map(),
       };
       yield* browserService.setSessionDevice(meta.id, meta.deviceId);
       return session;
@@ -1368,6 +1379,7 @@ export const layerSessions = Layer.effect(
               stepId = undefined;
               break;
             }
+            case 'StepDelta':
             case 'Plan':
             case 'PermissionRequest':
             case 'Compaction':
@@ -1465,6 +1477,89 @@ export const layerSessions = Layer.effect(
       }).pipe(Effect.ensuring(resolve));
     });
 
+    const startTurnFold = (session: LiveSession, turnId: TurnId, cwd: string): TurnFold => {
+      session.terminalBuffers.clear();
+      const fold = openTurn(turnId, cwd);
+      session.running = fold;
+      return fold;
+    };
+
+    const bufferTerminalOutput = (
+      session: LiveSession,
+      terminalId: string,
+      output: string,
+      truncated: boolean,
+    ): void => {
+      const existing = session.terminalBuffers.get(terminalId);
+      const capped = capOutputTail((existing?.output ?? '') + output, MAX_STEP_OUTPUT_BYTES);
+      session.terminalBuffers.set(terminalId, {
+        output: capped.text,
+        truncated: (existing?.truncated ?? false) || truncated || capped.truncated,
+        ...(existing?.exitCode === undefined ? {} : { exitCode: existing.exitCode }),
+      });
+    };
+
+    const bufferTerminalExit = (
+      session: LiveSession,
+      terminalId: string,
+      exitCode: number | null,
+    ): void => {
+      if (exitCode === null) return;
+      const existing = session.terminalBuffers.get(terminalId);
+      session.terminalBuffers.set(terminalId, {
+        output: existing?.output ?? '',
+        truncated: existing?.truncated ?? false,
+        exitCode,
+      });
+    };
+
+    /** Drains buffered terminal output/exit onto Steps newly bound to `terminalId`, returning patched items. */
+    const drainNewlyBoundTerminals = (
+      session: LiveSession,
+      prevFold: TurnFold,
+      nextFold: TurnFold,
+      items: ReadonlyArray<TranscriptItem>,
+    ): ReadonlyArray<TranscriptItem> => {
+      let currentFold = nextFold;
+      let patched = [...items];
+      const extraDeltas: Array<TranscriptItem> = [];
+      for (const [stepId, ids] of nextFold.stepTerminals) {
+        const previous = prevFold.stepTerminals.get(stepId) ?? [];
+        for (const terminalId of ids) {
+          if (previous.includes(terminalId)) continue;
+          const buffered = session.terminalBuffers.get(terminalId);
+          if (buffered === undefined) continue;
+          session.terminalBuffers.delete(terminalId);
+          if (buffered.exitCode !== undefined) {
+            const [exitFold, updatedStep] = applyTerminalExit(
+              currentFold,
+              terminalId,
+              buffered.exitCode,
+            );
+            currentFold = exitFold;
+            if (updatedStep !== undefined) {
+              const index = patched.findIndex(
+                (entry) => entry._tag === 'Step' && entry.id === updatedStep.id,
+              );
+              if (index !== -1) patched[index] = updatedStep;
+              else patched.push(updatedStep);
+            }
+          }
+          if (buffered.output !== '' || buffered.truncated) {
+            currentFold = markStepStreamed(currentFold, stepId);
+            extraDeltas.push({
+              _tag: 'StepDelta',
+              id: stepId,
+              output: buffered.output,
+              ...(buffered.truncated ? { truncated: true } : {}),
+            });
+          }
+        }
+      }
+      session.running = currentFold;
+      return extraDeltas.length === 0 ? patched : [...patched, ...extraDeltas];
+    };
+
     /**
      * A Permission request from the Agent: shown pending until the user answers, or answered at once by the
      * Permission mode's policy. Its Step is shown first if the Turn has not shown it yet.
@@ -1486,9 +1581,18 @@ export const layerSessions = Layer.effect(
         known === undefined
           ? stepOfToolCall(request.toolCall, running.turnId, stepId, running.cwd, now)
           : undefined;
-      if (created !== undefined)
-        session.running = { ...running, steps: new Map(running.steps).set(toolCallId, created) };
-      const step = created === undefined ? [] : [created];
+      const baseFold =
+        created !== undefined
+          ? { ...running, steps: new Map(running.steps).set(toolCallId, created) }
+          : running;
+      const boundFold = bindStepTerminals(baseFold, stepId, request.toolCall.content);
+      session.running = boundFold;
+      const stepItems = drainNewlyBoundTerminals(
+        session,
+        running,
+        boundFold,
+        created === undefined ? [] : [created],
+      );
       const targetStep = created ?? known;
       const target =
         (targetStep !== undefined ? stepTargetOf(targetStep) : request.toolCall.title) ?? '';
@@ -1518,12 +1622,12 @@ export const layerSessions = Layer.effect(
       if (policy !== undefined) {
         yield* Deferred.succeed(answer, selectedOutcome(policy.id));
         return yield* append(session, [
-          ...step,
+          ...stepItems,
           { ...item, state: { _tag: 'answered', optionId: policy.id, by: 'policy' } },
         ]);
       }
       session.permissions.set(item.id, { item, answer, target });
-      yield* append(session, [...step, item]);
+      yield* append(session, [...stepItems, item]);
       if (session.permissions.has(item.id)) yield* publishWorkflowPermission(session, item);
       return undefined;
     });
@@ -1622,6 +1726,13 @@ export const layerSessions = Layer.effect(
       session.prompting = undefined;
       session.stopRequested = false;
       session.compactionReported = false;
+      session.terminalBuffers.clear();
+      if (
+        (outcome._tag === 'cancelled' || outcome._tag === 'failed') &&
+        session.acp !== undefined
+      ) {
+        yield* session.acp.cancelTerminals;
+      }
       if (
         (outcome._tag === 'cancelled' || outcome._tag === 'failed') &&
         session.state.contextUsage?._tag === 'waiting'
@@ -1662,7 +1773,7 @@ export const layerSessions = Layer.effect(
           if (event.state === 'running' || event.state === 'requires_action') {
             if (session.running === undefined) {
               const turnId = TurnId.make(randomUUID());
-              session.running = openTurn(turnId, session.meta.cwd);
+              startTurnFold(session, turnId, session.meta.cwd);
               yield* append(session, [
                 turnStarted(turnId, session.agent.id, session.state.options),
               ]);
@@ -1670,6 +1781,7 @@ export const layerSessions = Layer.effect(
           } else if (event.state === 'idle' && session.running !== undefined) {
             const running = session.running;
             session.running = undefined;
+            session.terminalBuffers.clear();
             const reason = event.stopReason;
             const outcome: TurnOutcome =
               reason === 'end_turn' ||
@@ -1686,6 +1798,12 @@ export const layerSessions = Layer.effect(
                         ? 'Worker stopped without a reported outcome'
                         : `Worker stopped: ${reason}`,
                   };
+            if (
+              (outcome._tag === 'cancelled' || outcome._tag === 'failed') &&
+              session.acp !== undefined
+            ) {
+              yield* session.acp.cancelTerminals;
+            }
             const endedAt = yield* Clock.currentTimeMillis;
             yield* append(session, [
               ...cancelSteps(running, endedAt),
@@ -1868,14 +1986,53 @@ export const layerSessions = Layer.effect(
           }
           if (session.running === undefined && isNativeWorker(session.meta)) {
             const turnId = TurnId.make(randomUUID());
-            session.running = openTurn(turnId, session.meta.cwd);
+            startTurnFold(session, turnId, session.meta.cwd);
             yield* append(session, [turnStarted(turnId, session.agent.id, session.state.options)]);
           }
           if (session.running === undefined) return;
+          const prevRunning = session.running;
           const stepAt = yield* Clock.currentTimeMillis;
-          const [fold, items] = foldUpdate(session.running, event.update, randomUUID, stepAt);
-          session.running = fold;
-          return yield* append(session, items);
+          const [fold, items] = foldUpdate(prevRunning, event.update, randomUUID, stepAt);
+          const emitted = drainNewlyBoundTerminals(session, prevRunning, fold, items);
+          return yield* append(session, emitted);
+        }
+        case 'TerminalOutput': {
+          const running = session.running;
+          if (running === undefined) return;
+          const stepId = stepIdForTerminal(running, event.terminalId);
+          if (stepId === undefined) {
+            bufferTerminalOutput(session, event.terminalId, event.output, event.truncated);
+            return;
+          }
+          if (event.output === '' && !event.truncated) return;
+          session.running = markStepStreamed(running, stepId);
+          return yield* append(session, [
+            {
+              _tag: 'StepDelta',
+              id: stepId,
+              output: event.output,
+              ...(event.truncated ? { truncated: true } : {}),
+            },
+          ]);
+        }
+        case 'TerminalExited': {
+          const running = session.running;
+          if (running === undefined) return;
+          const stepId = stepIdForTerminal(running, event.terminalId);
+          if (stepId === undefined) {
+            bufferTerminalExit(session, event.terminalId, event.exitCode);
+            return;
+          }
+          const [nextFold, updatedStep] = applyTerminalExit(
+            running,
+            event.terminalId,
+            event.exitCode,
+          );
+          session.running = nextFold;
+          if (updatedStep !== undefined) {
+            return yield* append(session, [updatedStep]);
+          }
+          return;
         }
         case 'PermissionRequest':
           return yield* onPermission(session, event);
@@ -1975,23 +2132,23 @@ export const layerSessions = Layer.effect(
     });
 
     /** The ACP session is gone (closed, or its Agent stopped): the next Turn opens another. */
-    const detach = (session: LiveSession, acp: AcpSession) =>
-      Effect.sync(() => {
-        if (session.acp === acp) {
-          session.acp = undefined;
-          const binding = delegationBindings.get(session.meta.id);
-          if (binding?.acp === acp) {
-            binding.revoke();
-            delegationBindings.delete(session.meta.id);
-          }
-          const browserBinding = browserBindings.get(session.meta.id);
-          if (browserBinding?.acp === acp) {
-            browserBinding.revoke();
-            browserBindings.delete(session.meta.id);
-          }
-          session.steeringSupported = false;
-        }
-      });
+    const detach = Effect.fnUntraced(function* (session: LiveSession, acp: AcpSession) {
+      if (session.acp !== acp) return;
+      session.acp = undefined;
+      session.terminalBuffers.clear();
+      const binding = delegationBindings.get(session.meta.id);
+      if (binding?.acp === acp) {
+        binding.revoke();
+        delegationBindings.delete(session.meta.id);
+      }
+      const browserBinding = browserBindings.get(session.meta.id);
+      if (browserBinding?.acp === acp) {
+        browserBinding.revoke();
+        browserBindings.delete(session.meta.id);
+      }
+      session.steeringSupported = false;
+      yield* acp.cancelTerminals;
+    });
 
     /** Reads the ACP session's events for as long as it lives; a dead Agent fails only a running Turn. */
     /** Native Workers announced through a lost connection are unknown until the adapter reports them again. */
@@ -2701,7 +2858,7 @@ export const layerSessions = Layer.effect(
         if (session.running !== undefined || session.clearing || session.compacting !== undefined) {
           return true;
         }
-        session.running = openTurn(turnId, session.meta.cwd);
+        startTurnFold(session, turnId, session.meta.cwd);
         session.turnHops = from?.hops ?? 0;
         session.turnSender = from;
         session.turnChain = from?.chain ?? [];
@@ -3476,7 +3633,7 @@ export const layerSessions = Layer.effect(
           }
           activeWorktrees.add(worktreeKey);
           workflows.set(id, run);
-          parent.running = openTurn(turnId, cwd);
+          startTurnFold(parent, turnId, cwd);
           if (retry !== undefined) {
             const latest = yield* store.replay(id);
             if (
@@ -4393,6 +4550,9 @@ export const layerSessions = Layer.effect(
                 ),
               ),
             );
+      if (activeAcp === undefined && session.acp !== undefined) {
+        yield* session.acp.cancelTerminals;
+      }
       yield* cancelPermissions(session);
       const hadBrowserHandoff = session.browserHandoffPending;
       session.browserHandoffPending = false;

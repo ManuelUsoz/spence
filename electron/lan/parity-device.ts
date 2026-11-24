@@ -478,7 +478,9 @@ export const outcomes = (items: ReadonlyArray<TranscriptItem>): ReadonlyArray<st
 /** The kinds of the Transcript's items, in order, without the streamed deltas. */
 export const kinds = (items: ReadonlyArray<TranscriptItem>): ReadonlyArray<string> =>
   items.flatMap((item) =>
-    item._tag === 'MessageDelta' || item._tag === 'ThoughtDelta' ? [] : [item._tag],
+    item._tag === 'MessageDelta' || item._tag === 'ThoughtDelta' || item._tag === 'StepDelta'
+      ? []
+      : [item._tag],
   );
 
 /** The next pending Permission request in the Session other than those in `seen`, as the window sees it. */

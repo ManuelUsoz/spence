@@ -283,6 +283,14 @@ export const Step = Schema.TaggedStruct('Step', {
 }).annotate({ identifier: 'Step' });
 export type Step = typeof Step.Type;
 
+/** Streamed chunk of a Step's rolling command output tail, appended onto the owning Step. */
+export const StepDelta = Schema.TaggedStruct('StepDelta', {
+  id: StepId,
+  output: Schema.String,
+  truncated: Schema.optionalKey(Schema.Boolean),
+}).annotate({ identifier: 'StepDelta' });
+export type StepDelta = typeof StepDelta.Type;
+
 export const PlanEntry = Schema.Struct({
   content: Schema.String,
   priority: Schema.Literals(['high', 'medium', 'low']),
@@ -410,6 +418,7 @@ export const TranscriptItem = Schema.Union([
   Thought,
   ThoughtDelta,
   Step,
+  StepDelta,
   Plan,
   PermissionRequest,
   Compaction,

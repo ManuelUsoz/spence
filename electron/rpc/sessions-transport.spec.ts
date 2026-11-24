@@ -121,7 +121,20 @@ const served: ReadonlyArray<SessionStreamItem> = [
   },
   {
     _tag: 'Transcript',
-    event: { seq: 7, at: 5, item: { _tag: 'TurnEnded', turnId, outcome: { _tag: 'done' } } },
+    event: {
+      seq: 7,
+      at: 5,
+      item: {
+        _tag: 'StepDelta',
+        id: StepId.make('step-1'),
+        output: 'more output\n',
+        truncated: true,
+      },
+    },
+  },
+  {
+    _tag: 'Transcript',
+    event: { seq: 8, at: 6, item: { _tag: 'TurnEnded', turnId, outcome: { _tag: 'done' } } },
   },
 ];
 
@@ -255,7 +268,7 @@ describe('Session.events over the MessagePort transport', () => {
         Stream.runCollect,
         Effect.timeout('5 seconds'),
       );
-      expect([...rest]).toEqual([served[0], served[3], served[4], served[5]]);
+      expect([...rest]).toEqual([served[0], served[3], served[4], served[5], served[6]]);
       expect(asked).toEqual([undefined, 4]);
     }).pipe(Effect.scoped),
   );

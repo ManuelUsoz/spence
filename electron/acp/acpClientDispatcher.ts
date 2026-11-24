@@ -9,6 +9,11 @@ import {
 import { type Cause, Deferred, Effect, type Exit, FiberSet, Queue } from 'effect';
 import { AcpError } from './acpErrors';
 import { AcpSessionId } from './acpSession';
+import {
+  makeTerminalRegistry,
+  type TerminalHostEnv,
+  type TerminalStreamEvent,
+} from './acpTerminals';
 
 /** A Permission request waiting for the caller: completing `answer` replies to the Agent. */
 export interface PendingPermission {
@@ -20,6 +25,7 @@ export interface PendingPermission {
 export type AcpSessionEvent =
   | { readonly _tag: 'Update'; readonly update: SessionUpdate }
   | ({ readonly _tag: 'PermissionRequest' } & PendingPermission)
+  | TerminalStreamEvent
   /**
    * How a `session/prompt` ended, posted by the session once the Agent answered (or the prompt failed). It comes
    * after every update the Agent sent for that prompt, so a consumer can end the Turn in order.
@@ -37,36 +43,40 @@ export type AcpSessionEvent =
 
 export type AcpSessionQueue = Queue.Queue<AcpSessionEvent, AcpError | Cause.Done>;
 
-/** Our side of the connection: routes `session/update` and Permission requests to their ACP session. */
+/** Our side of the connection: routes `session/update`, Permission requests, and client terminals to their ACP session. */
 export interface ClientDispatcher {
   readonly app: ClientApp;
   /**
    * Starts routing a session's events into a fresh queue. Events that arrived before (an Agent may send updates
    * before `session/new` returns) are delivered first.
    */
-  readonly attach: (sessionId: AcpSessionId) => Effect.Effect<AcpSessionQueue>;
+  readonly attach: (sessionId: AcpSessionId, cwd?: string) => Effect.Effect<AcpSessionQueue>;
   readonly attachWorker: (
     parentId: AcpSessionId,
     childId: AcpSessionId,
   ) => Effect.Effect<AcpSessionQueue, AcpError>;
   /**
-   * Stops routing and ends the session's event stream. Events buffered for it are dropped, and what the Agent still
-   * sends for it is ignored until it is attached again.
+   * Stops routing and ends the session's event stream. Events buffered for it are dropped, unreleased terminal
+   * process trees are killed and released, and what the Agent still sends for it is ignored until attached again.
    */
   readonly detach: (sessionId: AcpSessionId) => Effect.Effect<void>;
   /** Answers every Permission request still pending in the session `cancelled`. */
   readonly cancelPermissions: (sessionId: AcpSessionId) => Effect.Effect<void>;
-  /** Fails every attached session's event stream, e.g. when the Agent exits. */
+  /** Flushes any throttled terminal output deltas for the session immediately. */
+  readonly flushTerminals: (sessionId: AcpSessionId) => Effect.Effect<void>;
+  /** Terminates and releases any unreleased terminal process trees owned by the session. */
+  readonly cancelTerminals: (sessionId: AcpSessionId) => Effect.Effect<void>;
+  /** Fails every attached session's event stream and releases all remaining terminals, e.g. when the Agent exits. */
   readonly failAll: (error: AcpError) => Effect.Effect<void>;
 }
 
 const CANCELLED: RequestPermissionOutcome = { outcome: 'cancelled' };
 
 /**
- * Builds our `acp.Client`. Spence offers no file system or terminal, so only `session/update` and
- * `session/request_permission` are handled. Permission requests wait on a `Deferred` for as long as the scope lives.
+ * Builds our `acp.Client`. Spence offers `terminal/*` handlers (keeping `fs` disabled), `session/update`, and
+ * `session/request_permission`. Permission requests wait on a `Deferred`, and terminals live within the Scope.
  */
-export const makeClientDispatcher = Effect.fnUntraced(function* () {
+export const makeClientDispatcher = Effect.fnUntraced(function* (host?: TerminalHostEnv) {
   const runPromise = yield* FiberSet.makeRuntimePromise();
   const queues = new Map<AcpSessionId, AcpSessionQueue>();
   /** Events for sessions not attached yet. */
@@ -75,6 +85,7 @@ export const makeClientDispatcher = Effect.fnUntraced(function* () {
   const detached = new Set<AcpSessionId>();
   const pending = new Map<AcpSessionId, Set<PendingPermission>>();
   const parents = new Map<AcpSessionId, AcpSessionId>();
+  const roots = new Map<AcpSessionId, string>();
 
   const route = (sessionId: AcpSessionId, event: AcpSessionEvent): void => {
     if (detached.has(sessionId)) return;
@@ -86,13 +97,27 @@ export const makeClientDispatcher = Effect.fnUntraced(function* () {
     early.set(sessionId, [...(early.get(sessionId) ?? []), event]);
   };
 
+  const terminals = makeTerminalRegistry(
+    (sessionId) => roots.get(sessionId),
+    (sessionId) => detached.has(sessionId),
+    route,
+    runPromise,
+    host,
+  );
+  yield* Effect.addFinalizer(() => terminals.releaseAll);
+
   const app = client({ name: 'spence' })
     .onNotification('session/update', ({ params }) => {
+      const sessionId = AcpSessionId.make(params.sessionId);
       if (params.update.sessionUpdate === 'subagent_update') {
         const child = AcpSessionId.make(params.update.sessionId);
-        if (!parents.has(child)) parents.set(child, AcpSessionId.make(params.sessionId));
+        if (!parents.has(child)) parents.set(child, sessionId);
+        if (!roots.has(child)) {
+          const childRoot = params.update.cwd ?? roots.get(sessionId);
+          if (childRoot !== undefined) roots.set(child, childRoot);
+        }
       }
-      route(AcpSessionId.make(params.sessionId), { _tag: 'Update', update: params.update });
+      route(sessionId, { _tag: 'Update', update: params.update });
       if (params.update.sessionUpdate === 'subagent_update' && params.update.state !== undefined) {
         route(AcpSessionId.make(params.update.sessionId), {
           _tag: 'WorkerState',
@@ -121,9 +146,15 @@ export const makeClientDispatcher = Effect.fnUntraced(function* () {
       } finally {
         waiting.delete(permission);
       }
-    });
+    })
+    .onRequest('terminal/create', ({ params }) => terminals.create(params))
+    .onRequest('terminal/output', ({ params }) => terminals.output(params))
+    .onRequest('terminal/wait_for_exit', ({ params }) => terminals.waitForExit(params))
+    .onRequest('terminal/kill', ({ params }) => terminals.kill(params))
+    .onRequest('terminal/release', ({ params }) => terminals.release(params));
 
-  const attach = Effect.fnUntraced(function* (sessionId: AcpSessionId) {
+  const attach = Effect.fnUntraced(function* (sessionId: AcpSessionId, cwd?: string) {
+    if (cwd !== undefined) roots.set(sessionId, cwd);
     const queue = yield* Queue.unbounded<AcpSessionEvent, AcpError | Cause.Done>();
     yield* Queue.offerAll(queue, early.get(sessionId) ?? []);
     early.delete(sessionId);
@@ -143,8 +174,9 @@ export const makeClientDispatcher = Effect.fnUntraced(function* () {
         );
       }
       const existing = queues.get(childId);
+      const childRoot = roots.get(childId) ?? roots.get(parentId);
       return existing === undefined
-        ? attach(childId)
+        ? attach(childId, childRoot)
         : Effect.fail(new AcpError({ reason: 'Refused', detail: 'Worker is already attached' }));
     });
 
@@ -158,19 +190,30 @@ export const makeClientDispatcher = Effect.fnUntraced(function* () {
       ),
     );
 
+  const flushTerminals = (sessionId: AcpSessionId) => terminals.flushSession(sessionId);
+  const cancelTerminals = (sessionId: AcpSessionId) => terminals.releaseSession(sessionId);
+
   const detach = Effect.fnUntraced(function* (sessionId: AcpSessionId) {
     yield* cancelPermissions(sessionId);
+    yield* cancelTerminals(sessionId);
     const queue = queues.get(sessionId);
     queues.delete(sessionId);
     pending.delete(sessionId);
     early.delete(sessionId);
+    roots.delete(sessionId);
     detached.add(sessionId);
     if (queue !== undefined) yield* Queue.end(queue);
   });
 
   const failAll = (error: AcpError) =>
     Effect.suspend(() =>
-      Effect.forEach([...queues.values()], (queue) => Queue.fail(queue, error), { discard: true }),
+      terminals.releaseAll.pipe(
+        Effect.andThen(
+          Effect.forEach([...queues.values()], (queue) => Queue.fail(queue, error), {
+            discard: true,
+          }),
+        ),
+      ),
     );
 
   return {
@@ -179,6 +222,8 @@ export const makeClientDispatcher = Effect.fnUntraced(function* () {
     attachWorker,
     detach,
     cancelPermissions,
+    flushTerminals,
+    cancelTerminals,
     failAll,
   } satisfies ClientDispatcher;
 });

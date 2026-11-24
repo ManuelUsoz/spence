@@ -57,7 +57,7 @@
 //   "echo:<text>" (or anything else) streams the text back in three chunks and ends `end_turn`
 import * as acp from '@agentclientprotocol/sdk/unstable';
 import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import { deflateSync } from 'node:zlib';
 
@@ -105,7 +105,8 @@ const failIsolatedSummary = args.includes('--fail-isolated-summary');
 const handoffUnexpectedTool = args.includes('--handoff-unexpected-tool');
 const handoffCrash = args.includes('--handoff-crash');
 const handoffStall = args.includes('--handoff-stall');
-let clientHasFsOrTerminal = false;
+let clientHasFs = false;
+let clientHasTerminal = false;
 
 if (ignoreSigterm) {
   process.on('SIGTERM', () => {});
@@ -465,9 +466,8 @@ const app = acp
   .agent({ name: 'fake-agent' })
   .onRequest('initialize', ({ params }) => {
     const fs = params?.clientCapabilities?.fs;
-    clientHasFsOrTerminal = Boolean(
-      fs?.readTextFile || fs?.writeTextFile || params?.clientCapabilities?.terminal,
-    );
+    clientHasFs = Boolean(fs?.readTextFile || fs?.writeTextFile);
+    clientHasTerminal = Boolean(params?.clientCapabilities?.terminal);
     return {
       protocolVersion: protocol,
       ...(steeringEnabled ? { _meta: { steering: { supported: true } } } : {}),
@@ -990,12 +990,13 @@ const app = acp
       }
       if (text.startsWith('Summarize the following Session Transcript extract')) {
         if (failIsolatedSummary) throw new acp.RequestError(-32603, 'Isolated summary failed');
-        const toolsTag = clientHasFsOrTerminal ? 'tools-enabled' : 'tools-disabled';
+        const fsTag = clientHasFs ? 'fs-enabled' : 'fs-disabled';
+        const terminalTag = clientHasTerminal ? 'terminal-enabled' : 'terminal-disabled';
         await client.notify(
           'session/update',
           chunk(
             sessionId,
-            `Isolated summary (${toolsTag}):\nGoal: continued from isolated session.`,
+            `Isolated summary (${fsTag}, ${terminalTag}):\nGoal: continued from isolated session.`,
           ),
         );
         return { stopReason: 'end_turn' };
@@ -1258,6 +1259,117 @@ const app = acp
             status: 'cancelled',
           }),
         );
+        return { stopReason: 'cancelled' };
+      }
+      if (text === 'terminal-stream' || text === 'terminal-stream-fail') {
+        const exitCode = text === 'terminal-stream-fail' ? 2 : 0;
+        const { terminalId } = await client.request('terminal/create', {
+          sessionId,
+          command: process.execPath,
+          args: [
+            '-e',
+            `process.stdout.write('first-line\\n'); setTimeout(() => { process.stderr.write('second-line\\n'); process.exit(${exitCode}); }, 150);`,
+          ],
+        });
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'term-call-1',
+            title: 'node stream',
+            kind: 'execute',
+            status: 'in_progress',
+            content: [{ type: 'terminal', terminalId }],
+            rawInput: { command: 'node', args: ['-e', '...'] },
+          }),
+        );
+        await client.request('terminal/wait_for_exit', { sessionId, terminalId });
+        await client.request('terminal/release', { sessionId, terminalId });
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'term-call-1',
+            status: exitCode === 0 ? 'completed' : 'failed',
+            content: [{ type: 'terminal', terminalId }],
+            rawOutput: { output: 'SHOULD_NOT_WIPE' },
+          }),
+        );
+        await client.notify('session/update', chunk(sessionId, 'terminal done'));
+        return { stopReason: 'end_turn' };
+      }
+      if (text === 'terminal-truncate') {
+        const { terminalId } = await client.request('terminal/create', {
+          sessionId,
+          command: process.execPath,
+          args: ['-e', "process.stdout.write('A'.repeat(35_000) + '\\nTAIL_OK');"],
+        });
+        await client.request('terminal/wait_for_exit', { sessionId, terminalId });
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'term-trunc-1',
+            title: 'node truncate',
+            kind: 'execute',
+            status: 'in_progress',
+            content: [{ type: 'terminal', terminalId }],
+          }),
+        );
+        await client.request('terminal/release', { sessionId, terminalId });
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'term-trunc-1',
+            status: 'completed',
+          }),
+        );
+        await client.notify('session/update', chunk(sessionId, 'truncated done'));
+        return { stopReason: 'end_turn' };
+      }
+      if (text === 'terminal-cwd-outside') {
+        const cwd = folders.get(sessionId) ?? process.cwd();
+        let outcome = 'allowed';
+        try {
+          await client.request('terminal/create', {
+            sessionId,
+            command: process.execPath,
+            args: ['-e', 'process.exit(0)'],
+            cwd: dirname(cwd),
+          });
+        } catch (err) {
+          outcome = `rejected:${err instanceof Error ? err.message : String(err)}`;
+        }
+        await client.notify('session/update', chunk(sessionId, outcome));
+        return { stopReason: 'end_turn' };
+      }
+      if (text.startsWith('terminal-hold:')) {
+        const pidFile = text.slice('terminal-hold:'.length);
+        const { terminalId } = await client.request('terminal/create', {
+          sessionId,
+          command: process.execPath,
+          args: [
+            '-e',
+            `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); process.stdout.write('holding\\n'); setInterval(() => {}, 1000);`,
+          ],
+        });
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'term-hold-1',
+            title: 'hold command',
+            kind: 'execute',
+            status: 'in_progress',
+            content: [{ type: 'terminal', terminalId }],
+          }),
+        );
+        const cancel = waitForCancel(sessionId);
+        const waitExit = client
+          .request('terminal/wait_for_exit', { sessionId, terminalId })
+          .catch(() => {});
+        await Promise.race([cancel, waitExit]);
         return { stopReason: 'cancelled' };
       }
       if (text === 'step-details') {
