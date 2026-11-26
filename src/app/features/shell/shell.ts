@@ -88,7 +88,7 @@ const clampPaneWidth = (container: HTMLElement, width: number): number => {
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div hlmSidebarWrapper>
-      <app-workspace-rail />
+      <app-workspace-rail (projectSwitcherRequested)="openProjectSwitcher()" />
       <app-sidebar />
       <main hlmSidebarInset class="h-svh min-w-0 overflow-hidden">
         @if (settings.open()) {
@@ -303,8 +303,13 @@ export class Shell {
     this.browser.widthFor(this.activeBrowserSession()),
   );
 
+  private readonly appSidebar = viewChild(AppSidebar);
   private readonly tabSwitcher = viewChild(TabSwitcher);
   private readonly overlayPanelId = PanelId.make('tab-overlay');
+
+  protected openProjectSwitcher(): void {
+    this.appSidebar()?.openProjectSwitcher();
+  }
 
   protected readonly activeProject = computed((): DeviceProject | null => {
     const ordered = this.projects.ordered();

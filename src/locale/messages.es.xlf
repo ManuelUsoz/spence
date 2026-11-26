@@ -3672,6 +3672,18 @@
         <source>Workspace</source>
         <target state="translated">Espacio de trabajo</target>
       </trans-unit>
+      <trans-unit id="1277585795823801502" datatype="html">
+        <source>Spence — No Project yet</source>
+        <target state="translated">Spence — Aún no hay Proyecto</target>
+      </trans-unit>
+      <trans-unit id="3056372221184401271" datatype="html">
+        <source><x id="project" equiv-text="project.name"/> — Switch Project</source>
+        <target state="translated"><x id="project" equiv-text="project.name"/> — Cambiar de Proyecto</target>
+      </trans-unit>
+      <trans-unit id="5072071500913858715" datatype="html">
+        <source><x id="project" equiv-text="project.name"/> (<x id="device" equiv-text="device"/>) — Switch Project</source>
+        <target state="translated"><x id="project" equiv-text="project.name"/> (<x id="device" equiv-text="device"/>) — Cambiar de Proyecto</target>
+      </trans-unit>
       <trans-unit id="6357866423106114276" datatype="html">
         <source>Needs an answer</source>
         <target>Necesita una respuesta</target>
