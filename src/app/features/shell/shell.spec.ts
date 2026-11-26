@@ -58,6 +58,7 @@ import { BROWSER_PANE_VIEW } from '../../core/browser-pane';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { Keymap, KEYMAP_PLATFORM, type KeymapPlatform } from '../../core/keymap';
+import { OverlayOcclusion } from '../../core/overlay-occlusion';
 import { PANEL_DEFINITION, type PanelDefinition } from '../../core/panel-registry';
 import { Tabs } from '../../core/tabs';
 import { ChangesPage } from '../changes/changes-page';
@@ -1285,9 +1286,11 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
     // Settings button lives on the rail, not in AppSidebar.
     expect(rail!.querySelector('[data-testid="open-settings"]')).not.toBeNull();
     expect(sidebar!.querySelector('[data-testid="open-settings"]')).toBeNull();
-    // Sidebar container is offset by the 50px rail both collapsed and expanded.
-    expect(container?.className).toContain('left-[50px]!');
-    expect(container?.className).toContain('left-[calc(50px-var(--sidebar-width))]!');
+    // Sidebar container is offset by the --workspace-rail-width variable both collapsed and expanded.
+    expect(container?.className).toContain('left-(--workspace-rail-width)!');
+    expect(container?.className).toContain(
+      'left-[calc(var(--workspace-rail-width)-var(--sidebar-width))]!',
+    );
 
     host.querySelector<HTMLButtonElement>('[data-slot="sidebar-trigger"]')?.click();
     fixture.detectChanges();
@@ -1428,6 +1431,61 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
     expect(host.querySelector('hlm-sidebar')?.getAttribute('data-state')).toBe('collapsed');
     expect(document.querySelector('[data-testid="project-menu"]')).toBeNull();
     document.cookie = 'sidebar_state=; max-age=0; path=/';
+  });
+
+  it('opens AppSidebar as a modal sheet drawer on mobile (< 768px) while keeping WorkspaceRail rendered and interactive', async () => {
+    const matchMediaSpy = vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
+      matches: query.includes('max-width: 768px'),
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+
+    try {
+      const { fixture } = await mountShell('other');
+      const host = fixture.nativeElement as HTMLElement;
+      const sidebarService = TestBed.inject(HlmSidebarService);
+      const settings = TestBed.inject(SettingsState);
+
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(sidebarService.isMobile()).toBe(true);
+      });
+
+      // Desktop sidebar container is replaced by mobile sheet mode.
+      expect(host.querySelector('[data-slot="sidebar-container"]')).toBeNull();
+
+      // Open mobile drawer via HlmSidebarService.setOpenMobile(true) and verify modal sheet renders.
+      sidebarService.setOpenMobile(true);
+      fixture.detectChanges();
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        const sheet = document.querySelector<HTMLElement>(
+          'hlm-sheet-content[data-sidebar="sidebar"][data-mobile="true"]',
+        );
+        expect(sheet).not.toBeNull();
+        expect(sheet?.getAttribute('data-state')).toBe('open');
+      });
+
+      // WorkspaceRail remains rendered and interactive while mobile drawer is open.
+      const rail = host.querySelector('[data-testid="workspace-rail"]');
+      expect(rail).not.toBeNull();
+      rail!.querySelector<HTMLButtonElement>('[data-testid="open-settings"]')!.click();
+      fixture.detectChanges();
+      expect(settings.open()).toBe(true);
+      rail!.querySelector<HTMLButtonElement>('[data-testid="rail-nav-sessions"]')!.click();
+      fixture.detectChanges();
+      expect(settings.open()).toBe(false);
+
+      sidebarService.setOpenMobile(false);
+      fixture.detectChanges();
+    } finally {
+      matchMediaSpy.mockRestore();
+    }
   });
 
   it('keeps the Spence app icon with no background fill on the rail mark while updating the Project label on switch and rename', async () => {
@@ -2597,6 +2655,60 @@ describe('Shell Browser split pane & PanelHeader toggle', () => {
       expect(root.querySelector('[data-testid="browser-pane-container"]')).not.toBeNull();
       expect(spy.activeSessions.at(-1)).toBe(sLocal);
     });
+  });
+
+  it('does not falsely occlude Browser when toggling AppSidebar or hovering WorkspaceRail tooltips', async () => {
+    const spy: BrowserTestSpy = {
+      activeSessions: [],
+      widths: [],
+      occludedCalls: [],
+      states: new Map(),
+    };
+    const { fixture, tabs } = await mountShell('other', { browserSpy: spy });
+    const root = fixture.nativeElement as HTMLElement;
+    const occlusion = TestBed.inject(OverlayOcclusion);
+
+    tabs.open({ id: sLocal, projectId: p1, title: 'Local Session' });
+    fixture.detectChanges();
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="toggle-browser"]')).not.toBeNull();
+    });
+    (root.querySelector('[data-testid="toggle-browser"]') as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="browser-pane-container"]')).not.toBeNull();
+    });
+
+    // Toggling AppSidebar collapse/expand does not occlude the Browser pane.
+    const trigger = root.querySelector<HTMLButtonElement>('[data-slot="sidebar-trigger"]')!;
+    trigger.click();
+    fixture.detectChanges();
+    occlusion.recheck();
+    expect(occlusion.occluded()).toBe(false);
+    expect(spy.occludedCalls).not.toContain(true);
+
+    trigger.click();
+    fixture.detectChanges();
+    occlusion.recheck();
+    expect(occlusion.occluded()).toBe(false);
+    expect(spy.occludedCalls).not.toContain(true);
+
+    // Hovering/focusing WorkspaceRail tooltips ([hlmTooltip] / [role="tooltip"]) does not occlude.
+    for (const testId of ['rail-brand', 'rail-nav-sessions', 'open-settings']) {
+      const btn = root.querySelector<HTMLElement>(`[data-testid="${testId}"]`)!;
+      btn.dispatchEvent(new Event('focus'));
+      fixture.detectChanges();
+      await vi.waitFor(() => {
+        expect(document.querySelector('[role="tooltip"]')).not.toBeNull();
+      });
+      occlusion.recheck();
+      expect(occlusion.occluded()).toBe(false);
+      expect(spy.occludedCalls).not.toContain(true);
+      btn.dispatchEvent(new Event('blur'));
+      fixture.detectChanges();
+    }
   });
 
   it('auto-opens split pane when viewed Session receives Agent Browser event without stealing Tab on background Session events', async () => {
