@@ -112,17 +112,26 @@ test('the gear opens Settings and the permanent rail stays unobstructed across s
   await expect(rail).toBeVisible();
 });
 
-test('rail Project mark shows active initial, tooltip, quiet no-Project fallback, and expands sidebar to open Switch Project', async ({
+test('rail Project mark shows Spence app icon with no background fill, tooltip, quiet no-Project fallback, and expands sidebar to open Switch Project', async ({
   spence,
 }) => {
   const page = spence.page;
   const mark = page.getByTestId('rail-brand');
+  const markImg = mark.locator('img');
 
   const markBox = await mark.boundingBox();
   expect(markBox).not.toBeNull();
   expect(markBox!.width).toBe(30);
   expect(markBox!.height).toBe(30);
-  await expect(mark).toHaveText('S');
+  await expect(markImg).toBeVisible();
+  await expect(markImg).toHaveAttribute('src', 'icon.png');
+  await expect
+    .poll(async () =>
+      markImg.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0),
+    )
+    .toBe(true);
+  await expect(mark).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await expect(mark).toHaveText('');
 
   // Quiet fallback tooltip & no-op click when no Project exists yet.
   await mark.hover();
@@ -134,26 +143,31 @@ test('rail Project mark shows active initial, tooltip, quiet no-Project fallback
   await expect(page.locator('hlm-sidebar')).toHaveAttribute('data-state', 'collapsed');
   await page.mouse.move(400, 400);
 
-  // Expand sidebar and add demo-project -> initial updates to 'D' with Project tooltip.
+  // Expand sidebar and add demo-project -> app icon remains with Project tooltip and no background fill.
   await page.locator('[data-slot="sidebar-trigger"]').click();
   await page.getByTestId('add-project').click();
-  await expect(mark).toHaveText('D');
+  await expect(markImg).toHaveAttribute('src', 'icon.png');
+  await expect(mark).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await expect(mark).toHaveText('');
   await mark.hover();
-  await expect(page.getByRole('tooltip')).toContainText(
-    spence.t({
-      en: 'demo-project — Switch Project',
-      es: 'demo-project — Cambiar de Proyecto',
+  await expect(
+    page.getByRole('tooltip', {
+      name: spence.t({
+        en: 'demo-project — Switch Project',
+        es: 'demo-project — Cambiar de Proyecto',
+      }),
     }),
-  );
+  ).toBeVisible();
   await page.mouse.move(400, 400);
 
-  // Add second-project -> initial updates to 'S'.
+  // Add second-project -> app icon remains with no background fill and updated Project tooltip.
   await spence.pickNext('second-project');
   await page.getByTestId('current-project').click();
   await page
     .getByRole('menuitem', { name: spence.t({ en: 'Add Project', es: 'Añadir Proyecto' }) })
     .click();
-  await expect(mark).toHaveText('S');
+  await expect(markImg).toHaveAttribute('src', 'icon.png');
+  await expect(mark).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
 
   // Collapse the Sessions sidebar, then click the rail Project mark to expand + open Switch Project.
   await page.keyboard.press('ControlOrMeta+b');
@@ -172,7 +186,17 @@ test('rail Project mark shows active initial, tooltip, quiet no-Project fallback
     'demo-project',
   ]);
 
-  // Switch via the opened menu and verify the rail initial updates back to 'D'.
+  // Switch via the opened menu and verify the rail mark keeps the app icon and updates tooltip back to demo-project.
   await page.getByTestId('project-option').filter({ hasText: 'demo-project' }).click();
-  await expect(mark).toHaveText('D');
+  await expect(markImg).toHaveAttribute('src', 'icon.png');
+  await expect(mark).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await mark.hover();
+  await expect(
+    page.getByRole('tooltip', {
+      name: spence.t({
+        en: 'demo-project — Switch Project',
+        es: 'demo-project — Cambiar de Proyecto',
+      }),
+    }),
+  ).toBeVisible();
 });

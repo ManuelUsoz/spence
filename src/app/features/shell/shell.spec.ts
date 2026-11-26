@@ -1352,7 +1352,7 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
     expect(sessionsBtn.getAttribute('aria-current')).toBe('page');
   });
 
-  it('shows neutral S fallback on the rail mark when no Project exists and ignores clicks quietly', async () => {
+  it('shows the Spence app icon with no background fill on the rail mark when no Project exists and ignores clicks quietly', async () => {
     document.cookie = 'sidebar_state=; max-age=0; path=/';
     TestBed.configureTestingModule({
       providers: [provideHlmSidebarConfig({ defaultOpen: false })],
@@ -1361,8 +1361,17 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
     const host = fixture.nativeElement as HTMLElement;
     const mark = host.querySelector<HTMLButtonElement>('[data-testid="rail-brand"]')!;
     const sidebarService = TestBed.inject(HlmSidebarService);
+    const img = mark.querySelector<HTMLImageElement>('img');
 
-    expect(mark.textContent?.trim()).toBe('S');
+    expect(img).not.toBeNull();
+    expect(img?.getAttribute('src')).toBe('icon.png');
+    expect(img?.getAttribute('alt')).toBe('');
+    expect(img?.getAttribute('aria-hidden')).toBe('true');
+    expect(mark.textContent?.trim()).toBe('');
+    expect(mark.classList.contains('bg-transparent')).toBe(true);
+    expect(mark.classList.contains('bg-sidebar-primary')).toBe(false);
+    expect(mark.classList.contains('bg-sidebar-accent')).toBe(false);
+    expect(mark.classList.contains('cursor-default')).toBe(true);
     expect(mark.getAttribute('aria-label')).toContain('Spence');
     expect(sidebarService.open()).toBe(false);
 
@@ -1405,7 +1414,7 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
     document.cookie = 'sidebar_state=; max-age=0; path=/';
   });
 
-  it('shows active Project uppercase initial on the rail mark and updates on switch and rename', async () => {
+  it('keeps the Spence app icon with no background fill on the rail mark while updating the Project label on switch and rename', async () => {
     const backendProject: Project = { ...project2, name: 'backend' };
     const { fixture, tabs } = await mountShell('other', {
       projects: [project1, backendProject],
@@ -1413,20 +1422,25 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
     });
     const host = fixture.nativeElement as HTMLElement;
     const mark = host.querySelector<HTMLElement>('[data-testid="rail-brand"]')!;
-    expect(mark.textContent?.trim()).toBe('A');
+    expect(mark.querySelector('img')?.getAttribute('src')).toBe('icon.png');
+    expect(mark.textContent?.trim()).toBe('');
+    expect(mark.classList.contains('bg-transparent')).toBe(true);
+    expect(mark.classList.contains('bg-sidebar-primary')).toBe(false);
+    expect(mark.classList.contains('bg-sidebar-accent')).toBe(false);
+    expect(mark.classList.contains('cursor-pointer')).toBe(true);
     expect(mark.getAttribute('aria-label')).toContain('app');
 
-    // Switching Project updates the initial and label.
+    // Switching Project keeps the app icon and updates the label.
     tabs.switchProject(p2);
     fixture.detectChanges();
-    expect(mark.textContent?.trim()).toBe('B');
+    expect(mark.querySelector('img')?.getAttribute('src')).toBe('icon.png');
     expect(mark.getAttribute('aria-label')).toContain('backend');
 
-    // Renaming the active Project updates the initial and label.
+    // Renaming the active Project keeps the app icon and updates the label.
     const projects = TestBed.inject(ProjectsState);
     await projects.rename(p2, 'zenith');
     fixture.detectChanges();
-    expect(mark.textContent?.trim()).toBe('Z');
+    expect(mark.querySelector('img')?.getAttribute('src')).toBe('icon.png');
     expect(mark.getAttribute('aria-label')).toContain('zenith');
   });
 
@@ -1439,12 +1453,12 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
     });
     const host = fixture.nativeElement as HTMLElement;
     const mark = host.querySelector<HTMLButtonElement>('[data-testid="rail-brand"]')!;
-    expect(mark.textContent?.trim()).toBe('A');
+    expect(mark.querySelector('img')?.getAttribute('src')).toBe('icon.png');
     expect(mark.getAttribute('aria-label')).not.toContain('Peer Mac');
 
     tabs.switchProject(p2);
     fixture.detectChanges();
-    expect(mark.textContent?.trim()).toBe('C');
+    expect(mark.querySelector('img')?.getAttribute('src')).toBe('icon.png');
     expect(mark.getAttribute('aria-label')).toContain('cloud-api');
     expect(mark.getAttribute('aria-label')).toContain('Peer Mac');
   });

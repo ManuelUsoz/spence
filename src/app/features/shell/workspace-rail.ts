@@ -40,15 +40,11 @@ export interface RailNavItem {
         [attr.aria-label]="projectMarkLabel()"
         [hlmTooltip]="projectMarkLabel()"
         position="right"
-        class="focus-visible:ring-ring mb-1 flex size-[30px] shrink-0 items-center justify-center rounded-[7px] text-xs font-semibold transition-opacity outline-none select-none focus-visible:ring-2"
-        [class]="
-          activeProject() !== null
-            ? 'bg-sidebar-primary text-sidebar-primary-foreground cursor-pointer hover:opacity-90'
-            : 'bg-sidebar-accent text-sidebar-foreground/80 cursor-default'
-        "
+        class="focus-visible:ring-ring mb-1 flex size-[30px] shrink-0 items-center justify-center rounded-[7px] bg-transparent transition-opacity outline-none select-none focus-visible:ring-2"
+        [class]="activeProject() !== null ? 'cursor-pointer hover:opacity-90' : 'cursor-default'"
         (click)="requestProjectSwitcher()"
       >
-        {{ projectMarkInitial() }}
+        <img src="icon.png" alt="" aria-hidden="true" class="size-[30px] object-contain" />
       </button>
 
       @for (item of navItems(); track item.id) {
@@ -147,10 +143,6 @@ export class WorkspaceRail {
     const matched = activeId === null ? undefined : ordered.find((p) => p.id === activeId);
     return matched ?? this.projects.lastUsed() ?? ordered[0] ?? null;
   });
-
-  protected readonly projectMarkInitial = computed(
-    (): string => this.activeProject()?.name.slice(0, 1).toUpperCase() ?? 'S',
-  );
 
   protected readonly projectMarkLabel = computed((): string => {
     const project = this.activeProject();
