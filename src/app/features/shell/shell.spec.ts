@@ -21,7 +21,7 @@ import {
 } from '../../../shared/browser/browser.rpc';
 import { toast } from '@ui/toast';
 import { HlmSidebarService, provideHlmSidebarConfig } from '@ui/sidebar';
-import { DevicesRpcs, DeviceId } from '../../../shared/devices/devices.rpc';
+import { DEVICE_SCOPE_HEADER, DevicesRpcs, DeviceId } from '../../../shared/devices/devices.rpc';
 import { NotificationsRpcs } from '../../../shared/notifications/notifications.rpc';
 import { ProjectId, ProjectsRpcs, type Project } from '../../../shared/projects/projects.rpc';
 import {
@@ -58,10 +58,12 @@ import { BROWSER_PANE_VIEW } from '../../core/browser-pane';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { Keymap, KEYMAP_PLATFORM, type KeymapPlatform } from '../../core/keymap';
+import { OverlayOcclusion } from '../../core/overlay-occlusion';
 import { PANEL_DEFINITION, type PanelDefinition } from '../../core/panel-registry';
 import { Tabs } from '../../core/tabs';
 import { ChangesPage } from '../changes/changes-page';
 import { WorkersPanelHost } from '../session/workers-panel';
+import { ProjectsState } from './projects-state';
 import { SessionsState } from './sessions-state';
 import { SettingsState } from './settings-state';
 import { Shell } from './shell';
@@ -242,6 +244,7 @@ const makeRestored = (
 
 interface DesktopFixtureOptions {
   readonly projects?: ReadonlyArray<Project>;
+  readonly remoteProjects?: ReadonlyArray<Project>;
   readonly sessionsByProject?: Readonly<Record<string, ReadonlyArray<SessionSummary>>>;
   readonly restored?: RestoredWorkspace;
   readonly extraPanels?: ReadonlyArray<PanelDefinition>;
@@ -388,9 +391,19 @@ const desktopLayer = (options: DesktopFixtureOptions = {}) => {
             : Effect.die('unused'),
       }),
       ProjectsRpcs.toLayer({
-        'Projects.list': () => Effect.succeed([...projects]),
+        'Projects.list': (_payload, { headers }) =>
+          Effect.succeed(
+            headers[DEVICE_SCOPE_HEADER] === dRemote
+              ? [...(options.remoteProjects ?? projects)]
+              : [...projects],
+          ),
         'Projects.add': () => Effect.die('unused'),
-        'Projects.rename': () => Effect.die('unused'),
+        'Projects.rename': ({ id, name }) => {
+          const target = projects.find((p) => p.id === id);
+          return target === undefined
+            ? Effect.die('unknown project')
+            : Effect.succeed({ ...target, name });
+        },
         'Projects.remove': () => Effect.die('unused'),
         'Projects.locate': () => Effect.die('unused'),
         'Projects.addFolder': () => Effect.die('unused'),
@@ -1251,6 +1264,277 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
     expect(service.open()).toBe(true);
     expect(sidebar?.getAttribute('data-state')).toBe('expanded');
     document.cookie = 'sidebar_state=; max-age=0; path=/';
+  });
+
+  it('renders the permanent WorkspaceRail beside AppSidebar, keeps it visible when collapsed, and offsets the sidebar container', async () => {
+    document.cookie = 'sidebar_state=; max-age=0; path=/';
+    TestBed.configureTestingModule({
+      providers: [provideHlmSidebarConfig({ defaultOpen: false })],
+    });
+    const { fixture } = await mountShell('other');
+    const host = fixture.nativeElement as HTMLElement;
+    const wrapper = host.querySelector('[data-slot="sidebar-wrapper"]');
+    const rail = host.querySelector('[data-testid="workspace-rail"]');
+    const sidebar = host.querySelector('app-sidebar');
+    const container = host.querySelector('[data-slot="sidebar-container"]');
+
+    expect(wrapper).not.toBeNull();
+    expect(rail).not.toBeNull();
+    expect(sidebar).not.toBeNull();
+    // Rail sits before AppSidebar inside the sidebar wrapper.
+    expect(rail!.compareDocumentPosition(sidebar!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Settings button lives on the rail, not in AppSidebar.
+    expect(rail!.querySelector('[data-testid="open-settings"]')).not.toBeNull();
+    expect(sidebar!.querySelector('[data-testid="open-settings"]')).toBeNull();
+    // Sidebar container is offset by the --workspace-rail-width variable both collapsed and expanded.
+    expect(container?.className).toContain('left-(--workspace-rail-width)!');
+    expect(container?.className).toContain(
+      'left-[calc(var(--workspace-rail-width)-var(--sidebar-width))]!',
+    );
+
+    host.querySelector<HTMLButtonElement>('[data-slot="sidebar-trigger"]')?.click();
+    fixture.detectChanges();
+    expect(host.querySelector('hlm-sidebar')?.getAttribute('data-state')).toBe('expanded');
+    expect(host.querySelector('[data-testid="workspace-rail"]')).not.toBeNull();
+    document.cookie = 'sidebar_state=; max-age=0; path=/';
+  });
+
+  it('tracks active state on rail Sessions and Settings, toggles Settings, and returns to workspace via Sessions', async () => {
+    const s1 = SessionId.make('s1');
+    const { fixture } = await mountShell('other', {
+      restored: makeRestored(
+        [
+          {
+            projectId: p1,
+            tabs: [
+              { tabId: 't1', paneId: 'pane1', panelId: 'panel1', sessionId: s1, title: 'One' },
+            ],
+          },
+        ],
+        p1,
+      ),
+    });
+    const host = fixture.nativeElement as HTMLElement;
+    const settings = TestBed.inject(SettingsState);
+    const rail = host.querySelector('[data-testid="workspace-rail"]')!;
+    const sessionsBtn = rail.querySelector<HTMLButtonElement>('[data-testid="rail-nav-sessions"]')!;
+    const settingsBtn = rail.querySelector<HTMLButtonElement>('[data-testid="open-settings"]')!;
+
+    // Only Sessions is in the extensible nav list today (no stubbed PR/Issues buttons or mock badges).
+    expect(
+      Array.from(rail.querySelectorAll('[data-testid^="rail-nav-"]')).map((el) =>
+        el.getAttribute('data-testid'),
+      ),
+    ).toEqual(['rail-nav-sessions']);
+    expect(sessionsBtn.getAttribute('aria-current')).toBe('page');
+    expect(settingsBtn.getAttribute('aria-current')).toBeNull();
+
+    // Clicking open-settings in the rail toggles Settings on and updates active indicators.
+    settingsBtn.click();
+    fixture.detectChanges();
+    expect(settings.open()).toBe(true);
+    expect(host.querySelector('[data-testid="settings-header"]')).not.toBeNull();
+    expect(settingsBtn.getAttribute('aria-current')).toBe('page');
+    expect(sessionsBtn.getAttribute('aria-current')).toBeNull();
+
+    // Clicking open-settings again toggles Settings off.
+    settingsBtn.click();
+    fixture.detectChanges();
+    expect(settings.open()).toBe(false);
+    expect(host.querySelector('[data-testid="tab-strip"]')).not.toBeNull();
+    expect(sessionsBtn.getAttribute('aria-current')).toBe('page');
+
+    // Clicking Sessions while Settings is open closes Settings and returns to the workspace.
+    settingsBtn.click();
+    fixture.detectChanges();
+    expect(settings.open()).toBe(true);
+    sessionsBtn.click();
+    fixture.detectChanges();
+    expect(settings.open()).toBe(false);
+    expect(host.querySelector('[data-testid="tab-strip"]')).not.toBeNull();
+    expect(sessionsBtn.getAttribute('aria-current')).toBe('page');
+  });
+
+  it('shows the Spence app icon with no background fill on the rail mark when no Project exists and ignores clicks quietly', async () => {
+    document.cookie = 'sidebar_state=; max-age=0; path=/';
+    TestBed.configureTestingModule({
+      providers: [provideHlmSidebarConfig({ defaultOpen: false })],
+    });
+    const { fixture } = await mountShell('other', { projects: [] });
+    const host = fixture.nativeElement as HTMLElement;
+    const mark = host.querySelector<HTMLButtonElement>('[data-testid="rail-brand"]')!;
+    const sidebarService = TestBed.inject(HlmSidebarService);
+    const img = mark.querySelector<HTMLImageElement>('img');
+
+    expect(img).not.toBeNull();
+    expect(img?.getAttribute('src')).toBe('icon.png');
+    expect(img?.getAttribute('alt')).toBe('');
+    expect(img?.getAttribute('aria-hidden')).toBe('true');
+    expect(mark.textContent?.trim()).toBe('');
+    expect(mark.classList.contains('bg-transparent')).toBe(true);
+    expect(mark.classList.contains('bg-sidebar-primary')).toBe(false);
+    expect(mark.classList.contains('bg-sidebar-accent')).toBe(false);
+    expect(mark.classList.contains('cursor-default')).toBe(true);
+    expect(mark.getAttribute('aria-label')).toContain('Spence');
+    expect(sidebarService.open()).toBe(false);
+
+    mark.click();
+    fixture.detectChanges();
+    expect(sidebarService.open()).toBe(false);
+    expect(document.querySelector('[data-testid="project-menu"]')).toBeNull();
+    document.cookie = 'sidebar_state=; max-age=0; path=/';
+  });
+
+  it('redirects to the active Project Sessions view without opening Switch Project when clicking the rail app icon', async () => {
+    document.cookie = 'sidebar_state=; max-age=0; path=/';
+    TestBed.configureTestingModule({
+      providers: [provideHlmSidebarConfig({ defaultOpen: false })],
+    });
+    const { fixture, tabs } = await mountShell('other', {
+      projects: [project1, project2],
+      restored: makeRestored(
+        [
+          {
+            projectId: p1,
+            tabs: [
+              {
+                tabId: 't1',
+                paneId: 'pane1',
+                panelId: 'panel1',
+                sessionId: SessionId.make('s1'),
+                title: 'One',
+              },
+            ],
+          },
+        ],
+        p1,
+      ),
+    });
+    const host = fixture.nativeElement as HTMLElement;
+    const mark = host.querySelector<HTMLButtonElement>('[data-testid="rail-brand"]')!;
+    const sidebarService = TestBed.inject(HlmSidebarService);
+    const settings = TestBed.inject(SettingsState);
+
+    settings.show();
+    fixture.detectChanges();
+    expect(settings.open()).toBe(true);
+    expect(sidebarService.open()).toBe(false);
+    expect(document.querySelector('[data-testid="project-menu"]')).toBeNull();
+
+    mark.click();
+    fixture.detectChanges();
+
+    expect(settings.open()).toBe(false);
+    expect(tabs.activeProjectId()).toBe(p1);
+    expect(host.querySelector('[data-testid="tab-strip"]')).not.toBeNull();
+    expect(sidebarService.open()).toBe(false);
+    expect(host.querySelector('hlm-sidebar')?.getAttribute('data-state')).toBe('collapsed');
+    expect(document.querySelector('[data-testid="project-menu"]')).toBeNull();
+    document.cookie = 'sidebar_state=; max-age=0; path=/';
+  });
+
+  it('opens AppSidebar as a modal sheet drawer on mobile (< 768px) while keeping WorkspaceRail rendered and interactive', async () => {
+    const matchMediaSpy = vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
+      matches: query.includes('max-width: 768px'),
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+
+    try {
+      const { fixture } = await mountShell('other');
+      const host = fixture.nativeElement as HTMLElement;
+      const sidebarService = TestBed.inject(HlmSidebarService);
+      const settings = TestBed.inject(SettingsState);
+
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(sidebarService.isMobile()).toBe(true);
+      });
+
+      // Desktop sidebar container is replaced by mobile sheet mode.
+      expect(host.querySelector('[data-slot="sidebar-container"]')).toBeNull();
+
+      // Open mobile drawer via HlmSidebarService.setOpenMobile(true) and verify modal sheet renders.
+      sidebarService.setOpenMobile(true);
+      fixture.detectChanges();
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        const sheet = document.querySelector<HTMLElement>(
+          'hlm-sheet-content[data-sidebar="sidebar"][data-mobile="true"]',
+        );
+        expect(sheet).not.toBeNull();
+        expect(sheet?.getAttribute('data-state')).toBe('open');
+      });
+
+      // WorkspaceRail remains rendered and interactive while mobile drawer is open.
+      const rail = host.querySelector('[data-testid="workspace-rail"]');
+      expect(rail).not.toBeNull();
+      rail!.querySelector<HTMLButtonElement>('[data-testid="open-settings"]')!.click();
+      fixture.detectChanges();
+      expect(settings.open()).toBe(true);
+      rail!.querySelector<HTMLButtonElement>('[data-testid="rail-nav-sessions"]')!.click();
+      fixture.detectChanges();
+      expect(settings.open()).toBe(false);
+
+      sidebarService.setOpenMobile(false);
+      fixture.detectChanges();
+    } finally {
+      matchMediaSpy.mockRestore();
+    }
+  });
+
+  it('keeps the Spence app icon with no background fill on the rail mark while updating the Project label on switch and rename', async () => {
+    const backendProject: Project = { ...project2, name: 'backend' };
+    const { fixture, tabs } = await mountShell('other', {
+      projects: [project1, backendProject],
+      restored: makeRestored([], p1),
+    });
+    const host = fixture.nativeElement as HTMLElement;
+    const mark = host.querySelector<HTMLElement>('[data-testid="rail-brand"]')!;
+    expect(mark.querySelector('img')?.getAttribute('src')).toBe('icon.png');
+    expect(mark.textContent?.trim()).toBe('');
+    expect(mark.classList.contains('bg-transparent')).toBe(true);
+    expect(mark.classList.contains('bg-sidebar-primary')).toBe(false);
+    expect(mark.classList.contains('bg-sidebar-accent')).toBe(false);
+    expect(mark.classList.contains('cursor-pointer')).toBe(true);
+    expect(mark.getAttribute('aria-label')).toContain('app');
+
+    // Switching Project keeps the app icon and updates the label.
+    tabs.switchProject(p2);
+    fixture.detectChanges();
+    expect(mark.querySelector('img')?.getAttribute('src')).toBe('icon.png');
+    expect(mark.getAttribute('aria-label')).toContain('backend');
+
+    // Renaming the active Project keeps the app icon and updates the label.
+    const projects = TestBed.inject(ProjectsState);
+    await projects.rename(p2, 'zenith');
+    fixture.detectChanges();
+    expect(mark.querySelector('img')?.getAttribute('src')).toBe('icon.png');
+    expect(mark.getAttribute('aria-label')).toContain('zenith');
+  });
+
+  it('includes the Remote device name in the rail Project mark label when active Project is on a Remote device', async () => {
+    const remoteProject: Project = { ...project2, name: 'cloud-api' };
+    const { fixture, tabs } = await mountShell('other', {
+      projects: [project1],
+      remoteProjects: [remoteProject],
+      restored: makeRestored([], p1),
+    });
+    const host = fixture.nativeElement as HTMLElement;
+    const mark = host.querySelector<HTMLButtonElement>('[data-testid="rail-brand"]')!;
+    expect(mark.querySelector('img')?.getAttribute('src')).toBe('icon.png');
+    expect(mark.getAttribute('aria-label')).not.toContain('Peer Mac');
+
+    tabs.switchProject(p2);
+    fixture.detectChanges();
+    expect(mark.querySelector('img')?.getAttribute('src')).toBe('icon.png');
+    expect(mark.getAttribute('aria-label')).toContain('cloud-api');
+    expect(mark.getAttribute('aria-label')).toContain('Peer Mac');
   });
 
   it('keeps Settings outside Tabs with sidebar trigger, back button, and live notice, and closes cleanly on Tab activation', async () => {
@@ -2371,6 +2655,60 @@ describe('Shell Browser split pane & PanelHeader toggle', () => {
       expect(root.querySelector('[data-testid="browser-pane-container"]')).not.toBeNull();
       expect(spy.activeSessions.at(-1)).toBe(sLocal);
     });
+  });
+
+  it('does not falsely occlude Browser when toggling AppSidebar or hovering WorkspaceRail tooltips', async () => {
+    const spy: BrowserTestSpy = {
+      activeSessions: [],
+      widths: [],
+      occludedCalls: [],
+      states: new Map(),
+    };
+    const { fixture, tabs } = await mountShell('other', { browserSpy: spy });
+    const root = fixture.nativeElement as HTMLElement;
+    const occlusion = TestBed.inject(OverlayOcclusion);
+
+    tabs.open({ id: sLocal, projectId: p1, title: 'Local Session' });
+    fixture.detectChanges();
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="toggle-browser"]')).not.toBeNull();
+    });
+    (root.querySelector('[data-testid="toggle-browser"]') as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="browser-pane-container"]')).not.toBeNull();
+    });
+
+    // Toggling AppSidebar collapse/expand does not occlude the Browser pane.
+    const trigger = root.querySelector<HTMLButtonElement>('[data-slot="sidebar-trigger"]')!;
+    trigger.click();
+    fixture.detectChanges();
+    occlusion.recheck();
+    expect(occlusion.occluded()).toBe(false);
+    expect(spy.occludedCalls).not.toContain(true);
+
+    trigger.click();
+    fixture.detectChanges();
+    occlusion.recheck();
+    expect(occlusion.occluded()).toBe(false);
+    expect(spy.occludedCalls).not.toContain(true);
+
+    // Hovering/focusing WorkspaceRail tooltips ([hlmTooltip] / [role="tooltip"]) does not occlude.
+    for (const testId of ['rail-brand', 'rail-nav-sessions', 'open-settings']) {
+      const btn = root.querySelector<HTMLElement>(`[data-testid="${testId}"]`)!;
+      btn.dispatchEvent(new Event('focus'));
+      fixture.detectChanges();
+      await vi.waitFor(() => {
+        expect(document.querySelector('[role="tooltip"]')).not.toBeNull();
+      });
+      occlusion.recheck();
+      expect(occlusion.occluded()).toBe(false);
+      expect(spy.occludedCalls).not.toContain(true);
+      btn.dispatchEvent(new Event('blur'));
+      fixture.detectChanges();
+    }
   });
 
   it('auto-opens split pane when viewed Session receives Agent Browser event without stealing Tab on background Session events', async () => {

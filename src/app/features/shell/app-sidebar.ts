@@ -169,6 +169,7 @@ const displayTitle = (
   template: `
     <hlm-sidebar
       collapsible="offcanvas"
+      sidebarContainerClass="data-[side=left]:left-(--workspace-rail-width)! data-[side=left]:group-data-[collapsible=offcanvas]:left-[calc(var(--workspace-rail-width)-var(--sidebar-width))]!"
       srOnlySheetTitle="Sidebar"
       i18n-srOnlySheetTitle
       srOnlySheetDescription="Displays the mobile sidebar."
@@ -422,35 +423,6 @@ const displayTitle = (
             }
           }
         }
-      </div>
-
-      <div hlmSidebarFooter class="p-2">
-        <button
-          type="button"
-          data-testid="open-settings"
-          class="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring flex h-[34px] w-full items-center gap-2.5 rounded-lg px-2 text-left text-sm outline-none focus-visible:ring-2"
-          (click)="settings.toggle()"
-        >
-          <svg
-            class="size-4 shrink-0"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"
-          >
-            <path
-              d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
-            />
-            <circle cx="12" cy="12" r="3" />
-          </svg>
-          <span class="flex-1" i18n>Settings</span>
-          <kbd class="text-muted-foreground font-mono text-xs">{{
-            keymap.format({ mod: true, key: ',' })
-          }}</kbd>
-        </button>
       </div>
     </hlm-sidebar>
 

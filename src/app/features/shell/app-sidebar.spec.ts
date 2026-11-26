@@ -1818,12 +1818,8 @@ describe('Sidebar hints', () => {
     click(fixture, 'project-option', 0);
     await vi.waitFor(() => expect(tabs.activeProjectId()).toBe(app.id));
     expect(tabs.tabs()).toHaveLength(2);
-
-    // Settings button in sidebar toggles Settings on and off.
-    click(fixture, 'open-settings');
-    expect(settings.open()).toBe(true);
-    click(fixture, 'open-settings');
     expect(settings.open()).toBe(false);
+    expect(docAll(fixture, 'open-settings')).toHaveLength(0);
   });
 
   it('offers Open in new Tab and Open in split on single rows, enforces 4-Pane cap & uniqueness, and collapses split Panes on Session deletion', async () => {
