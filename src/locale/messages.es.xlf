@@ -1030,6 +1030,10 @@
         <source>No changes</source>
         <target state="translated">Sin cambios</target>
       </trans-unit>
+      <trans-unit id="5066973974846952912" datatype="html">
+        <source>Create PR</source>
+        <target state="translated">Crear PR</target>
+      </trans-unit>
       <trans-unit id="5203279511751768967" datatype="html">
         <source>From</source>
         <target state="translated">Desde</target>
@@ -3664,6 +3668,14 @@
         <source>Auto-detect (e.g. npm ci, mvn test-compile)</source>
         <target state="translated">Detectar automáticamente (p. ej., npm ci, mvn test-compile)</target>
       </trans-unit>
+      <trans-unit id="8089516367159666560" datatype="html">
+        <source> Pull request target remote </source>
+        <target state="translated"> Remoto de destino para Pull requests </target>
+      </trans-unit>
+      <trans-unit id="8024676081961870113" datatype="html">
+        <source>Auto (upstream → origin)</source>
+        <target state="translated">Automático (upstream → origin)</target>
+      </trans-unit>
       <trans-unit id="8810139481158892708" datatype="html">
         <source>Could not load Projects.</source>
         <target state="translated">No se pudieron cargar los Proyectos.</target>
@@ -3791,6 +3803,26 @@
       <trans-unit id="3334074470958853341" datatype="html">
         <source>Changes apply at once</source>
         <target state="translated">Los cambios se aplican al instante</target>
+      </trans-unit>
+      <trans-unit id="1019897759924590321" datatype="html">
+        <source>Pull requests</source>
+        <target state="translated">Pull requests</target>
+      </trans-unit>
+      <trans-unit id="2172902003676402663" datatype="html">
+        <source> Refresh </source>
+        <target state="translated"> Actualizar </target>
+      </trans-unit>
+      <trans-unit id="6492421042208643881" datatype="html">
+        <source> Select a Project to view Pull requests. </source>
+        <target state="translated"> Selecciona un Proyecto para ver los Pull requests. </target>
+      </trans-unit>
+      <trans-unit id="1340802010314295669" datatype="html">
+        <source> No Pull requests in <x id="INTERPOLATION" equiv-text="{{ project.name }}"/> yet. </source>
+        <target state="translated"> Todavía no hay Pull requests en <x id="INTERPOLATION" equiv-text="{{ project.name }}"/>. </target>
+      </trans-unit>
+      <trans-unit id="1841541108325449829" datatype="html">
+        <source>Loading Pull requests…</source>
+        <target state="translated">Cargando Pull requests…</target>
       </trans-unit>
       <trans-unit id="3570771475105662960" datatype="html">
         <source>Resize Browser pane</source>

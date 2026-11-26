@@ -21,6 +21,7 @@ export type PermissionMode = typeof PermissionMode.Type;
 export const ProjectSettings = Schema.Struct({
   defaultPermissionMode: Schema.optionalKey(PermissionMode),
   worktreeSetupCommand: Schema.optionalKey(Schema.String),
+  targetRemote: Schema.optionalKey(Schema.String),
 }).annotate({ identifier: 'ProjectSettings' });
 export type ProjectSettings = typeof ProjectSettings.Type;
 
@@ -28,6 +29,7 @@ export type ProjectSettings = typeof ProjectSettings.Type;
 export const ProjectSettingsPatch = Schema.Struct({
   defaultPermissionMode: Schema.optionalKey(Schema.NullOr(PermissionMode)),
   worktreeSetupCommand: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  targetRemote: Schema.optionalKey(Schema.NullOr(Schema.String)),
 }).annotate({ identifier: 'ProjectSettingsPatch' });
 export type ProjectSettingsPatch = typeof ProjectSettingsPatch.Type;
 

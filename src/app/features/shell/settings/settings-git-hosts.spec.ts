@@ -1,5 +1,5 @@
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
-import { Effect, Layer } from 'effect';
+import { Effect, Layer, Stream } from 'effect';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   DeviceFlowId,
@@ -114,6 +114,14 @@ const setup = (options?: {
               disconnected = true;
               state = { ...state, accounts: [] };
             }),
+      'PullRequests.changes': () => Stream.empty,
+      'PullRequests.setActiveView': () => Effect.void,
+      'PullRequests.getProjectState': () => Effect.die('unused'),
+      'PullRequests.refreshProject': () => Effect.die('unused'),
+      'PullRequests.lookupByNumber': () => Effect.die('unused'),
+      'PullRequests.unpinNumber': () => Effect.void,
+      'PullRequests.getDetail': () => Effect.die('unused'),
+      'PullRequests.getDiff': () => Effect.die('unused'),
     }),
     LinksRpcs.toLayer({
       'Links.openExternal': () => Effect.void,

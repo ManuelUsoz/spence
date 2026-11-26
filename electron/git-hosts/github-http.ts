@@ -27,6 +27,23 @@ export interface GitHubHttpShape {
       readonly headers?: Readonly<Record<string, string>>;
       readonly host?: string;
       readonly coalesce?: boolean;
+      readonly allowNotModified?: boolean;
+    },
+  ) => Effect.Effect<GitHubHttpResponse<A>, GitHostError>;
+  readonly getText: (
+    url: string,
+    options?: {
+      readonly headers?: Readonly<Record<string, string>>;
+      readonly host?: string;
+      readonly coalesce?: boolean;
+    },
+  ) => Effect.Effect<GitHubHttpResponse<string>, GitHostError>;
+  readonly postJson: <A>(
+    url: string,
+    body: unknown,
+    options?: {
+      readonly headers?: Readonly<Record<string, string>>;
+      readonly host?: string;
     },
   ) => Effect.Effect<GitHubHttpResponse<A>, GitHostError>;
   readonly postForm: <A>(
@@ -165,6 +182,7 @@ export const layerGitHubHttp = Layer.effect(
     const runRequest = <A>(
       request: HttpClientRequest.HttpClientRequest,
       host: string,
+      options?: { readonly allowNotModified?: boolean; readonly rawText?: boolean },
     ): Effect.Effect<GitHubHttpResponse<A>, GitHostError> =>
       semaphoreFor(host).withPermits(1)(
         Effect.gen(function* () {
@@ -180,6 +198,13 @@ export const layerGitHubHttp = Layer.effect(
             ),
           );
           const headers = normalizeHeaders(response.headers);
+          if (options?.allowNotModified === true && response.status === 304) {
+            return {
+              status: 304,
+              headers,
+              data: undefined as A,
+            };
+          }
           const text = yield* response.text.pipe(
             Effect.mapError(
               () =>
@@ -190,7 +215,7 @@ export const layerGitHubHttp = Layer.effect(
             ),
           );
           let parsed: unknown = undefined;
-          if (text.trim().length > 0) {
+          if (!options?.rawText && text.trim().length > 0) {
             try {
               parsed = JSON.parse(text) as unknown;
             } catch {
@@ -204,32 +229,24 @@ export const layerGitHubHttp = Layer.effect(
           return {
             status: response.status,
             headers,
-            data: (parsed ?? {}) as A,
+            data: (options?.rawText ? text : (parsed ?? {})) as A,
           };
         }),
       );
 
-    const getJson: GitHubHttpShape['getJson'] = <A>(
-      url: string,
+    const runCoalescedGet = <A>(
+      request: HttpClientRequest.HttpClientRequest,
+      host: string,
+      key: string,
       options?: {
-        readonly headers?: Readonly<Record<string, string>>;
-        readonly host?: string;
         readonly coalesce?: boolean;
+        readonly allowNotModified?: boolean;
+        readonly rawText?: boolean;
       },
     ): Effect.Effect<GitHubHttpResponse<A>, GitHostError> => {
-      const host = options?.host ?? DEFAULT_HOST;
-      const request = HttpClientRequest.get(url).pipe(
-        HttpClientRequest.setHeaders({
-          accept: 'application/vnd.github+json',
-          'user-agent': DEFAULT_USER_AGENT,
-          'x-github-api-version': '2022-11-28',
-          ...(options?.headers ?? {}),
-        }),
-      );
       if (options?.coalesce === false) {
-        return runRequest<A>(request, host);
+        return runRequest<A>(request, host, options);
       }
-      const key = `GET\0${url}\0${authFingerprint(options?.headers)}`;
       return Effect.gen(function* () {
         const existing = inFlight.get(key);
         if (existing !== undefined) {
@@ -237,7 +254,7 @@ export const layerGitHubHttp = Layer.effect(
         }
         const deferred = yield* Deferred.make<GitHubHttpResponse<unknown>, GitHostError>();
         inFlight.set(key, deferred);
-        return yield* runRequest<A>(request, host).pipe(
+        return yield* runRequest<A>(request, host, options).pipe(
           Effect.tap((res) => Deferred.succeed(deferred, res)),
           Effect.tapError((err) => Deferred.fail(deferred, err)),
           Effect.ensuring(
@@ -249,6 +266,73 @@ export const layerGitHubHttp = Layer.effect(
           ),
         );
       });
+    };
+
+    const getJson: GitHubHttpShape['getJson'] = <A>(
+      url: string,
+      options?: {
+        readonly headers?: Readonly<Record<string, string>>;
+        readonly host?: string;
+        readonly coalesce?: boolean;
+        readonly allowNotModified?: boolean;
+      },
+    ): Effect.Effect<GitHubHttpResponse<A>, GitHostError> => {
+      const host = options?.host ?? DEFAULT_HOST;
+      const request = HttpClientRequest.get(url).pipe(
+        HttpClientRequest.setHeaders({
+          accept: 'application/vnd.github+json',
+          'user-agent': DEFAULT_USER_AGENT,
+          'x-github-api-version': '2022-11-28',
+          ...(options?.headers ?? {}),
+        }),
+      );
+      const etag = options?.headers?.['if-none-match'] ?? options?.headers?.['If-None-Match'] ?? '';
+      const key = `GET-JSON\0${url}\0${authFingerprint(options?.headers)}\0${etag}`;
+      return runCoalescedGet<A>(request, host, key, {
+        ...(options?.coalesce !== undefined ? { coalesce: options.coalesce } : {}),
+        ...(options?.allowNotModified !== undefined
+          ? { allowNotModified: options.allowNotModified }
+          : {}),
+      });
+    };
+
+    const getText: GitHubHttpShape['getText'] = (url, options) => {
+      const host = options?.host ?? DEFAULT_HOST;
+      const request = HttpClientRequest.get(url).pipe(
+        HttpClientRequest.setHeaders({
+          accept: 'application/vnd.github.v3.diff',
+          'user-agent': DEFAULT_USER_AGENT,
+          'x-github-api-version': '2022-11-28',
+          ...(options?.headers ?? {}),
+        }),
+      );
+      const key = `GET-TEXT\0${url}\0${authFingerprint(options?.headers)}`;
+      return runCoalescedGet<string>(request, host, key, {
+        ...(options?.coalesce !== undefined ? { coalesce: options.coalesce } : {}),
+        rawText: true,
+      });
+    };
+
+    const postJson: GitHubHttpShape['postJson'] = <A>(
+      url: string,
+      body: unknown,
+      options?: {
+        readonly headers?: Readonly<Record<string, string>>;
+        readonly host?: string;
+      },
+    ): Effect.Effect<GitHubHttpResponse<A>, GitHostError> => {
+      const host = options?.host ?? DEFAULT_HOST;
+      const request = HttpClientRequest.post(url).pipe(
+        HttpClientRequest.setHeaders({
+          accept: 'application/vnd.github+json',
+          'content-type': 'application/json',
+          'user-agent': DEFAULT_USER_AGENT,
+          'x-github-api-version': '2022-11-28',
+          ...(options?.headers ?? {}),
+        }),
+        HttpClientRequest.bodyText(JSON.stringify(body), 'application/json'),
+      );
+      return runRequest<A>(request, host);
     };
 
     const postForm: GitHubHttpShape['postForm'] = <A>(
@@ -271,7 +355,7 @@ export const layerGitHubHttp = Layer.effect(
       return runRequest<A>(request, host);
     };
 
-    return { getJson, postForm };
+    return { getJson, getText, postJson, postForm };
   }),
 );
 

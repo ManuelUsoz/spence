@@ -1,9 +1,10 @@
-import { Effect, Layer } from 'effect';
+import { Effect, Layer, Option } from 'effect';
 import {
   ProjectPickerRpcs,
   ProjectsOnDeviceRpcs,
   type ProjectId,
 } from '../../src/shared/projects/projects.rpc';
+import { PullRequestsService } from '../git-hosts/pull-requests-service';
 import { layerProjectsLive, Projects } from '../projects/projects';
 import { Sessions } from '../sessions/sessions';
 import { layerSessionsLive } from './sessions';
@@ -18,6 +19,10 @@ export const layerProjectsHandlersWith = ProjectsOnDeviceRpcs.toLayer({
     const sessions = yield* Sessions;
     yield* projects.remove(id);
     yield* sessions.cancelProject(id);
+    const pr = yield* Effect.serviceOption(PullRequestsService);
+    if (Option.isSome(pr)) {
+      yield* pr.value.evictProject(id);
+    }
   }),
   'Projects.locateFolder': ({ id, path }) =>
     Projects.use((projects) => projects.locateFolder(id, path)),

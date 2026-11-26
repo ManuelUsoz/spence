@@ -22,6 +22,7 @@ import { layerWindowFocus } from '../sessions/window-focus';
 import { layerSettingsMain } from '../settings/window';
 import { layerDesktopHandlers, layerRemoteHandlers } from './index';
 import { layerIpcServer } from './ipc-server';
+import { layerPullRequestsServiceMain } from './pull-requests';
 import { layerSessionsLive } from './sessions';
 
 /**
@@ -62,6 +63,8 @@ const layerRpcServer = RpcServer.layer(DesktopRpcs, { disableFatalDefects: true 
   Layer.provideMerge(layerBrowserMain),
   // Periodic idle auto-archive sharing the same memoized Settings, SessionStore, and Sessions.
   Layer.provideMerge(layerAutoArchiveLive),
+  // Memoized PullRequestsService shared with Projects.remove eviction and Turn-end checks.
+  Layer.provideMerge(layerPullRequestsServiceMain),
 );
 
 /** OS notifications for connected Remote devices' Sessions, over the same (memoized) connections the router uses. */
