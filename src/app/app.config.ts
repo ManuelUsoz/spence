@@ -6,10 +6,12 @@ import { routes } from './app.routes';
 import { AGENT_INSTALL_OFFER } from './core/agent-install-offer';
 import { BROWSER_PANE_VIEW } from './core/browser-pane';
 import { PANEL_DEFINITION, type PanelDefinition } from './core/panel-registry';
+import { PULL_REQUESTS_PAGE_VIEW } from './core/pull-requests-state';
 import { Tabs } from './core/tabs';
 import { AgentInstallOffer } from './features/agent-install/agent-install';
 import { BrowserPane } from './features/browser/browser-pane';
 import { ChangesPage } from './features/changes/changes-page';
+import { PullRequestsPage } from './features/pull-requests/pull-requests-page';
 import { SessionTab } from './features/session/session-tab';
 import { WorkersPanelHost } from './features/session/workers-panel';
 
@@ -84,6 +86,7 @@ export const appConfig: ApplicationConfig = {
     provideHlmSidebarConfig({ defaultOpen: false }),
     { provide: AGENT_INSTALL_OFFER, useValue: AgentInstallOffer },
     { provide: BROWSER_PANE_VIEW, useValue: BrowserPane },
+    { provide: PULL_REQUESTS_PAGE_VIEW, useValue: PullRequestsPage },
     // Register Panel types with the extensible Panel registry (Session covers local, Worker, and Remote Sessions).
     { provide: PANEL_DEFINITION, multi: true, useFactory: createSessionPanelDefinition },
     { provide: PANEL_DEFINITION, multi: true, useFactory: createChangesPanelDefinition },
