@@ -348,9 +348,10 @@ const sessionTools: ParityCase = Effect.fnUntraced(function* (side) {
   yield* prompt(side, parent.sessionId, (script) =>
     script.tool('delegate', { task: side.script.reply('worker result') ?? 'worker result' }),
   );
-  const delegated = yield* transcript(side, parent.sessionId, 1);
+  // Turn 1 delegates asynchronously; Turn 2 runs when the Worker delivers its result back to the idle Parent.
+  const delegated = yield* transcript(side, parent.sessionId, 2);
   yield* prompt(side, parent.sessionId, (script) => script.tool('list_sessions', {}));
-  const listedItems = yield* transcript(side, parent.sessionId, 2);
+  const listedItems = yield* transcript(side, parent.sessionId, 3);
   const listed = JSON.parse(agentReplies(listedItems).at(-1) ?? '{}') as {
     readonly sessions?: ReadonlyArray<{ readonly id: string }>;
   };
@@ -358,7 +359,7 @@ const sessionTools: ParityCase = Effect.fnUntraced(function* (side) {
   yield* prompt(side, parent.sessionId, (script) =>
     script.tool('send_message', { to: worker, text: side.script.reply('ping') ?? 'ping' }),
   );
-  const items = yield* transcript(side, parent.sessionId, 3);
+  const items = yield* transcript(side, parent.sessionId, 4);
   // Another Project of the same Device: the first contact is asked for, and leaves a Notice.
   const other = yield* newSession(side);
   yield* prompt(side, other.sessionId, (script) => script.reply('other project'));
@@ -382,12 +383,17 @@ const sessionTools: ParityCase = Effect.fnUntraced(function* (side) {
       optionId: allow?.id ?? '',
     }),
   );
-  const across = yield* transcript(side, parent.sessionId, 4);
+  const across = yield* transcript(side, parent.sessionId, 5);
+  yield* prompt(side, parent.sessionId, (script) =>
+    script.tool('report_feedback', { summary: 'Parity feedback check', category: 'mcp' }),
+  );
+  const reported = yield* transcript(side, parent.sessionId, 6);
   return {
     outcome: {
       delegated: agentReplies(delegated),
-      replies: agentReplies(items).slice(1),
+      replies: agentReplies(items).slice(2),
       across: kinds(across).filter((kind) => kind === 'Notice'),
+      reported: agentReplies(reported).at(-1)?.includes('"recorded":true'),
     },
     transcript: { items: across },
   };
@@ -930,8 +936,15 @@ export const parityMatrix: ReadonlyArray<ParityRow> = [
   },
   {
     id: 'session-tools',
-    title: 'the Session and Worker tools: delegate, list_sessions and send_message',
-    covers: ['tool:delegate', 'tool:list_sessions', 'tool:send_message', 'transcript:Notice'],
+    title:
+      'the Session and Worker tools: delegate, list_sessions, send_message and report_feedback',
+    covers: [
+      'tool:delegate',
+      'tool:list_sessions',
+      'tool:send_message',
+      'tool:report_feedback',
+      'transcript:Notice',
+    ],
     parity: { _tag: 'Same' },
     case: sessionTools,
   },

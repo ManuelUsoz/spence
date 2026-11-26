@@ -26,16 +26,22 @@ const call = (registered: Registered, name: string, args: Record<string, unknown
         params: { name, arguments: args },
       }),
     });
-    return { status: response.status, body: await response.json() };
+    const raw = await response.text();
+    return { status: response.status, body: raw === '' ? undefined : JSON.parse(raw) };
   });
 
-const toolsOf = (delegate: DelegationTools['delegate']): DelegationTools => ({
+const toolsOf = (
+  delegate: DelegationTools['delegate'],
+  reportFeedback: DelegationTools['reportFeedback'] = () => Promise.resolve({ text: '{}' }),
+): DelegationTools => ({
   delegate,
   listSessions: () => Promise.resolve({ text: '{}' }),
   sendMessage: () => Promise.resolve({ text: '{}' }),
   listTargets: () => Promise.resolve({ text: '{}' }),
   startSession: () => Promise.resolve({ text: '{}' }),
   awaitResult: () => Promise.resolve({ text: '{}' }),
+  reportFeedback,
+  needsUser: () => Promise.resolve({ text: '{}' }),
 });
 
 describe('delegation server retry keys', () => {
@@ -107,6 +113,55 @@ describe('delegation server retry keys', () => {
       const response = yield* call(registered, 'delegate', { task: 't' });
       expect(response.body.error.reason).toBe('Internal');
       expect(typeof response.body.error.detail).toBe('string');
+    }).pipe(Effect.scoped),
+  );
+
+  it.live('offers report_feedback, validates its arguments, and passes defaults', () =>
+    Effect.gen(function* () {
+      const server = yield* makeDelegationServer;
+      const received: Array<unknown> = [];
+      const registered = server.register(
+        toolsOf(
+          () => Promise.resolve({ text: '{}' }),
+          (input) => {
+            received.push(input);
+            return Promise.resolve({ text: JSON.stringify({ recorded: true }) });
+          },
+        ),
+        () => 'session-1:context-1',
+      );
+      const badEmpty = yield* call(registered, 'report_feedback', { summary: '   ' });
+      expect(badEmpty.status).toBe(400);
+      const badCategory = yield* call(registered, 'report_feedback', {
+        summary: 'issue',
+        category: 'invalid',
+      });
+      expect(badCategory.status).toBe(400);
+
+      const ok = yield* call(registered, 'report_feedback', {
+        summary: 'Delegate timed out',
+        details: 'Took >30s',
+        category: 'mcp',
+        severity: 'high',
+        requestId: 'fb-1',
+      });
+      expect(ok.status).toBe(200);
+      expect(received).toEqual([
+        {
+          summary: 'Delegate timed out',
+          details: 'Took >30s',
+          category: 'mcp',
+          severity: 'high',
+        },
+      ]);
+
+      const defaults = yield* call(registered, 'report_feedback', { summary: 'Minor ux note' });
+      expect(defaults.status).toBe(200);
+      expect(received[1]).toEqual({
+        summary: 'Minor ux note',
+        category: 'other',
+        severity: 'medium',
+      });
     }).pipe(Effect.scoped),
   );
 });

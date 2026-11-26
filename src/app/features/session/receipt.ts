@@ -59,7 +59,11 @@ type StepItem = TurnWork['steps'][number];
     }
 
     <div hlmTrace>
-      <div hlmTraceCollapsible>
+      <div
+        hlmTraceCollapsible
+        [expanded]="stepsExpanded()"
+        (expandedChange)="stepsExpanded.set($event)"
+      >
         <button type="button" hlmTraceCollapsibleTrigger hlmTraceLine>
           <span hlmTraceTitle i18n>
             {work().steps.length, plural, =1 {1 step} other {{{ work().steps.length }} steps}}
@@ -149,6 +153,8 @@ export class Receipt {
 
   protected readonly selectedFile = signal<string | null>(null);
   protected readonly expandedSteps = signal<ReadonlySet<StepItem['id']>>(new Set());
+  /** Workflow Steps are part of the Turn's Receipt like any other Step: quiet and folded until opened. */
+  protected readonly stepsExpanded = signal(false);
 
   protected readonly files = computed(() =>
     changedFiles(this.work()).map((file) => {

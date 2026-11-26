@@ -823,10 +823,17 @@ const app = acp
           return { stopReason: 'end_turn' };
         }
       }
+      if (text.startsWith('The implementation Worker finished with this result:')) {
+        await client.notify(
+          'session/update',
+          chunk(sessionId, 'Assessment: Implementation complete'),
+        );
+        return { stopReason: 'end_turn' };
+      }
       if (
         text.startsWith('delegate:') ||
         (text.startsWith('coordinate-fixture') &&
-          text.includes('Use the Spence delegate tool exactly once'))
+          text.includes('Call the Spence delegate tool to brief the implementation Worker'))
       ) {
         // "delegate:<task>" delegates one Worker; "delegate:<a>&&<b>" delegates several at once and waits for all.
         const server = mcpServers.get(sessionId)?.find((item) => item.name === 'spence');

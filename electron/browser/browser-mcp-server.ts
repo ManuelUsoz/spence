@@ -3,6 +3,14 @@ import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { type BrowserError, PageId } from '../../src/shared/browser/browser.rpc';
 import type { SessionId } from '../../src/shared/sessions/sessions.rpc';
+import {
+  FeedbackCategory,
+  FeedbackLatency,
+  FeedbackSeverity,
+  parseReportFeedback,
+  type FeedbackOutcome,
+  type ReportFeedbackInput,
+} from '../feedback/feedback';
 import type { BrowserConsoleLogLevel, BrowserElementTarget } from './browser-host';
 import { BrowserService } from './browser-service';
 
@@ -120,6 +128,7 @@ export interface BrowserMcpTools {
     readonly reason: string;
     readonly pageId?: PageId;
   }) => Promise<BrowserMcpOutcome>;
+  readonly reportFeedback: (input: ReportFeedbackInput) => Promise<BrowserMcpOutcome>;
 }
 
 export interface RegisteredBrowserMcpServer {
@@ -634,6 +643,47 @@ const toolSpecs: ReadonlyArray<ToolSpec> = [
         tools.handoff({ reason: reason.trim(), ...(pageId === undefined ? {} : { pageId }) });
     },
   },
+  {
+    name: 'report_feedback',
+    description:
+      'Record feedback about spence-browser locally on the machine running Spence: bugs, friction, or ideas to make a tool faster or cheaper in tokens. Set tool to the tool it concerns, latency to how slow it felt, and suggestion to the concrete change that would have helped.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        summary: { type: 'string', minLength: 1, description: 'Concise summary of the feedback' },
+        details: { type: 'string', description: 'Optional detailed context or reproduction notes' },
+        category: {
+          type: 'string',
+          enum: FeedbackCategory.literals,
+          description: 'Feedback category (default: other)',
+        },
+        severity: {
+          type: 'string',
+          enum: FeedbackSeverity.literals,
+          description: 'Impact severity (default: medium)',
+        },
+        tool: {
+          type: 'string',
+          description: 'Tool this report is about, by MCP name (e.g. "snapshot").',
+        },
+        latency: {
+          type: 'string',
+          enum: FeedbackLatency.literals,
+          description: 'How slow the tool felt while you used it.',
+        },
+        suggestion: {
+          type: 'string',
+          description:
+            'The concrete change that would have made the tool faster or cheaper in tokens.',
+        },
+      },
+      required: ['summary'],
+    },
+    prepare: (args) => {
+      const input = parseReportFeedback(args);
+      return input === undefined ? undefined : (tools) => tools.reportFeedback(input);
+    },
+  },
 ];
 
 /** Bridges `BrowserService` Agent methods into `BrowserMcpTools` with active-Turn enforcement. */
@@ -641,9 +691,13 @@ export const makeBrowserMcpTools = Effect.fnUntraced(function* (input: {
   readonly sessionId: SessionId;
   readonly active: () => boolean;
   readonly runEffect: <A, E>(effect: Effect.Effect<A, E>) => Promise<A>;
+  /** Stores one Agent report; supplied by the caller, which owns the Session and its Store. */
+  readonly feedback: (input: ReportFeedbackInput) => Effect.Effect<FeedbackOutcome>;
 }) {
   const browserService = yield* BrowserService;
-  const { sessionId, active, runEffect } = input;
+  const { sessionId, active, runEffect, feedback } = input;
+  const notActive = (): BrowserMcpOutcome =>
+    browserToolError('NotActive', 'This capability is no longer active: its Turn has ended');
   const run = <A>(
     effect: Effect.Effect<A, BrowserError>,
     format: (value: A) => BrowserMcpOutcome = textOutcome,
@@ -655,12 +709,7 @@ export const makeBrowserMcpTools = Effect.fnUntraced(function* (input: {
               Effect.map(format),
               Effect.catch((error) => Effect.succeed(browserToolError(error.reason, error.detail))),
             )
-          : Effect.succeed(
-              browserToolError(
-                'NotActive',
-                'This capability is no longer active: its Turn has ended',
-              ),
-            ),
+          : Effect.succeed(notActive()),
       ),
     );
 
@@ -729,6 +778,19 @@ export const makeBrowserMcpTools = Effect.fnUntraced(function* (input: {
       run(browserService.agentWaitFor(sessionId, condition, pageId)),
     eval: ({ expression, pageId }) => run(browserService.agentEval(sessionId, expression, pageId)),
     handoff: ({ reason, pageId }) => run(browserService.agentHandoff(sessionId, reason, pageId)),
+    reportFeedback: (report) =>
+      runEffect(
+        Effect.suspend(() =>
+          active()
+            ? feedback(report).pipe(
+                Effect.map((outcome) => ({
+                  content: [{ type: 'text' as const, text: outcome.text }],
+                  ...(outcome.isError === true ? { isError: true } : {}),
+                })),
+              )
+            : Effect.succeed(notActive()),
+        ),
+      ),
   } satisfies BrowserMcpTools;
 });
 

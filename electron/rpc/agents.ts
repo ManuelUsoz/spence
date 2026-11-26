@@ -28,7 +28,15 @@ export const layerAgentInstallMain = layerAgentInstall.pipe(
 
 /** Unbound: needs `Agents` and `AgentInstall`, so a test Device can serve them over its own Store and PATH. */
 export const layerAgentsHandlersWith = AgentsRpcs.toLayer({
-  'Agents.list': () => Agents.use((agents) => agents.list),
+  'Agents.list': () =>
+    Agents.use((agents) => agents.list).pipe(
+      Effect.tap((listed) =>
+        Effect.logInfo(
+          `Agents.list: ${listed.length} (${listed.filter((a) => a.installed).length} installed)`,
+        ),
+      ),
+      Effect.tapError((error) => Effect.logWarning('Agents.list failed', error)),
+    ),
   'Agents.rescan': () => Agents.use((agents) => agents.rescan),
   'Agents.install': ({ agentId }) =>
     Stream.unwrap(AgentInstall.use((install) => Effect.succeed(install.install(agentId)))),

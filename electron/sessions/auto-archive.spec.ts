@@ -88,6 +88,7 @@ const runAutoArchive = <A, E, R>(options: {
         meta: () => Effect.die('unused'),
         saveHandoffAttempt: () => Effect.die('unused'),
         listHandoffAttempts: () => Effect.die('unused'),
+        appendFeedback: () => Effect.die('unused'),
       });
       const sessionsLayer = Layer.succeed(Sessions, {
         backgroundTabs: Stream.empty,

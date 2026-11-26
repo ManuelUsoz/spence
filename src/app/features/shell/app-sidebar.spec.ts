@@ -1034,7 +1034,10 @@ describe('AppSidebar Archive, Delete, Multi-select & Context Menus', () => {
       'Add login with GitHub',
       'Fix the login form',
     ]);
-    expect(texts(fixture, 'session-meta')).toEqual(['Waiting', 'Error']);
+    expect(all(fixture, 'session-meta')).toHaveLength(0);
+    expect(all(fixture, 'status-blocked')).toHaveLength(1);
+    expect(all(fixture, 'status-error')).toHaveLength(1);
+    expect(all(fixture, 'status-idle')).toHaveLength(1);
     expect(texts(fixture, 'session-age')).toEqual(['5h']);
 
     // Live clear of blocked status moves the session back to its day group; starting a Turn shows working mark.
@@ -1105,10 +1108,18 @@ describe('AppSidebar Archive, Delete, Multi-select & Context Menus', () => {
       const fixture = mount({ changes: Stream.fromPubSub(changes), sessionsByProject });
       await vi.waitFor(() => expect(titles(fixture)).toEqual(['Fix the login form']));
 
-      // Working row stays single-line with colored mark and no running-command prose.
+      // Working row stays single-line with colored marks and no inline status prose.
       expect(all(fixture, 'session-meta')).toHaveLength(0);
       expect(one(fixture, 'session-row').textContent).not.toContain('npm test');
-      expect(texts(fixture, 'sidebar-worker-status')).toEqual(['Waiting']);
+      expect(all(fixture, 'sidebar-worker-status')).toHaveLength(0);
+      expect(
+        one(fixture, 'sidebar-workers-toggle').querySelector('[data-testid="status-blocked"]'),
+      ).not.toBeNull();
+      one(fixture, 'sidebar-workers-toggle').click();
+      fixture.detectChanges();
+      expect(
+        one(fixture, 'sidebar-worker-row').querySelector('[data-testid="status-blocked"]'),
+      ).not.toBeNull();
 
       // Hover Session row -> shows full title + live micro-status + ticks locally.
       const row = one(fixture, 'session-row');

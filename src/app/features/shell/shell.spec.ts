@@ -20,6 +20,7 @@ import {
   type BrowserState,
 } from '../../../shared/browser/browser.rpc';
 import { toast } from '@ui/toast';
+import { HlmSidebarService, provideHlmSidebarConfig } from '@ui/sidebar';
 import { DevicesRpcs, DeviceId } from '../../../shared/devices/devices.rpc';
 import { NotificationsRpcs } from '../../../shared/notifications/notifications.rpc';
 import { ProjectId, ProjectsRpcs, type Project } from '../../../shared/projects/projects.rpc';
@@ -1230,6 +1231,26 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
     expect(host.querySelector('[data-testid="tab-strip"]')).toBeNull();
     expect(host.querySelector('[data-testid="empty-workspace"]')).toBeNull();
     expect(host.querySelector('[data-slot="sidebar-trigger"]')).not.toBeNull();
+  });
+
+  it('starts the Sessions/Workers sidebar collapsed when defaultOpen is false and expands via trigger', async () => {
+    document.cookie = 'sidebar_state=; max-age=0; path=/';
+    TestBed.configureTestingModule({
+      providers: [provideHlmSidebarConfig({ defaultOpen: false })],
+    });
+    const { fixture } = await mountShell('other');
+    const host = fixture.nativeElement as HTMLElement;
+    const sidebar = host.querySelector('hlm-sidebar');
+    const service = TestBed.inject(HlmSidebarService);
+
+    expect(service.open()).toBe(false);
+    expect(sidebar?.getAttribute('data-state')).toBe('collapsed');
+
+    host.querySelector<HTMLButtonElement>('[data-slot="sidebar-trigger"]')?.click();
+    fixture.detectChanges();
+    expect(service.open()).toBe(true);
+    expect(sidebar?.getAttribute('data-state')).toBe('expanded');
+    document.cookie = 'sidebar_state=; max-age=0; path=/';
   });
 
   it('keeps Settings outside Tabs with sidebar trigger, back button, and live notice, and closes cleanly on Tab activation', async () => {

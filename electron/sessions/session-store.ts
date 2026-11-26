@@ -20,6 +20,7 @@ import {
 import { WorkflowKind, WorkflowTarget } from '../../src/shared/settings/settings.rpc';
 import { PermissionMode, ProjectId, Timestamp } from '../../src/shared/projects/projects.rpc';
 import { layerStoreUserData, Store, type VersionedFile } from '../store/store';
+import { FeedbackEntry } from '../feedback/feedback';
 import {
   applyStatusFold,
   createMutableStatusFold,
@@ -91,6 +92,8 @@ export const SessionMeta = Schema.Struct({
   /** Absent on legacy native records; owned Workers must be explicitly marked. */
   workerKind: Schema.optionalKey(WorkerKind),
   workflowTurnId: Schema.optionalKey(TurnId),
+  /** The purpose a workflow gave this Worker; kept apart from the title, which later turns may replace. */
+  workflowRole: Schema.optionalKey(Schema.String),
   workflowVerifications: Schema.optionalKey(Schema.Array(WorkflowVerification)),
   /**
    * Whether a native Worker was last known working (running or waiting for Permission). Absent on records from
@@ -125,6 +128,8 @@ export const isNativeWorker = (meta: WorkerShape): boolean =>
 /** The current active Agent context of a Session, if present. */
 export const activeContextOf = (meta: SessionMeta): AgentContext | undefined =>
   meta.contexts.find((context) => context.id === meta.activeContextId);
+
+export { FeedbackEntry } from '../feedback/feedback';
 
 export interface SessionStoreShape {
   readonly coordination: CoordinationStore;
@@ -209,6 +214,8 @@ export interface SessionStoreShape {
   readonly listHandoffAttempts: (
     id: SessionId,
   ) => Effect.Effect<ReadonlyArray<HandoffAttempt>, SessionError>;
+  /** Appends an Agent feedback entry locally under `<userData>/spence/feedback.jsonl` and returns its path. */
+  readonly appendFeedback: (entry: FeedbackEntry) => Effect.Effect<string>;
 }
 
 /** Sessions and their Transcripts in the Store, under `sessions/<sessionId>/`. */
@@ -280,6 +287,12 @@ interface Entry {
 const notFound = (id: SessionId) =>
   new SessionError({ reason: 'NotFound', detail: `no Session ${id}` });
 
+/** The workflow a Session last orchestrated, as the summary field; nothing when it never ran one. */
+const workflowOf = (meta: SessionMeta) => {
+  const workflow = meta.workflowVerifications?.at(-1)?.workflow;
+  return workflow === undefined ? {} : { workflow };
+};
+
 const toSummary = (
   meta: SessionMeta,
   workers: ReadonlyArray<SessionWorkerSummary>,
@@ -296,6 +309,7 @@ const toSummary = (
   status: 'idle',
   ...(meta.archivedAt === undefined ? {} : { archivedAt: meta.archivedAt }),
   ...(workers.length === 0 ? {} : { workerCount: workers.length, workers }),
+  ...workflowOf(meta),
 });
 
 const workerSummariesByParent = (metas: ReadonlyArray<SessionMeta>) => {
@@ -309,6 +323,7 @@ const workerSummariesByParent = (metas: ReadonlyArray<SessionMeta>) => {
       parentSessionId,
       title: meta.userTitle ?? meta.autoTitle ?? 'Worker',
       state: isNativeWorker(meta) && meta.workerActive === true ? 'unknown' : 'idle',
+      ...(meta.workflowRole === undefined ? {} : { role: meta.workflowRole }),
     });
     children.set(parentSessionId, siblings);
   }
@@ -733,6 +748,14 @@ export const layerSessionStore = Layer.effect(
         }),
       );
 
+    const feedbackFile = 'feedback.jsonl';
+    const appendFeedback = (entry: FeedbackEntry) =>
+      lock(
+        store
+          .appendLines(feedbackFile, FeedbackEntry, [entry])
+          .pipe(Effect.as(path.join(store.root, feedbackFile))),
+      );
+
     return SessionStore.of({
       coordination,
       workflowBaselinePath: (id, turn) =>
@@ -760,6 +783,7 @@ export const layerSessionStore = Layer.effect(
       meta,
       saveHandoffAttempt,
       listHandoffAttempts,
+      appendFeedback,
     });
   }),
 );

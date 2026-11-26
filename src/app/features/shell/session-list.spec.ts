@@ -9,7 +9,7 @@ afterEach(() => {
 });
 
 describe('SessionList', () => {
-  it('shows monochrome explanatory status icons for blocked, error, and working, and none for idle', () => {
+  it('shows color-coded status marks (with spinning working and gray idle) and removes sidebar status texts', () => {
     const fixture = TestBed.createComponent(SessionList);
     fixture.componentRef.setInput('groups', [
       {
@@ -19,7 +19,6 @@ describe('SessionList', () => {
             id: SessionId.make('s1'),
             title: 'Needs answer',
             age: '5h',
-            reason: 'Waiting',
             active: false,
             archived: false,
             selected: false,
@@ -29,7 +28,6 @@ describe('SessionList', () => {
             id: SessionId.make('s2'),
             title: 'Errored',
             age: '5h',
-            reason: 'Error',
             active: false,
             archived: false,
             selected: false,
@@ -57,6 +55,30 @@ describe('SessionList', () => {
             archived: false,
             selected: false,
             status: 'idle',
+            workers: [
+              {
+                id: SessionId.make('w-idle'),
+                ancestors: [SessionId.make('s4')],
+                canOpenInSplit: false,
+                title: 'Done worker',
+                status: 'Idle',
+                needsPermission: false,
+                running: false,
+                active: false,
+                workers: [],
+              },
+              {
+                id: SessionId.make('w-run'),
+                ancestors: [SessionId.make('s4')],
+                canOpenInSplit: true,
+                title: 'Active worker',
+                status: 'Working',
+                needsPermission: false,
+                running: true,
+                active: false,
+                workers: [],
+              },
+            ],
           },
         ],
       },
@@ -65,15 +87,26 @@ describe('SessionList', () => {
     const el = fixture.nativeElement as HTMLElement;
     const blockedMark = el.querySelector('[data-testid="status-blocked"]');
     const errorMark = el.querySelector('[data-testid="status-error"]');
-    const workingMark = el.querySelector('[data-testid="status-working"]');
+    const workingMarks = el.querySelectorAll('[data-testid="status-working"]');
+    const idleMarks = el.querySelectorAll('[data-testid="status-idle"]');
     expect(blockedMark?.getAttribute('class')).toContain('text-[var(--attention)]');
     expect(errorMark?.getAttribute('class')).toContain('text-[var(--destructive)]');
-    expect(workingMark?.getAttribute('class')).toContain('text-[var(--working)]');
-    expect(workingMark?.getAttribute('class')).not.toContain('text-muted-foreground');
+    expect(workingMarks).toHaveLength(2);
+    for (const mark of workingMarks) {
+      expect(mark.getAttribute('class')).toContain('text-[var(--working)]');
+      expect(mark.getAttribute('class')).toContain('motion-safe:animate-spin');
+    }
+    expect(idleMarks).toHaveLength(1);
+    el.querySelector<HTMLButtonElement>('[data-testid="sidebar-workers-toggle"]')?.click();
+    fixture.detectChanges();
+    const expandedIdleMarks = el.querySelectorAll('[data-testid="status-idle"]');
+    expect(expandedIdleMarks).toHaveLength(2);
+    for (const mark of expandedIdleMarks) {
+      expect(mark.getAttribute('class')).toContain('text-muted-foreground');
+    }
     expect(el.querySelectorAll('[data-testid="session-age"]')).toHaveLength(1);
-    expect(
-      [...el.querySelectorAll('[data-testid="session-meta"]')].map((n) => n.textContent?.trim()),
-    ).toEqual(['Waiting', 'Error']);
+    expect(el.querySelectorAll('[data-testid="session-meta"]')).toHaveLength(0);
+    expect(el.querySelectorAll('[data-testid="sidebar-worker-status"]')).toHaveLength(0);
   });
 
   it('offers "Show N more" when the list is capped and reports the click', () => {
@@ -118,7 +151,6 @@ describe('SessionList', () => {
             id: SessionId.make('s1'),
             title: 'Deploy production build',
             age: 'now',
-            reason: 'Waiting',
             active: false,
             archived: false,
             selected: false,
@@ -143,7 +175,6 @@ describe('SessionList', () => {
             id: SessionId.make('s2'),
             title: 'Broken migration',
             age: '1m',
-            reason: 'Error',
             active: false,
             archived: false,
             selected: false,
@@ -171,13 +202,15 @@ describe('SessionList', () => {
     fixture.detectChanges();
     const el = fixture.nativeElement as HTMLElement;
 
-    // Working session row has no running-command prose line (no session-meta on s3).
-    expect(el.querySelectorAll('[data-testid="session-meta"]')).toHaveLength(2);
+    // Sidebar rows show colored status marks without inline status prose lines.
+    expect(el.querySelectorAll('[data-testid="session-meta"]')).toHaveLength(0);
     expect(el.querySelectorAll('[data-testid="session-row"]')[2]?.textContent).not.toContain(
       'npm test',
     );
 
     const rows = el.querySelectorAll<HTMLElement>('[data-testid="session-row"]');
+    el.querySelector<HTMLButtonElement>('[data-testid="sidebar-workers-toggle"]')?.click();
+    fixture.detectChanges();
     const workerRow = el.querySelector<HTMLElement>('[data-testid="sidebar-worker-row"]')!;
 
     // Hovering working Session row shows full title + running <target> · <elapsed> and ticks locally.

@@ -12,7 +12,9 @@ import {
   viewChild,
   viewChildren,
 } from '@angular/core';
-import { ActivityMark } from '@ui/activity-mark';
+import { ActivityMark, type ActivityMarkKind } from '@ui/activity-mark';
+import { HlmBadge } from '@ui/badge';
+import { HlmCollapsibleImports } from '@ui/collapsible';
 import { HlmContextMenuImports } from '@ui/context-menu';
 import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
 import { HlmTooltipImports } from '@ui/tooltip';
@@ -33,14 +35,12 @@ import {
   type RovingItem,
 } from './sidebar-keys';
 
-/** One row: the title, a trailing age, and a second line only when the Session needs you. */
+/** One row: the title, a color-coded status mark, and a trailing age when idle or archived. */
 export interface SessionRow {
   readonly id: SessionId;
   readonly title: string;
   /** Short time since the last activity ("5m", "2h"). */
   readonly age: string;
-  /** Why the Session needs you; shown as the second line. */
-  readonly reason?: string;
   readonly active: boolean;
   readonly untitled?: boolean;
   readonly selected: boolean;
@@ -52,6 +52,8 @@ export interface SessionRow {
   readonly errorSummary?: string;
   readonly workers?: ReadonlyArray<SidebarWorkerRow>;
   readonly workerActive?: boolean;
+  /** The workflow this Session orchestrates: shown with a badge so renaming never hides it. */
+  readonly workflow?: 'coordinate' | 'divide-and-conquer';
 }
 
 export interface SidebarWorkerRow {
@@ -62,6 +64,8 @@ export interface SidebarWorkerRow {
   readonly status: string;
   readonly needsPermission: boolean;
   readonly running?: boolean;
+  /** Localized purpose a workflow gave this Worker, shown as a badge. */
+  readonly role?: string;
   readonly activity?: LiveActivity;
   readonly blockedTarget?: string;
   readonly errorSummary?: string;
@@ -84,6 +88,8 @@ export interface RowClickEvent {
   selector: 'app-session-list',
   imports: [
     NgTemplateOutlet,
+    HlmBadge,
+    HlmCollapsibleImports,
     HlmContextMenuImports,
     HlmDropdownMenuImports,
     HlmTooltipImports,
@@ -203,7 +209,7 @@ export interface RowClickEvent {
           (dblclick)="startRename(row.id)"
         >
           <span class="flex w-full items-center gap-2">
-            @if (!row.archived && (row.status === 'blocked' || row.status === 'error')) {
+            @if (!row.archived) {
               <app-activity-mark [kind]="row.status" />
             }
             <span class="flex min-w-0 flex-1 flex-col">
@@ -213,20 +219,20 @@ export interface RowClickEvent {
                 data-testid="session-title"
                 >{{ row.title }}</span
               >
-              @if (row.reason; as reason) {
-                <span
-                  class="truncate text-xs leading-4"
-                  [class]="
-                    row.status === 'error' ? 'text-[var(--destructive)]' : 'text-[var(--attention)]'
-                  "
-                  data-testid="session-meta"
-                  >{{ reason }}</span
-                >
+              @switch (row.workflow) {
+                @case ('coordinate') {
+                  <span hlmBadge variant="secondary" data-testid="coordinator-badge" i18n
+                    >Coordinator</span
+                  >
+                }
+                @case ('divide-and-conquer') {
+                  <span hlmBadge variant="secondary" data-testid="coordinator-badge" i18n
+                    >Divide and conquer</span
+                  >
+                }
               }
             </span>
-            @if (!row.archived && row.status === 'working') {
-              <app-activity-mark kind="working" />
-            } @else if (row.archived || row.status === 'idle') {
+            @if (row.archived || row.status === 'idle') {
               <span class="text-muted-foreground text-xs tabular-nums" data-testid="session-age">{{
                 row.age
               }}</span>
@@ -234,7 +240,45 @@ export interface RowClickEvent {
           </span>
         </button>
       }
-      <ng-container *ngTemplateOutlet="workerRows; context: { $implicit: row.workers }" />
+      @if (row.workers?.length > 0) {
+        <div
+          hlmCollapsible
+          [expanded]="workersOpen(row)"
+          (expandedChange)="setWorkersOpen(row.id, $event)"
+        >
+          <button
+            hlmCollapsibleTrigger
+            type="button"
+            data-testid="sidebar-workers-toggle"
+            class="text-muted-foreground hover:text-foreground focus-visible:ring-ring ms-3 flex h-6 items-center gap-1.5 rounded-md ps-1.5 pe-1.5 text-xs focus-visible:ring-2"
+          >
+            <svg
+              class="size-3 shrink-0 transition-transform"
+              [class.rotate-90]="workersOpen(row)"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              aria-hidden="true"
+            >
+              <path d="m9 18 6-6-6-6" />
+            </svg>
+            <span i18n
+              >Workers (<span class="tabular-nums">{{ row.workers.length }}</span
+              >)</span
+            >
+            @if (workersSummaryKind(row); as kind) {
+              <app-activity-mark [kind]="kind" />
+            }
+          </button>
+          <div hlmCollapsibleContent>
+            @if (workersOpen(row)) {
+              <ng-container *ngTemplateOutlet="workerRows; context: { $implicit: row.workers }" />
+            }
+          </div>
+        </div>
+      }
     </ng-template>
 
     <ng-template #workerRows let-workers>
@@ -268,20 +312,11 @@ export interface RowClickEvent {
                 (keydown)="onRovingKeydown($event, worker.id)"
                 (click)="workerOpen.emit(worker)"
               >
+                <app-activity-mark [kind]="workerMarkKind(worker)" />
                 <span class="min-w-0 flex-1 truncate">{{ worker.title }}</span>
-                <span
-                  class="max-w-1/2 shrink-0 truncate"
-                  [class]="
-                    worker.needsPermission
-                      ? 'text-[var(--attention)]'
-                      : worker.running
-                        ? 'text-[var(--working)]'
-                        : 'text-muted-foreground'
-                  "
-                  [title]="worker.status"
-                  data-testid="sidebar-worker-status"
-                  >{{ worker.status }}</span
-                >
+                @if (worker.role; as role) {
+                  <span hlmBadge variant="outline" data-testid="worker-role">{{ role }}</span>
+                }
               </button>
               <ng-container
                 *ngTemplateOutlet="workerRows; context: { $implicit: worker.workers }"
@@ -385,6 +420,7 @@ export class SessionList {
   private readonly destroyRef = inject(DestroyRef);
   protected readonly now = secondTicker(this.destroyRef);
   protected readonly editing = signal<SessionId | null>(null);
+  private readonly openWorkers = signal<ReadonlySet<SessionId>>(new Set());
   private readonly pendingFocusId = signal<SessionId | null>(null);
   private readonly editor = viewChild<ElementRef<HTMLInputElement>>('editor');
   private readonly rowButtons = viewChildren<ElementRef<HTMLButtonElement>>('sessionRowBtn');
@@ -400,7 +436,7 @@ export class SessionList {
     };
     const addSession = (row: SessionRow): void => {
       items.push({ key: row.id, sessionId: row.id, active: row.active && !row.workerActive });
-      addWorkers(row.workers ?? []);
+      if (this.workersOpen(row)) addWorkers(row.workers ?? []);
     };
     for (const group of this.groups()) {
       for (const row of group.items) {
@@ -509,6 +545,34 @@ export class SessionList {
       },
       this.now(),
     );
+  }
+
+  /** Whether a Session's Workers are shown: closed by default, open while one of them is the viewed Session. */
+  protected workersOpen(row: SessionRow): boolean {
+    return row.workerActive === true || this.openWorkers().has(row.id);
+  }
+
+  protected setWorkersOpen(id: SessionId, open: boolean): void {
+    this.openWorkers.update((current) => {
+      const next = new Set(current);
+      if (open) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
+  /** What a closed Workers fold still has to say: a blocked or working Worker, else nothing. */
+  protected workersSummaryKind(row: SessionRow): ActivityMarkKind | null {
+    const workers = row.workers ?? [];
+    if (workers.some((worker) => worker.needsPermission)) return 'blocked';
+    if (workers.some((worker) => worker.running === true)) return 'working';
+    return null;
+  }
+
+  protected workerMarkKind(worker: SidebarWorkerRow): ActivityMarkKind {
+    if (worker.needsPermission) return 'blocked';
+    if (worker.running === true) return 'working';
+    return 'idle';
   }
 
   protected workerTipStatus(worker: SidebarWorkerRow): ActivityTooltipStatus | null {

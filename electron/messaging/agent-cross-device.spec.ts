@@ -373,6 +373,19 @@ describe('Cross-device messages from an Agent: its tools', () => {
           timeoutSeconds: 0,
         });
         expect(pending).toEqual({ status: 'pending' });
+        // Ensure the fake Agent has entered `hold` (`waitForCancel`) before `session/cancel` arrives.
+        yield* host.run(
+          Stream.unwrap(Sessions.use((s) => Effect.succeed(s.events(target.sessionId)))).pipe(
+            Stream.filter(
+              (item) =>
+                item._tag === 'Transcript' &&
+                item.event.item._tag === 'Message' &&
+                item.event.item.role === 'agent' &&
+                textOf(item.event.item) === 'working',
+            ),
+            Stream.runHead,
+          ),
+        );
         yield* host.run(Sessions.use((s) => s.cancel(target.sessionId)));
         const cancelled = yield* callTool(viewer, sender.sessionId, 7, 'await_result', {
           handle: held['handle'],

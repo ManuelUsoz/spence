@@ -74,6 +74,15 @@ import { AgentBar } from './agent-bar';
 import { HandoffDialog } from './handoff-dialog';
 import { MemoryLostBar } from './memory-lost-bar';
 import { ComposerCarets } from './composer-carets';
+import {
+  activeSlashToken,
+  choosePopoverPlacement,
+  removeSlashToken,
+  replaceSlashToken,
+  splitComposerSegments,
+  type PopoverPlacement,
+} from './composer-commands';
+import { ModelsLimitationNotices } from './limitation-notices';
 import { Dock, type DockPermission } from './dock';
 import { MessageImages } from './message-images';
 import { MarkdownView } from '@ui/markdown';
@@ -872,6 +881,21 @@ function greetingFor(hour: number): string {
             <span class="bg-border h-px flex-1"></span>
           </div>
         }
+        @if (freshBoundaryType(); as boundary) {
+          <div
+            class="flex flex-col items-center justify-center gap-1 py-8 text-center"
+            [style.min-height.px]="freshBoundaryHeight()"
+            data-testid="fresh-boundary-space"
+          >
+            <p class="font-display text-muted-foreground text-xl">
+              @if (boundary === 'cleared') {
+                <ng-container i18n>Start fresh</ng-container>
+              } @else {
+                <ng-container i18n>Ready to continue</ng-container>
+              }
+            </p>
+          </div>
+        }
       </div>
 
       @if (running() && pendingPermission(); as pending) {
@@ -1013,11 +1037,6 @@ function greetingFor(hour: number): string {
                 {{ agentName() }} can't take images. Remove them to send.
               </p>
             }
-            @if (modelsLimitation(); as limitation) {
-              <p class="text-muted-foreground text-xs" data-testid="models-limitation">
-                {{ limitation }}
-              </p>
-            }
             <div class="relative">
               @if (workflowArmed(); as workflow) {
                 <button
@@ -1036,24 +1055,58 @@ function greetingFor(hour: number): string {
                   }
                 </button>
               }
-              <textarea
-                #composerInput
-                hlmTextarea
-                class="max-h-48 rounded-none border-0 bg-transparent px-1 py-0.5 text-[14.5px] shadow-none focus-visible:ring-0 dark:bg-transparent"
-                data-testid="composer-input"
-                [disabled]="deviceAway() !== null"
-                [placeholder]="composerPlaceholder()"
-                aria-label="Message"
-                i18n-aria-label
-                [value]="draft()"
-                (input)="onInput(composerInput.value)"
-                (keydown)="onKeydown($event)"
-                (paste)="onPaste($event)"
-              ></textarea>
+              <div class="relative">
+                @if (hasCommandHighlight()) {
+                  <div
+                    #composerBackdrop
+                    aria-hidden="true"
+                    data-testid="composer-backdrop"
+                    class="pointer-events-none absolute inset-0 overflow-hidden px-1 py-0.5 text-[14.5px] leading-relaxed break-words whitespace-pre-wrap select-none md:text-xs/relaxed"
+                  >
+                    @for (seg of composerSegments(); track $index) {
+                      @if (seg.isCommand) {
+                        <span
+                          class="text-working bg-working/15 rounded-[3px]"
+                          data-testid="composer-command-token"
+                          >{{ seg.text }}</span
+                        >
+                      } @else {
+                        {{ seg.text }}
+                      }
+                    }
+                    @if (
+                      draft().endsWith(
+                        '
+'
+                      )
+                    ) {
+                      &#8203;
+                    }
+                  </div>
+                }
+                <textarea
+                  #composerInput
+                  hlmTextarea
+                  [class]="composerTextareaClass()"
+                  data-testid="composer-input"
+                  [disabled]="deviceAway() !== null"
+                  [placeholder]="composerPlaceholder()"
+                  aria-label="Message"
+                  i18n-aria-label
+                  [value]="draft()"
+                  (input)="onInput(composerInput.value)"
+                  (click)="syncCaret()"
+                  (keyup)="onKeyup($event)"
+                  (scroll)="syncComposerBackdropScroll()"
+                  (keydown)="onKeydown($event)"
+                  (paste)="onPaste($event)"
+                ></textarea>
+              </div>
 
               @if (commandsOpen()) {
                 <div
-                  class="bg-popover text-popover-foreground border-border absolute z-10 mt-1 w-full overflow-hidden rounded-md border shadow-md"
+                  [class]="commandsListClass()"
+                  [attr.data-placement]="commandsPlacement()"
                   data-testid="commands-list"
                 >
                   <div
@@ -1063,7 +1116,7 @@ function greetingFor(hour: number): string {
                     aria-label="Commands"
                     i18n-aria-label
                   >
-                    <div hlmCommandList class="max-h-80">
+                    <div hlmCommandList class="max-h-[min(20rem,45vh)]">
                       @for (group of commandGroups(); track group.key) {
                         <div hlmCommandGroup>
                           <div hlmCommandGroupLabel>{{ group.label }}</div>
@@ -1176,7 +1229,7 @@ function greetingFor(hour: number): string {
                   aria-haspopup="menu"
                   [attr.aria-label]="permissionLabel()"
                   [hlmTooltip]="permissionModeTip"
-                  side="top"
+                  [side]="fresh() ? 'bottom' : 'top'"
                   align="start"
                   [hlmDropdownMenuTrigger]="modeMenu"
                 >
@@ -1216,6 +1269,7 @@ function greetingFor(hour: number): string {
                   [effort]="effort()"
                   [controlsDisabled]="controlsDisabled()"
                   [pickerLabel]="pickerLabel()"
+                  [preferUpward]="!fresh()"
                   (agentSelect)="setAgent($event)"
                   (modelSelect)="setModel($event)"
                   (effortSelect)="setEffort($event)"
@@ -1304,60 +1358,10 @@ function greetingFor(hour: number): string {
           <app-composer-status
             [sessionId]="sessionId()"
             [running]="running()"
+            [preferUpward]="!fresh()"
             (openChanges)="openChanges()"
           />
         </form>
-        @if (visibleWorkers().length > 0) {
-          <div
-            class="text-muted-foreground flex h-9 items-center gap-1 ps-3.5 pe-2 text-xs"
-            data-testid="composer-strip"
-          >
-            <span class="flex-1"></span>
-            <button
-              type="button"
-              class="hover:bg-accent flex h-[26px] items-center gap-1.5 rounded-lg px-2 text-xs"
-              data-testid="workers-toggle"
-              [attr.aria-label]="workersLabel()"
-              (click)="openWorkers()"
-            >
-              @if (activeWorkerCount() > 0 && !workersNeedYou()) {
-                <span
-                  class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"
-                  aria-hidden="true"
-                ></span>
-              } @else {
-                <svg
-                  aria-hidden="true"
-                  class="size-[13px]"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <path d="M12 8V4H8" />
-                  <rect width="16" height="12" x="4" y="8" rx="2" />
-                  <path d="M2 14h2" />
-                  <path d="M20 14h2" />
-                  <path d="M15 13v2" />
-                  <path d="M9 13v2" />
-                </svg>
-              }
-              <span class="tabular-nums" i18n>{activeWorkerCount(), plural,
-                =0 {Reconnecting}
-                =1 {1 agent}
-                other {{{ activeWorkerCount() }} agents}
-              }</span>
-              @if (workersNeedYou()) {
-                <span
-                  aria-hidden="true"
-                  class="size-1.5 shrink-0 rounded-full bg-[var(--attention)]"
-                ></span>
-              }
-            </button>
-          </div>
-        }
       </div>
     }
 
@@ -1534,6 +1538,7 @@ export class SessionView implements OnInit {
   private readonly document = inject(DOCUMENT);
   protected readonly keymap = inject(Keymap);
   private readonly carets = inject(ComposerCarets);
+  private readonly limitationNotices = inject(ModelsLimitationNotices);
   private readonly composerBridge = inject(ComposerBridge);
   private readonly destroyRef = inject(DestroyRef);
   private readonly runtime = inject(EffectRuntime);
@@ -1542,6 +1547,13 @@ export class SessionView implements OnInit {
   private readonly tabs = inject(Tabs);
   private readonly aborts = new AbortController();
   private readonly composerInput = viewChild<ElementRef<HTMLTextAreaElement>>('composerInput');
+  private readonly composerBackdrop = viewChild<ElementRef<HTMLElement>>('composerBackdrop');
+  private readonly composerCaret = signal<{ readonly start: number; readonly end: number }>({
+    start: 0,
+    end: 0,
+  });
+  private dismissedSlash: { readonly start: number; readonly query: string } | null = null;
+  private composerTouched = false;
   private ticker: ReturnType<typeof setInterval> | undefined;
   private initialFocusDone = false;
   private caretApplied = false;
@@ -1591,6 +1603,12 @@ export class SessionView implements OnInit {
   /** The Session action picker (`Mod+Shift+K`) is open. */
   /** The `/` Commands list is open. */
   protected readonly commandsOpen = signal(false);
+  protected readonly commandsPlacement = signal<PopoverPlacement>('down');
+  protected readonly commandsListClass = computed(() =>
+    this.commandsPlacement() === 'up'
+      ? 'bg-popover text-popover-foreground border-border absolute bottom-full z-30 mb-1 w-full overflow-hidden rounded-md border shadow-md'
+      : 'bg-popover text-popover-foreground border-border absolute top-full z-30 mt-1 w-full overflow-hidden rounded-md border shadow-md',
+  );
   /** Selected index in the filtered Commands list. */
   protected readonly selectedCommand = signal(0);
 
@@ -1675,25 +1693,6 @@ export class SessionView implements OnInit {
       ? $localize`Message the Agent`
       : $localize`Message the Agent on ${device}:device:`;
   });
-  protected readonly visibleWorkers = computed(() =>
-    (this.live()?.workers ?? []).filter((worker) => worker.state !== 'idle'),
-  );
-  protected readonly workersNeedYou = computed(() =>
-    this.visibleWorkers().some((worker) => worker.state === 'requiresAction'),
-  );
-  protected readonly workersLabel = computed(() =>
-    this.activeWorkerCount() === 0
-      ? $localize`:@@workers-label-reconnecting:Workers reconnecting`
-      : this.workersNeedYou()
-        ? $localize`:@@workers-label-needs:${this.activeWorkerCount()} agents, one waiting`
-        : $localize`:@@workers-label:${this.activeWorkerCount()} agents`,
-  );
-  protected readonly activeWorkerCount = computed(
-    () =>
-      this.visibleWorkers().filter(
-        (worker) => worker.state === 'running' || worker.state === 'requiresAction',
-      ).length,
-  );
   protected readonly availableAgents = signal<ReadonlyArray<Agent>>([]);
   protected readonly changingAgent = signal(false);
   protected readonly isDraft = computed(() => this.live()?.isDraft === true);
@@ -1880,6 +1879,33 @@ export class SessionView implements OnInit {
   );
   /** A Session with no messages yet: the greeting shows and the Composer sits in the middle. */
   protected readonly fresh = computed(() => this.following() === 'following' && !this.started());
+  protected readonly freshBoundaryType = computed<'cleared' | 'compacted' | null>(() => {
+    if (this.trailingDividers().some((divider) => divider.reason === 'cleared')) {
+      return 'cleared';
+    }
+    if (this.running() || this.pendingPermission() !== null || this.queue().length > 0) {
+      return null;
+    }
+    const last = this.rows().at(-1);
+    if (
+      last?.type === 'aside' &&
+      last.aside.item._tag === 'Compaction' &&
+      (last.aside.item.status === 'running' || last.aside.item.status === 'done')
+    ) {
+      return 'compacted';
+    }
+    return null;
+  });
+  private readonly freshBoundaryKey = computed<string | null>(() => {
+    const kind = this.freshBoundaryType();
+    if (kind === null) return null;
+    if (kind === 'cleared') return `cleared:${this.thread().dividers.length}`;
+    const last = this.rows().at(-1);
+    return last?.type === 'aside' ? `compacted:${last.aside.key}` : null;
+  });
+  protected readonly freshBoundaryHeight = signal(240);
+  private lastFreshBoundaryKey: string | null = null;
+  private pendingFreshBoundaryScroll = false;
   private readonly threadScroller = viewChild<ElementRef<HTMLElement>>('threadScroller');
   private scroller: HTMLElement | null = null;
   private isRestoringScroll = false;
@@ -1898,10 +1924,25 @@ export class SessionView implements OnInit {
   );
   protected readonly runningPlan = computed(() => runningWork(this.thread())?.plan ?? null);
 
-  protected readonly commandFilter = computed(() => {
-    const draft = this.draft();
-    return draft.startsWith('/') ? draft.slice(1).trimStart() : '';
+  private readonly commandInvocations = computed(
+    () => new Set(this.commands().map((command) => command.invocation.toLowerCase())),
+  );
+  protected readonly composerSegments = computed(() =>
+    splitComposerSegments(this.draft(), this.commandInvocations()),
+  );
+  protected readonly hasCommandHighlight = computed(() =>
+    this.composerSegments().some((segment) => segment.isCommand),
+  );
+  protected readonly composerTextareaClass = computed(() =>
+    this.hasCommandHighlight()
+      ? 'caret-foreground selection:bg-working/20 relative z-10 max-h-48 rounded-none border-0 bg-transparent px-1 py-0.5 text-[14.5px] leading-relaxed text-transparent shadow-none focus-visible:ring-0 dark:bg-transparent'
+      : 'relative z-10 max-h-48 rounded-none border-0 bg-transparent px-1 py-0.5 text-[14.5px] leading-relaxed shadow-none focus-visible:ring-0 dark:bg-transparent',
+  );
+  private readonly activeSlash = computed(() => {
+    const { start, end } = this.composerCaret();
+    return activeSlashToken(this.draft(), start, end);
   });
+  protected readonly commandFilter = computed(() => this.activeSlash()?.query ?? '');
 
   protected readonly filteredCommands = computed(() => {
     const filter = this.commandFilter().toLowerCase();
@@ -1921,21 +1962,32 @@ export class SessionView implements OnInit {
       {
         readonly key: string;
         readonly label: string;
-        readonly entries: Array<{ readonly command: Command; readonly index: number }>;
+        readonly entries: Array<{ readonly command: Command; index: number }>;
       }
     >();
-    this.filteredCommands().forEach((command, index) => {
+    for (const command of this.filteredCommands()) {
       const key = `${command.owner.kind}:${command.owner.name}`;
       const group = groups.get(key) ?? {
         key,
         label: command.owner.name,
         entries: [],
       };
-      group.entries.push({ command, index });
+      group.entries.push({ command, index: 0 });
       groups.set(key, group);
-    });
+    }
+    let index = 0;
+    for (const group of groups.values()) {
+      for (const entry of group.entries) {
+        entry.index = index;
+        index += 1;
+      }
+    }
     return [...groups.values()];
   });
+
+  protected readonly orderedCommands = computed(() =>
+    this.commandGroups().flatMap((group) => group.entries.map((entry) => entry.command)),
+  );
 
   protected readonly commandStatus = computed(() => {
     if (this.commandFilter() !== '') return null;
@@ -2138,18 +2190,43 @@ export class SessionView implements OnInit {
       if (composer === undefined) return;
       const expected = this.draft();
       this.caretApplied = true;
+      if (this.composerTouched) return;
       if (composer.value !== expected) composer.value = expected;
       const caret = this.carets.consume(this.sessionId());
       const max = composer.value.length;
       if (caret !== null) {
-        composer.setSelectionRange(Math.min(caret.start, max), Math.min(caret.end, max));
+        const start = Math.min(caret.start, max);
+        const end = Math.min(caret.end, max);
+        composer.setSelectionRange(start, end);
+        this.composerCaret.set({ start, end });
       } else if (max > 0) {
         composer.setSelectionRange(max, max);
+        this.composerCaret.set({ start: max, end: max });
       }
     });
     effect(() => {
-      const count = this.filteredCommands().length;
+      const count = this.orderedCommands().length;
       this.selectedCommand.update((index) => (index >= count ? Math.max(0, count - 1) : index));
+    });
+    effect(() => {
+      if (this.commandsOpen()) {
+        this.fresh();
+        this.updateCommandsPlacement();
+      }
+    });
+    effect(() => {
+      const id = this.sessionId();
+      const limitation = this.modelsLimitation();
+      if (limitation === null) {
+        toast.dismiss(`models-limitation:${id}`);
+        return;
+      }
+      if (!this.limitationNotices.markShown(id, limitation)) return;
+      toast.info(limitation, {
+        id: `models-limitation:${id}`,
+        closeButton: true,
+        testId: 'models-limitation-toast',
+      });
     });
     effect(() => {
       if (this.agentStatus() !== 'needsLogin') {
@@ -2174,6 +2251,29 @@ export class SessionView implements OnInit {
       const id = this.sessionId();
       if (this.composerBridge.pendingFor(id).length === 0) return;
       untracked(() => this.applyBridgeItems(this.composerBridge.consume(id)));
+    });
+    effect(() => {
+      const key = this.freshBoundaryKey();
+      if (key === null) {
+        this.lastFreshBoundaryKey = null;
+        this.pendingFreshBoundaryScroll = false;
+        return;
+      }
+      if (key !== this.lastFreshBoundaryKey) {
+        this.lastFreshBoundaryKey = key;
+        if (!this.isRestoringScroll) this.pendingFreshBoundaryScroll = true;
+      }
+    });
+    afterRenderEffect(() => {
+      const kind = this.freshBoundaryType();
+      const scroller = this.threadScroller()?.nativeElement;
+      if (kind === null || scroller === undefined) return;
+      this.syncFreshBoundarySpace(scroller, kind);
+      if (this.pendingFreshBoundaryScroll) {
+        this.pendingFreshBoundaryScroll = false;
+        this.slideBoundaryToTop(scroller, kind);
+        this.awayFromBottom.set(false);
+      }
     });
     effect(() => {
       const pending = this.tabs.pendingTurnScroll();
@@ -2215,6 +2315,8 @@ export class SessionView implements OnInit {
     this.scroller = target;
     const update = () => {
       if (!this.isRestoringScroll) this.lastScrollTop = target.scrollTop;
+      const kind = this.freshBoundaryType();
+      if (kind !== null) this.syncFreshBoundarySpace(target, kind);
       this.awayFromBottom.set(target.scrollHeight - target.scrollTop - target.clientHeight > 400);
     };
     target.addEventListener('scroll', update, { passive: true });
@@ -2227,10 +2329,50 @@ export class SessionView implements OnInit {
     update();
   }
 
+  /**
+   * Slides the earlier chat up so the Clear or Compact boundary sits at the top of the
+   * viewport and the Session feels new. Waits a frame so the spacer below it has its height.
+   */
+  private slideBoundaryToTop(scroller: HTMLElement, kind: 'cleared' | 'compacted'): void {
+    const selector =
+      kind === 'cleared' ? '[data-testid="context-divider"]' : '[data-testid="compaction"]';
+    requestAnimationFrame(() => {
+      const matches = scroller.querySelectorAll<HTMLElement>(selector);
+      const boundary = matches[matches.length - 1];
+      const top =
+        boundary === undefined ? scroller.scrollHeight : Math.max(0, boundary.offsetTop - 16);
+      scroller.scrollTo?.({
+        top,
+        behavior: this.prefersReducedMotion() ? 'auto' : 'smooth',
+      });
+      this.lastScrollTop = top;
+    });
+  }
+
+  private prefersReducedMotion(): boolean {
+    return (
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    );
+  }
+
+  private syncFreshBoundarySpace(scroller: HTMLElement, kind: 'cleared' | 'compacted'): void {
+    if (scroller.clientHeight <= 0) return;
+    const selector =
+      kind === 'cleared' ? '[data-testid="context-divider"]' : '[data-testid="compaction"]';
+    const matches = scroller.querySelectorAll<HTMLElement>(selector);
+    const boundaryEl = matches[matches.length - 1];
+    const nextHeight = Math.max(240, scroller.clientHeight - (boundaryEl?.offsetHeight ?? 24) - 32);
+    if (this.freshBoundaryHeight() !== nextHeight) {
+      this.freshBoundaryHeight.set(nextHeight);
+    }
+  }
+
   protected scrollToBottom(): void {
-    this.scroller?.scrollTo({
+    this.scroller?.scrollTo?.({
       top: this.scroller.scrollHeight,
-      behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      behavior: this.prefersReducedMotion() ? 'auto' : 'smooth',
     });
   }
 
@@ -2263,7 +2405,9 @@ export class SessionView implements OnInit {
   private async loadAgents(): Promise<void> {
     const exit = await this.runtime.run(listAgents(), { signal: this.aborts.signal });
     if (this.aborts.signal.aborted) return;
-    if (Exit.isSuccess(exit)) this.availableAgents.set(exit.value);
+    if (Exit.isSuccess(exit)) {
+      this.availableAgents.set(exit.value);
+    }
   }
 
   private async restoreComposer(): Promise<void> {
@@ -2332,58 +2476,139 @@ export class SessionView implements OnInit {
   }
 
   protected onInput(value: string): void {
+    this.composerTouched = true;
+    const previousQuery = this.activeSlash()?.query ?? null;
+    const composer = this.composerInput()?.nativeElement;
+    const caret =
+      composer !== undefined
+        ? {
+            start: composer.selectionStart ?? value.length,
+            end: composer.selectionEnd ?? composer.selectionStart ?? value.length,
+          }
+        : { start: value.length, end: value.length };
     this.draft.set(value);
-    if (this.commandsOpen() && !value.startsWith('/')) {
+    this.composerCaret.set(caret);
+    const token = this.activeSlash();
+    if (token === null) {
       this.commandsOpen.set(false);
-    } else if (value.startsWith('/') && !this.commandsOpen() && this.commands().length > 0) {
+      this.dismissedSlash = null;
+      return;
+    }
+    if (
+      this.dismissedSlash !== null &&
+      (this.dismissedSlash.start !== token.start ||
+        token.query === '' ||
+        (!token.query.startsWith(this.dismissedSlash.query) &&
+          !this.dismissedSlash.query.startsWith(token.query)))
+    ) {
+      this.dismissedSlash = null;
+    }
+    if (token.query !== previousQuery) {
+      this.selectedCommand.set(0);
+    }
+    if (this.dismissedSlash !== null) return;
+    if (!this.commandsOpen() && this.commands().length > 0) {
+      this.updateCommandsPlacement();
       this.commandsOpen.set(true);
       this.selectedCommand.set(0);
     }
   }
 
+  private updateCommandsPlacement(): void {
+    this.commandsPlacement.set(
+      choosePopoverPlacement(
+        this.composerInput()?.nativeElement,
+        this.document.defaultView?.innerHeight ?? 0,
+        this.fresh() ? 'down' : 'up',
+      ),
+    );
+  }
+
+  protected syncCaret(): void {
+    this.composerTouched = true;
+    const composer = this.composerInput()?.nativeElement;
+    if (composer === undefined) return;
+    const start = composer.selectionStart ?? composer.value.length;
+    const end = composer.selectionEnd ?? start;
+    this.composerCaret.set({ start, end });
+    if (this.commandsOpen() && this.activeSlash() === null) {
+      this.commandsOpen.set(false);
+      this.dismissedSlash = null;
+    }
+  }
+
+  protected onKeyup(event: KeyboardEvent): void {
+    if (
+      event.key === 'ArrowLeft' ||
+      event.key === 'ArrowRight' ||
+      event.key === 'ArrowUp' ||
+      event.key === 'ArrowDown' ||
+      event.key === 'Home' ||
+      event.key === 'End'
+    ) {
+      this.syncCaret();
+    }
+  }
+
+  protected syncComposerBackdropScroll(): void {
+    const composer = this.composerInput()?.nativeElement;
+    const backdrop = this.composerBackdrop()?.nativeElement;
+    if (composer === undefined || backdrop === undefined) return;
+    backdrop.scrollTop = composer.scrollTop;
+    backdrop.scrollLeft = composer.scrollLeft;
+  }
+
+  private dismissCommands(): void {
+    this.commandsOpen.set(false);
+    const token = this.activeSlash();
+    this.dismissedSlash = token === null ? null : { start: token.start, query: token.query };
+  }
+
   protected onKeydown(event: KeyboardEvent): void {
+    if (event.key === '/' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      this.dismissedSlash = null;
+    }
     if (this.commandsOpen()) {
+      const ordered = this.orderedCommands();
       switch (event.key) {
         case 'ArrowDown': {
           event.preventDefault();
-          this.selectedCommand.update((index) =>
-            Math.min(index + 1, this.filteredCommands().length - 1),
-          );
-          this.scrollSelectedCommandIntoView(event);
+          this.selectedCommand.update((index) => Math.min(index + 1, ordered.length - 1));
+          this.scrollSelectedCommandIntoView();
           return;
         }
         case 'ArrowUp': {
           event.preventDefault();
           this.selectedCommand.update((index) => Math.max(index - 1, 0));
-          this.scrollSelectedCommandIntoView(event);
+          this.scrollSelectedCommandIntoView();
           return;
         }
         case 'Enter': {
-          const selected = this.filteredCommands()[this.selectedCommand()];
+          if (event.shiftKey || event.isComposing) {
+            if (event.shiftKey) this.dismissCommands();
+            return;
+          }
+          const selected = ordered[this.selectedCommand()];
           if (selected !== undefined) {
             event.preventDefault();
             this.pickCommand(selected);
             return;
           }
-          // No command matches: send the text instead.
-          this.commandsOpen.set(false);
+          // No command matches: dismiss the popup and send the text instead.
+          this.dismissCommands();
           break;
         }
         case 'Tab': {
-          const selected = this.filteredCommands()[this.selectedCommand()];
+          event.preventDefault();
+          const selected = ordered[this.selectedCommand()];
           if (selected !== undefined) {
-            event.preventDefault();
             this.pickCommand(selected);
+          } else {
+            this.dismissCommands();
           }
           return;
         }
       }
-    }
-
-    if (event.key === '/' && this.draft() === '' && this.commands().length > 0) {
-      this.commandsOpen.set(true);
-      this.selectedCommand.set(0);
-      return;
     }
 
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
@@ -2392,9 +2617,8 @@ export class SessionView implements OnInit {
     void this.send();
   }
 
-  private scrollSelectedCommandIntoView(event: KeyboardEvent): void {
-    if (!(event.currentTarget instanceof HTMLElement)) return;
-    const selected = event.currentTarget.parentElement?.querySelector<HTMLElement>(
+  private scrollSelectedCommandIntoView(): void {
+    const selected = this.host.nativeElement.querySelector<HTMLElement>(
       `[data-command-index="${this.selectedCommand()}"]`,
     );
     selected?.scrollIntoView?.({ block: 'nearest' });
@@ -2587,14 +2811,6 @@ export class SessionView implements OnInit {
     this.composerInput()?.nativeElement.focus({ preventScroll: true });
   }
 
-  protected openWorkers(): void {
-    this.tabs.openWorkersPanel(
-      this.sessionId(),
-      this.paneId() ?? undefined,
-      this.projectId() ?? undefined,
-    );
-  }
-
   protected openChanges(): void {
     this.tabs.openChangesPanel(
       this.sessionId(),
@@ -2661,7 +2877,21 @@ export class SessionView implements OnInit {
   private armWorkflow(workflow: WorkflowKind): void {
     if (this.sending() || this.running() || this.compacting() || this.clearing()) return;
     this.commandsOpen.set(false);
-    if (this.draft().trim() === `/${workflow}`) this.draft.set('');
+    this.dismissedSlash = null;
+    const token = this.activeSlash();
+    if (token !== null) {
+      const next = removeSlashToken(this.draft(), token);
+      this.draft.set(next);
+      const composer = this.composerInput()?.nativeElement;
+      if (composer !== undefined) {
+        composer.value = next;
+        const caret = Math.min(token.start, next.length);
+        composer.setSelectionRange(caret, caret);
+        this.composerCaret.set({ start: caret, end: caret });
+      }
+    } else if (this.draft().trim() === `/${workflow}`) {
+      this.draft.set('');
+    }
     this.workflowArmed.set(workflow);
     // The Session actions menu restores focus to its trigger as it closes.
     queueMicrotask(() => {
@@ -2686,14 +2916,24 @@ export class SessionView implements OnInit {
         return;
       }
     }
-    const text = `${command.invocation} `;
-    this.draft.set(text);
+    const current = this.draft();
+    const token = this.activeSlash();
+    const replaced =
+      token !== null
+        ? replaceSlashToken(current, token, command.invocation)
+        : {
+            text: `${command.invocation} `,
+            caret: command.invocation.length + 1,
+          };
+    this.draft.set(replaced.text);
+    this.composerCaret.set({ start: replaced.caret, end: replaced.caret });
     this.commandsOpen.set(false);
+    this.dismissedSlash = null;
     const composer = this.composerInput()?.nativeElement;
     if (composer === undefined) return;
-    composer.value = text;
+    composer.value = replaced.text;
     composer.focus({ preventScroll: true });
-    composer.setSelectionRange(text.length, text.length);
+    composer.setSelectionRange(replaced.caret, replaced.caret);
   }
 
   protected onPaste(event: ClipboardEvent): void {
@@ -2810,7 +3050,7 @@ export class SessionView implements OnInit {
     this.keymap.registerEscape({
       layer: 'commands',
       when: () => this.focused() && this.commandsOpen(),
-      run: () => this.commandsOpen.set(false),
+      run: () => this.dismissCommands(),
       destroyRef: this.destroyRef,
     });
     this.keymap.registerEscape({

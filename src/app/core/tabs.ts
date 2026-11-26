@@ -1194,8 +1194,29 @@ export class Tabs {
   }
 
   private applyChange(change: SessionChange): void {
+    const previous = this.liveStates.get(change.sessionId);
     this.liveStates.set(change.sessionId, change.state);
     this._liveVersion.update((v) => v + 1);
+    this.closeFinishedWorker(change.sessionId, previous, change.state);
+  }
+
+  /**
+   * A Spence-owned Worker's Tab closes by itself once its Turn finishes successfully, unless it is the Session
+   * being viewed. The Worker stays in its Parent's list, so nothing is lost and nothing is left to tidy.
+   */
+  private closeFinishedWorker(
+    id: SessionId,
+    previous: LiveState | undefined,
+    state: LiveState,
+  ): void {
+    if (state.workerKind !== 'owned' || state.parentSessionId === undefined) return;
+    const finished =
+      previous?.runningTurn !== undefined &&
+      state.runningTurn === undefined &&
+      state.status === 'idle' &&
+      state.lastTurn?.outcome === 'done';
+    if (!finished || !this.isOpen(id) || this.active()?.session === id) return;
+    this.closeSession(id);
   }
 
   private setRestored(restored: RestoredWorkspace): void {

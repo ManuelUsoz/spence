@@ -1782,6 +1782,14 @@
         <source> Clear queue </source>
         <target> Vaciar la cola </target>
       </trans-unit>
+      <trans-unit id="562599309950026101" datatype="html">
+        <source>Start fresh</source>
+        <target state="translated">Empezar de cero</target>
+      </trans-unit>
+      <trans-unit id="9043694977866017073" datatype="html">
+        <source>Ready to continue</source>
+        <target state="translated">Listo para continuar</target>
+      </trans-unit>
       <trans-unit id="3338267994156281602" datatype="html">
         <source>Waiting for you below</source>
         <target>Esperando tu respuesta abajo</target>
@@ -1854,10 +1862,6 @@
         <source>Send</source>
         <target>Enviar</target>
       </trans-unit>
-      <trans-unit id="2217596165756525051" datatype="html">
-        <source>{VAR_PLURAL, plural, =0 {Reconnecting} =1 {1 agent} other {<x id="INTERPOLATION"/> agents}}</source>
-        <target>{VAR_PLURAL, plural, =0 {Reconectando} =1 {1 agente} other {<x id="INTERPOLATION"/> agentes}}</target>
-      </trans-unit>
       <trans-unit id="5849991824541838879" datatype="html">
         <source>Toggle Permission mode</source>
         <target>Alternar modo de permisos</target>
@@ -1917,18 +1921,6 @@
       <trans-unit id="7980045356881213257" datatype="html">
         <source>Message the Agent on <x id="device" equiv-text="device"/></source>
         <target state="translated">Escribe al Agente en <x id="device" equiv-text="device"/></target>
-      </trans-unit>
-      <trans-unit id="workers-label-reconnecting" datatype="html">
-        <source>Workers reconnecting</source>
-        <target>Agentes reconectando</target>
-      </trans-unit>
-      <trans-unit id="workers-label-needs" datatype="html">
-        <source><x id="PH" equiv-text="this.activeWorkerCount()"/> agents, one waiting</source>
-        <target><x id="PH"/> agentes, uno esperando</target>
-      </trans-unit>
-      <trans-unit id="workers-label" datatype="html">
-        <source><x id="PH" equiv-text="this.activeWorkerCount()"/> agents</source>
-        <target><x id="PH"/> agentes</target>
       </trans-unit>
       <trans-unit id="7042412392316674803" datatype="html">
         <source>Stopping <x id="PH" equiv-text="prompt.agentName"/> will also interrupt 1 other working Session.</source>
@@ -2186,6 +2178,10 @@
         <source>Writing</source>
         <target>Escribiendo</target>
       </trans-unit>
+      <trans-unit id="7396439932390946122" datatype="html">
+        <source> Starting… </source>
+        <target state="translated"> Iniciando… </target>
+      </trans-unit>
       <trans-unit id="3590288020667398750" datatype="html">
         <source> No steps yet. </source>
         <target state="translated"> Todavía no hay pasos. </target>
@@ -2313,17 +2309,37 @@
       <trans-unit id="9001216289639080925" datatype="html">
         <source>Waiting</source>
         <target>Esperando</target>
-        <note priority="1" from="description">sidebar session status</note>
-      </trans-unit>
-      <trans-unit id="1519954996184640001" datatype="html">
-        <source>Error</source>
-        <target>Error</target>
-        <note priority="1" from="description">sidebar session status</note>
+        <note priority="1" from="description">sidebar worker status</note>
       </trans-unit>
       <trans-unit id="2616424795873364335" datatype="html">
         <source>Idle</source>
         <target>Inactivo</target>
         <note priority="1" from="description">sidebar worker status</note>
+      </trans-unit>
+      <trans-unit id="888959872265670631" datatype="html">
+        <source>Worker</source>
+        <target state="translated">Trabajador</target>
+        <note priority="1" from="description">sidebar workflow role</note>
+      </trans-unit>
+      <trans-unit id="635293613743380123" datatype="html">
+        <source>Verifier</source>
+        <target state="translated">Verificador</target>
+        <note priority="1" from="description">sidebar workflow role</note>
+      </trans-unit>
+      <trans-unit id="4554167567910702830" datatype="html">
+        <source>Planner</source>
+        <target state="translated">Planificador</target>
+        <note priority="1" from="description">sidebar workflow role</note>
+      </trans-unit>
+      <trans-unit id="153455873294182061" datatype="html">
+        <source>Task Breaker</source>
+        <target state="translated">Desglosador de tareas</target>
+        <note priority="1" from="description">sidebar workflow role</note>
+      </trans-unit>
+      <trans-unit id="4685455277654959886" datatype="html">
+        <source>Implementer</source>
+        <target state="translated">Implementador</target>
+        <note priority="1" from="description">sidebar workflow role</note>
       </trans-unit>
       <trans-unit id="3982403428275430291" datatype="html">
         <source>Sidebar</source>
@@ -2776,6 +2792,20 @@
         <source>Archived (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ archived().length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
             &gt;"/>)</source>
         <target>Archivadas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>)</target>
+      </trans-unit>
+      <trans-unit id="9117626405856270933" datatype="html">
+        <source>Coordinator</source>
+        <target state="translated">Coordinador</target>
+      </trans-unit>
+      <trans-unit id="1888220926258250478" datatype="html">
+        <source>Divide and conquer</source>
+        <target state="translated">Dividir y conquistar</target>
+      </trans-unit>
+      <trans-unit id="419919926645056698" datatype="html">
+        <source>Workers (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ row.workers.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
+              &gt;"/>)</source>
+        <target state="translated">Workers (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ row.workers.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
+              &gt;"/>)</target>
       </trans-unit>
       <trans-unit id="988139444254355992" datatype="html">
         <source> Open in split </source>
@@ -3570,9 +3600,9 @@
         <source> No Remote device is connected. </source>
         <target state="translated"> No hay ningún Dispositivo remoto conectado. </target>
       </trans-unit>
-      <trans-unit id="7683637790106573650" datatype="html">
-        <source><x id="START_TAG_CODE" ctype="x-code" equiv-text="&lt;code class=&quot;font-mono text-xs&quot;&gt;"/>/coordinate<x id="CLOSE_TAG_CODE" ctype="x-code" equiv-text="&lt;/code&gt;"/> assigns implementation to a Worker. A fresh Verifier reviews the changes and runs relevant checks. </source>
-        <target state="translated"><x id="START_TAG_CODE" ctype="x-code" equiv-text="&lt;code class=&quot;font-mono text-xs&quot;&gt;"/>/coordinate<x id="CLOSE_TAG_CODE" ctype="x-code" equiv-text="&lt;/code&gt;"/> asigna la implementación a un Trabajador. Un Verificador con contexto nuevo revisa los cambios y ejecuta las comprobaciones pertinentes. </target>
+      <trans-unit id="1503772922132774058" datatype="html">
+        <source><x id="START_TAG_CODE" ctype="x-code" equiv-text="&lt;code class=&quot;font-mono text-xs&quot;&gt;"/>/coordinate<x id="CLOSE_TAG_CODE" ctype="x-code" equiv-text="&lt;/code&gt;"/> uses the current Session as orchestrator, assigns implementation to a Worker, and runs a fresh Verifier to review the changes and checks. </source>
+        <target state="translated"><x id="START_TAG_CODE" ctype="x-code" equiv-text="&lt;code class=&quot;font-mono text-xs&quot;&gt;"/>/coordinate<x id="CLOSE_TAG_CODE" ctype="x-code" equiv-text="&lt;/code&gt;"/> usa la Sesión actual como orquestadora, asigna la implementación a un Trabajador y ejecuta un Verificador nuevo para revisar los cambios y las comprobaciones. </target>
       </trans-unit>
       <trans-unit id="8481197766060372757" datatype="html">
         <source><x id="START_TAG_CODE" ctype="x-code" equiv-text="&lt;code class=&quot;font-mono text-xs&quot;&gt;"/>/divide-and-conquer<x id="CLOSE_TAG_CODE" ctype="x-code" equiv-text="&lt;/code&gt;"/> plans the work, breaks it into tasks, implements it, and verifies the result in fresh Sessions. </source>
@@ -3582,29 +3612,9 @@
         <source> Open a Session with this Agent to discover its Models. </source>
         <target state="translated"> Abre una Sesión con este Agente para descubrir sus Modelos. </target>
       </trans-unit>
-      <trans-unit id="9117626405856270933" datatype="html">
-        <source>Coordinator</source>
-        <target state="translated">Coordinador</target>
-      </trans-unit>
       <trans-unit id="8705895863343413938" datatype="html">
         <source>Implementation Worker</source>
         <target state="translated">Trabajador de implementación</target>
-      </trans-unit>
-      <trans-unit id="635293613743380123" datatype="html">
-        <source>Verifier</source>
-        <target state="translated">Verificador</target>
-      </trans-unit>
-      <trans-unit id="4554167567910702830" datatype="html">
-        <source>Planner</source>
-        <target state="translated">Planificador</target>
-      </trans-unit>
-      <trans-unit id="153455873294182061" datatype="html">
-        <source>Task Breaker</source>
-        <target state="translated">Desglosador de tareas</target>
-      </trans-unit>
-      <trans-unit id="4685455277654959886" datatype="html">
-        <source>Implementer</source>
-        <target state="translated">Implementador</target>
       </trans-unit>
       <trans-unit id="403625245816218307" datatype="html">
         <source>Choose Agent</source>
@@ -3661,6 +3671,10 @@
       <trans-unit id="6357866423106114276" datatype="html">
         <source>Needs an answer</source>
         <target>Necesita una respuesta</target>
+      </trans-unit>
+      <trans-unit id="1519954996184640001" datatype="html">
+        <source>Error</source>
+        <target>Error</target>
       </trans-unit>
       <trans-unit id="84160718622756632" datatype="html">
         <source> This diff is long; only the start is shown. </source>

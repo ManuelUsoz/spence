@@ -90,13 +90,6 @@ const sessionChanges = Effect.gen(function* () {
   return api['Session.changes']();
 });
 
-/** Why a Session sits in "Needs you": a single-word status cue under its title. */
-const reasonOf = (session: SessionSummary): string | undefined => {
-  if (session.archivedAt !== undefined) return undefined;
-  if (session.status === 'blocked') return $localize`:sidebar session status:Waiting`;
-  if (session.status === 'error') return $localize`:sidebar session status:Error`;
-  return undefined;
-};
 /** A row with the time it is grouped by. */
 type DatedRow = SessionRow & { readonly at: number };
 
@@ -110,6 +103,23 @@ const workerStatus = (state: SessionWorkerSummary['state']): string => {
       return $localize`:sidebar worker status:Reconnecting`;
     case 'idle':
       return $localize`:sidebar worker status:Idle`;
+  }
+};
+
+const roleLabel = (role: string): string => {
+  switch (role) {
+    case 'Worker':
+      return $localize`:sidebar workflow role:Worker`;
+    case 'Verifier':
+      return $localize`:sidebar workflow role:Verifier`;
+    case 'Planner':
+      return $localize`:sidebar workflow role:Planner`;
+    case 'Task Breaker':
+      return $localize`:sidebar workflow role:Task Breaker`;
+    case 'Implementer':
+      return $localize`:sidebar workflow role:Implementer`;
+    default:
+      return role;
   }
 };
 
@@ -1091,7 +1101,6 @@ export class AppSidebar {
         id: session.id,
         title: resolved.title,
         age: shortAge(session.lastActivityAt, now, this.locale),
-        ...(reasonOf(session) === undefined ? {} : { reason: reasonOf(session) }),
         active: session.id === active || workerActive,
         untitled: resolved.untitled,
         selected: selected.has(session.id),
@@ -1100,6 +1109,7 @@ export class AppSidebar {
         at: session.lastActivityAt,
         workers,
         workerActive,
+        ...(session.workflow === undefined ? {} : { workflow: session.workflow }),
         status,
         ...(activity === undefined ? {} : { activity }),
         ...(blockedTarget === undefined ? {} : { blockedTarget }),
@@ -1141,6 +1151,9 @@ export class AppSidebar {
         children.set(worker.sessionId, {
           ...worker,
           parentSessionId,
+          ...(children.get(worker.sessionId)?.role === undefined
+            ? {}
+            : { role: children.get(worker.sessionId)?.role }),
           ...(activity === undefined ? {} : { activity }),
         });
       }
@@ -1161,6 +1174,7 @@ export class AppSidebar {
           status: workerStatus(worker.state),
           needsPermission: worker.state === 'requiresAction',
           running: worker.state === 'running',
+          ...(worker.role === undefined ? {} : { role: roleLabel(worker.role) }),
           ...(activity === undefined ? {} : { activity }),
           ...(blockedTarget === undefined ? {} : { blockedTarget }),
           ...(errorSummary === undefined ? {} : { errorSummary }),

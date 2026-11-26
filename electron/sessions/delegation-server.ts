@@ -1,6 +1,13 @@
 import { Effect, Schema } from 'effect';
 import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
+import {
+  FeedbackCategory,
+  FeedbackLatency,
+  FeedbackSeverity,
+  parseReportFeedback,
+  type ReportFeedbackInput,
+} from '../feedback/feedback';
 
 /** The reasons a tool call fails in a way the Agent can read and act on. */
 export const ToolErrorReason = Schema.Literals([
@@ -59,6 +66,12 @@ export interface StartSessionInput {
   readonly requestId?: string;
 }
 
+export interface NeedsUserInput {
+  /** What the Worker needs from the user. */
+  readonly reason: string;
+  readonly requestId?: string;
+}
+
 export interface AwaitResultInput {
   /** A handle from `send_message` to another Device, or from `start_session`. */
   readonly handle: string;
@@ -77,6 +90,8 @@ export interface DelegationTools {
   readonly listTargets: () => Promise<ToolOutcome>;
   readonly startSession: (input: StartSessionInput) => Promise<ToolOutcome>;
   readonly awaitResult: (input: AwaitResultInput) => Promise<ToolOutcome>;
+  readonly reportFeedback: (input: ReportFeedbackInput) => Promise<ToolOutcome>;
+  readonly needsUser: (input: NeedsUserInput) => Promise<ToolOutcome>;
 }
 
 type Args = Readonly<Record<string, unknown>>;
@@ -111,7 +126,7 @@ const toolSpecs: ReadonlyArray<ToolSpec> = [
   {
     name: 'delegate',
     description:
-      'Delegate a task to a Spence Worker and receive its result. Reuse requestId when retrying the same task.',
+      'Start a Spence Worker asynchronously on a task and return immediately. Do not poll list_sessions or await_result; end your turn and stand idle—Spence delivers the Worker response to you automatically as a message when it finishes. Reuse requestId when retrying the same task.',
     inputSchema: {
       type: 'object',
       properties: { task: { type: 'string' }, requestId: retryKeyProperty },
@@ -215,7 +230,7 @@ const toolSpecs: ReadonlyArray<ToolSpec> = [
   },
   {
     name: 'await_result',
-    description: `Wait for the outcome and final reply of the Turn started by send_message or start_session. Returns pending if the Turn has not ended within timeoutSeconds (default ${DEFAULT_AWAIT_SECONDS}, at most ${MAX_AWAIT_SECONDS}).`,
+    description: `Wait for the outcome and final reply of the Turn started by send_message or start_session (not for delegate, which delivers automatically when you stand idle). Returns pending if the Turn has not ended within timeoutSeconds (default ${DEFAULT_AWAIT_SECONDS}, at most ${MAX_AWAIT_SECONDS}).`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -240,6 +255,76 @@ const toolSpecs: ReadonlyArray<ToolSpec> = [
         ),
       };
       return { fingerprint: JSON.stringify(input), run: (tools) => tools.awaitResult(input) };
+    },
+  },
+  {
+    name: 'report_feedback',
+    description:
+      'Record feedback, bugs, workflow friction, or suggestions locally on the machine running Spence so the user can inspect the saved feedback file. For a tool that felt slow or expensive in tokens, set tool, latency and suggestion: they are what makes the report actionable. Reuse requestId when retrying the same report.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        summary: { type: 'string', minLength: 1, description: 'Concise summary of the feedback' },
+        details: { type: 'string', description: 'Optional detailed context or reproduction notes' },
+        category: {
+          type: 'string',
+          enum: FeedbackCategory.literals,
+          description: 'Feedback category (default: other)',
+        },
+        severity: {
+          type: 'string',
+          enum: FeedbackSeverity.literals,
+          description: 'Impact severity (default: medium)',
+        },
+        tool: {
+          type: 'string',
+          description: 'Tool this report is about, by MCP name (e.g. "snapshot").',
+        },
+        latency: {
+          type: 'string',
+          enum: FeedbackLatency.literals,
+          description: 'How slow the tool felt while you used it.',
+        },
+        suggestion: {
+          type: 'string',
+          description:
+            'The concrete change that would have made the tool faster or cheaper in tokens.',
+        },
+        requestId: retryKeyProperty,
+      },
+      required: ['summary'],
+    },
+    prepare: (args) => {
+      const input = parseReportFeedback(args);
+      if (input === undefined) return undefined;
+      return { fingerprint: JSON.stringify(input), run: (tools) => tools.reportFeedback(input) };
+    },
+  },
+  {
+    name: 'needs_user',
+    description:
+      "Call this when you are a Worker that cannot finish without the user: missing information, a credential, a decision or a manual step. State exactly what you need in reason. Spence raises the user's attention on your Parent Session and relays the reason; then end your turn and stand idle. Do not use it for a permission request, which the user already sees. Reuse requestId when retrying the same call.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        reason: {
+          type: 'string',
+          minLength: 1,
+          description: 'What you need from the user, concretely',
+        },
+        requestId: retryKeyProperty,
+      },
+      required: ['reason'],
+    },
+    prepare: (args) => {
+      const { reason, requestId } = args;
+      if (typeof reason !== 'string' || reason.trim().length === 0 || !validRetryKey(args))
+        return undefined;
+      const input: NeedsUserInput = {
+        reason: reason.trim(),
+        ...(typeof requestId === 'string' ? { requestId } : {}),
+      };
+      return { fingerprint: JSON.stringify(input), run: (tools) => tools.needsUser(input) };
     },
   },
 ];

@@ -26,6 +26,8 @@ const createSession = (projectId: ProjectId, device: DeviceId | undefined) =>
     return yield* api['Session.create']({ projectId });
   }).pipe(onDevice(device));
 
+const CREATE_TIMEOUT = '30 seconds';
+
 /** What a Panel shows: its Session starting, failed to start, or ready to follow. */
 type State =
   | { readonly status: 'starting' }
@@ -72,8 +74,9 @@ export class DraftSessions {
   ): Promise<SessionId | null> {
     const known = this.created.get(panelId);
     if (known !== undefined) return known;
+    // A reply that never arrives must end as a failed start (with Retry on next show), not "Starting…" forever.
     const creating = this.runtime
-      .run(createSession(projectId, device))
+      .run(createSession(projectId, device).pipe(Effect.timeout(CREATE_TIMEOUT)))
       .then((exit) => (Exit.isSuccess(exit) ? exit.value : null));
     this.created.set(panelId, creating);
     void creating.then((id) => {
@@ -213,7 +216,9 @@ export class SessionTab {
     if (current.status === 'ready' && matchesPanel(current, panel)) return;
     const initialSessionId = panelSessionId(panel);
     this.state.set({ panelId: panel.id, sessionId: initialSessionId, status: 'starting' });
-    const state = await this.drafts.stateOf(panel, projectId, device);
+    const state = await this.drafts
+      .stateOf(panel, projectId, device)
+      .catch(() => ({ status: 'failed' }) as const);
     const shown = this.shown();
     if (
       shown.panel.id !== panel.id ||

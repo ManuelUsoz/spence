@@ -22,8 +22,9 @@ type RoleSelections = Partial<Record<WorkflowRoleId, WorkflowTarget>>;
       @for (workflow of workflows; track workflow.key) {
         @if (workflow.key === 'coordinator') {
           <p class="text-muted-foreground mb-3 text-sm" i18n>
-            <code class="font-mono text-xs">/coordinate</code> assigns implementation to a Worker. A
-            fresh Verifier reviews the changes and runs relevant checks.
+            <code class="font-mono text-xs">/coordinate</code> uses the current Session as
+            orchestrator, assigns implementation to a Worker, and runs a fresh Verifier to review
+            the changes and checks.
           </p>
         } @else {
           <p class="text-muted-foreground mt-5 mb-3 text-sm" i18n>
@@ -94,7 +95,6 @@ export class SettingsWorkflows {
       key: 'coordinator',
       prefix: '',
       roles: [
-        { id: 'coordinator', label: $localize`Coordinator` },
         { id: 'worker', label: $localize`Implementation Worker` },
         { id: 'verifier', label: $localize`Verifier` },
       ],

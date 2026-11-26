@@ -27,6 +27,7 @@ import {
       [model]="model()"
       [effort]="effort()"
       [controlsDisabled]="controlsDisabled()"
+      [preferUpward]="preferUpward()"
       pickerLabel="Agent, model and effort"
       (agentSelect)="agentSelects.push($event)"
       (modelSelect)="modelSelects.push($event)"
@@ -60,6 +61,7 @@ class HostComponent {
     choices: ['low', 'medium', 'high', 'max'],
   });
   readonly controlsDisabled = signal(false);
+  readonly preferUpward = signal(true);
 
   readonly agentSelects: Array<string> = [];
   readonly modelSelects: Array<string> = [];
@@ -190,5 +192,21 @@ describe('ModelPalette', () => {
     fixture.detectChanges();
 
     expect(fixture.componentInstance.effortSelects).toEqual(['low']);
+  });
+
+  it('places the palette upward or downward based on preferUpward and available space', () => {
+    const fixture = mount();
+    query<HTMLButtonElement>(fixture, 'model-picker')?.click();
+    fixture.detectChanges();
+    expect(query(fixture, 'agent-menu')?.getAttribute('data-placement')).toBe('up');
+    expect(query(fixture, 'agent-menu')?.classList.contains('bottom-full')).toBe(true);
+
+    query<HTMLButtonElement>(fixture, 'model-picker')?.click();
+    fixture.componentInstance.preferUpward.set(false);
+    fixture.detectChanges();
+    query<HTMLButtonElement>(fixture, 'model-picker')?.click();
+    fixture.detectChanges();
+    expect(query(fixture, 'agent-menu')?.getAttribute('data-placement')).toBe('down');
+    expect(query(fixture, 'agent-menu')?.classList.contains('top-full')).toBe(true);
   });
 });

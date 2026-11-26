@@ -1,6 +1,7 @@
 import type { DiffHunk, DiffLine } from '@ui/diff';
 import { capOutputTail } from '../../../shared/sessions/output-tail';
 import type { PermissionMode } from '../../../shared/projects/projects.rpc';
+import type { WorkflowKind } from '../../../shared/settings/settings.rpc';
 import type {
   ContextCleared,
   ForkTarget,
@@ -35,6 +36,7 @@ export type TurnActivity = 'starting' | 'thinking' | 'step' | 'writing';
 export interface TurnWork {
   readonly startedAt: number;
   readonly endedAt: number | null;
+  readonly workflow?: WorkflowKind;
   /** In the order they started; an update replaces the Step with its id. */
   readonly steps: ReadonlyArray<Step>;
   /** Every Thought of the Turn, joined. */
@@ -127,9 +129,10 @@ export const emptyThread: Thread = {
   asides: [],
 };
 
-const startWork = (at: number): TurnWork => ({
+const startWork = (at: number, workflow?: WorkflowKind): TurnWork => ({
   startedAt: at,
   endedAt: null,
+  ...(workflow === undefined ? {} : { workflow }),
   steps: [],
   thought: '',
   thoughtMs: 0,
@@ -255,7 +258,7 @@ const turnOf = (thread: Thread, item: TranscriptItem): TurnId | null => {
 /** The thread with the item folded into its Turn's work. */
 const withWork = (thread: Thread, item: TranscriptItem, at: number): Thread => {
   if (item._tag === 'TurnStarted') {
-    return { ...thread, work: new Map(thread.work).set(item.turnId, startWork(at)) };
+    return { ...thread, work: new Map(thread.work).set(item.turnId, startWork(at, item.workflow)) };
   }
   const turnId = turnOf(thread, item);
   const work = turnId === null ? undefined : thread.work.get(turnId);
@@ -738,11 +741,15 @@ export const threadRows = (
     ) {
       rows.push({ type: 'ticker', turnId: message.turnId });
     }
-    for (const aside of thread.asides) {
-      if (aside.afterMessage === message.id) rows.push({ type: 'aside', aside });
+    const afterMessageAsides = thread.asides.filter((aside) => aside.afterMessage === message.id);
+    for (const aside of afterMessageAsides) {
+      if (aside.item._tag === 'Notice') rows.push({ type: 'aside', aside });
     }
     if (isLastMessageOfTurn(thread, i)) {
       appendTurnEndRows(rows, thread, message.turnId, forks);
+    }
+    for (const aside of afterMessageAsides) {
+      if (aside.item._tag !== 'Notice') rows.push({ type: 'aside', aside });
     }
   }
   for (const turnId of thread.outcomes.keys()) {

@@ -31,9 +31,18 @@ export const layerSessionsLive = layerSessions.pipe(
 export const layerSessionsHandlersWith = SessionsRpcs.toLayer({
   'Session.changes': () =>
     Stream.unwrap(Sessions.use((sessions) => Effect.succeed(sessions.changes))),
-  'Session.list': ({ projectId }) => Sessions.use((sessions) => sessions.list(projectId)),
+  'Session.list': ({ projectId }) =>
+    Sessions.use((sessions) => sessions.list(projectId)).pipe(
+      Effect.tap((listed) => Effect.logInfo(`Session.list ${projectId}: ${listed.length}`)),
+      Effect.tapError((error) => Effect.logWarning(`Session.list ${projectId} failed`, error)),
+    ),
   'Session.create': ({ projectId, agentId }) =>
-    Sessions.use((sessions) => sessions.create(projectId, agentId)),
+    Sessions.use((sessions) => sessions.create(projectId, agentId)).pipe(
+      Effect.tap((sessionId) =>
+        Effect.logInfo(`Session.create ${projectId}: ${sessionId}`, { agentId }),
+      ),
+      Effect.tapError((error) => Effect.logWarning(`Session.create ${projectId} failed`, error)),
+    ),
   'Session.setAgent': ({ sessionId, agentId }) =>
     Sessions.use((sessions) => sessions.setAgent(sessionId, agentId)),
   'Session.prompt': ({ sessionId, parts, workflow, verificationOf }) =>

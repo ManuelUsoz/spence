@@ -27,8 +27,8 @@ const openPanel = async (page: Page, withHistory = false) => {
   await composer.fill('delegate:busy');
   await expect(page.getByTestId('send')).toBeEnabled();
   await composer.press('Enter');
-  await expect(page.getByTestId('workers-toggle')).toContainText('1');
-  await page.getByTestId('workers-toggle').click();
+  await expect(page.getByTestId('open-workers-count')).toContainText('1');
+  await page.getByTestId('open-workers').click();
   await expect(page.getByTestId('tab-overlay-header')).toBeVisible();
   await expect(workersPanel(page)).toBeVisible();
   await expect(workersPanel(page).getByTestId('worker-row')).toBeVisible();

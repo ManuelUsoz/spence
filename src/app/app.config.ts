@@ -1,6 +1,7 @@
 import { inject, Injector, type ApplicationConfig } from '@angular/core';
 import { provideBrowserGlobalErrorListeners } from '@angular/core';
 import { provideRouter, withHashLocation } from '@angular/router';
+import { provideHlmSidebarConfig } from '@ui/sidebar';
 import { routes } from './app.routes';
 import { AGENT_INSTALL_OFFER } from './core/agent-install-offer';
 import { BROWSER_PANE_VIEW } from './core/browser-pane';
@@ -80,6 +81,7 @@ export const appConfig: ApplicationConfig = {
   providers: [
     provideBrowserGlobalErrorListeners(),
     provideRouter(routes, withHashLocation()),
+    provideHlmSidebarConfig({ defaultOpen: false }),
     { provide: AGENT_INSTALL_OFFER, useValue: AgentInstallOffer },
     { provide: BROWSER_PANE_VIEW, useValue: BrowserPane },
     // Register Panel types with the extensible Panel registry (Session covers local, Worker, and Remote Sessions).

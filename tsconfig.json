@@ -50,6 +50,7 @@
       "@ui/activity-mark": ["./src/app/ui/activity-mark/index.ts"],
       "@ui/command": ["./src/app/ui/command/src/index.ts"],
       "@ui/input-group": ["./src/app/ui/input-group/src/index.ts"],
+      "@ui/collapsible": ["./src/app/ui/collapsible/src/index.ts"],
       "@ui/badge": ["./src/app/ui/badge/src/index.ts"],
       "@ui/table": ["./src/app/ui/table/src/index.ts"],
       "@ui/code-block": ["./src/app/ui/code-block/src/index.ts"],

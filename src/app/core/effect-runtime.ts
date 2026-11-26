@@ -36,8 +36,7 @@ export class EffectRuntime implements OnDestroy {
     effect: Effect.Effect<A, E, DesktopApi>,
     options?: { readonly signal?: AbortSignal },
   ): Promise<Exit.Exit<A, E | DesktopBridgeError>> {
-    const device = this.scope?.device();
-    return this.runtime.runPromiseExit(onDevice(device)(effect), options);
+    return this.runtime.runPromiseExit(onDevice(this.scope?.device())(effect), options);
   }
 
   ngOnDestroy(): void {

@@ -46,6 +46,8 @@ import { EMPTY_WORKSPACE } from '../../../shared/tabs/workspace-layout';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { KEYMAP_PLATFORM, Keymap } from '../../core/keymap';
+import { HlmToaster } from '@ui/sonner';
+import { toast } from '@ui/toast';
 import { SessionToolbar } from '../../core/session-toolbar';
 import { Tabs } from '../../core/tabs';
 import { SessionView } from './session-view';
@@ -576,6 +578,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  toast.dismiss();
   vi.unstubAllGlobals();
   seq = 0;
 });
@@ -698,15 +701,14 @@ describe('SessionView', () => {
     );
   });
 
-  it('shows active/reconnecting Worker counts in the Composer and opens a Workers Panel via workers-toggle', async () => {
+  it('omits the agent counter below the composer when direct Workers are active or reconnecting', async () => {
     const projectId = ProjectId.make('project-1');
-    const childId = SessionId.make('worker-1');
     const fixture = mount(
       serve([
         Stream.make(
           liveWith({
             workers: [
-              { sessionId: childId, title: 'Review', state: 'requiresAction' },
+              { sessionId: SessionId.make('worker-1'), title: 'Review', state: 'requiresAction' },
               { sessionId: SessionId.make('worker-2'), title: 'Search', state: 'unknown' },
             ],
           }),
@@ -716,45 +718,10 @@ describe('SessionView', () => {
     );
     await vi.waitFor(() => {
       fixture.detectChanges();
-      expect(byTestId(fixture, 'workers-toggle').textContent).toContain('1');
+      expect(byTestId(fixture, 'composer-input')).not.toBeNull();
     });
-    byTestId(fixture, 'workers-toggle').click();
-    fixture.detectChanges();
-    expect(TestBed.inject(Tabs).activeTabOverlay()).toMatchObject({
-      kind: 'Workers',
-      sessionId,
-    });
-  });
-
-  it('keeps the Composer control for Workers that are all reconnecting, with no count or spinner', async () => {
-    const projectId = ProjectId.make('project-1');
-    const fixture = mount(
-      serve([
-        Stream.make(
-          liveWith({
-            workers: [
-              { sessionId: SessionId.make('worker-1'), title: 'Review', state: 'unknown' },
-              { sessionId: SessionId.make('worker-2'), title: 'Search', state: 'unknown' },
-            ],
-          }),
-        ).pipe(Stream.concat(Stream.never)),
-      ]),
-      { projectId },
-    );
-    await vi.waitFor(() => {
-      fixture.detectChanges();
-      expect(byTestId(fixture, 'workers-toggle').textContent).toContain('Reconnecting');
-    });
-    const toggle = byTestId(fixture, 'workers-toggle');
-    expect(toggle.textContent).not.toMatch(/[0-9]/);
-    expect(toggle.querySelector('.animate-spin')).toBeNull();
-    expect(toggle.getAttribute('aria-label')).toBe('Workers reconnecting');
-    toggle.click();
-    fixture.detectChanges();
-    expect(TestBed.inject(Tabs).activeTabOverlay()).toMatchObject({
-      kind: 'Workers',
-      sessionId,
-    });
+    expect(root(fixture).querySelector('[data-testid="composer-strip"]')).toBeNull();
+    expect(root(fixture).querySelector('[data-testid="workers-toggle"]')).toBeNull();
   });
 
   it('records started Workers in one quiet line and opens a finished one from its menu', async () => {
@@ -813,43 +780,6 @@ describe('SessionView', () => {
     );
     await vi.waitFor(() => expect(root(fixture).textContent).toContain('Hello'));
     expect(root(fixture).querySelector('[data-testid="workers-line"]')).toBeNull();
-  });
-
-  it('hides workers-toggle when all active direct Workers finish', async () => {
-    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
-    const projectId = ProjectId.make('project-1');
-    const served = serve([Stream.fromQueue(queue)]);
-    served.project = {
-      id: projectId,
-      name: 'project-1',
-      path: '/work/project-1',
-      addedAt: 1,
-      lastUsedAt: 1,
-      settings: {},
-      folderMissing: false,
-    };
-    const fixture = mount(served, { projectId });
-    const worker = {
-      sessionId: SessionId.make('worker-1'),
-      title: 'Research',
-      state: 'running' as const,
-    };
-    Queue.offerAllUnsafe(queue, [liveWith({ workers: [worker] })]);
-    await vi.waitFor(() => {
-      fixture.detectChanges();
-      expect(byTestId(fixture, 'workers-toggle').textContent).toContain('1');
-    });
-    byTestId(fixture, 'workers-toggle').click();
-    fixture.detectChanges();
-    expect(TestBed.inject(Tabs).activeTabOverlay()).toMatchObject({
-      kind: 'Workers',
-      sessionId,
-    });
-    Queue.offerAllUnsafe(queue, [liveWith({ workers: [{ ...worker, state: 'idle' }] })]);
-    await vi.waitFor(() => {
-      fixture.detectChanges();
-      expect(root(fixture).querySelector('[data-testid="workers-toggle"]')).toBeNull();
-    });
   });
 
   it('shows the user Message and the Agent reply as it streams', async () => {
@@ -1326,6 +1256,102 @@ describe('SessionView', () => {
     await vi.waitFor(() => expect(served.prompts).toEqual([[{ _tag: 'text', text: '/unknown' }]]));
   });
 
+  it('stops searching after space or command pick, closes on Tab/Enter/Escape when unmatched, and stays closed while typing the token', async () => {
+    const served = serve([
+      Stream.make(
+        liveWith({
+          commands: [agentCommand('review', 'Review the changes')],
+        }),
+      ).pipe(Stream.concat(Stream.never)),
+    ]);
+    const fixture = mount(served);
+    await vi.waitFor(() => expect(byTestId(fixture, 'composer-input')).not.toBeNull());
+
+    // Picking /review then typing arguments must not re-open the command search.
+    type(fixture, '/rev');
+    await vi.waitFor(() => expect(byTestId(fixture, 'commands-list')).not.toBeNull());
+    press(fixture, 'Tab');
+    expect(composer(fixture).value).toBe('/review ');
+    expect(root(fixture).querySelector('[data-testid="commands-list"]')).toBeNull();
+
+    type(fixture, '/review src/app.ts');
+    expect(root(fixture).querySelector('[data-testid="commands-list"]')).toBeNull();
+
+    // Unmatched command + Tab dismisses the popup and stays dismissed on further typing in that token.
+    type(fixture, '/open-branch-development');
+    await vi.waitFor(() => expect(byTestId(fixture, 'commands-list')).not.toBeNull());
+    press(fixture, 'Tab');
+    expect(root(fixture).querySelector('[data-testid="commands-list"]')).toBeNull();
+
+    type(fixture, '/open-branch-development-v2');
+    expect(root(fixture).querySelector('[data-testid="commands-list"]')).toBeNull();
+
+    // Shift+Enter on an unmatched command also dismisses the popup without sending.
+    type(fixture, '/open-other');
+    await vi.waitFor(() => expect(byTestId(fixture, 'commands-list')).not.toBeNull());
+    press(fixture, 'Enter', true);
+    expect(root(fixture).querySelector('[data-testid="commands-list"]')).toBeNull();
+    expect(served.prompts).toEqual([]);
+  });
+
+  it('searches and inserts commands in the middle of text and highlights recognized commands', async () => {
+    const served = serve([
+      Stream.make(
+        liveWith({
+          commands: [agentCommand('review', 'Review the changes')],
+        }),
+      ).pipe(Stream.concat(Stream.never)),
+    ]);
+    const fixture = mount(served);
+    await vi.waitFor(() => expect(byTestId(fixture, 'composer-input')).not.toBeNull());
+
+    const input = composer(fixture);
+    input.value = 'Please /rev soon';
+    input.setSelectionRange(11, 11);
+    input.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+
+    await vi.waitFor(() => expect(byTestId(fixture, 'commands-list')).not.toBeNull());
+    expect(byTestId(fixture, 'command-Claude:review')).not.toBeNull();
+    expect(byTestId(fixture, 'command-Claude:review').querySelector('.text-working')).toBeNull();
+
+    press(fixture, 'Tab');
+    expect(input.value).toBe('Please /review soon');
+    expect(input.selectionStart).toBe(15);
+    expect(root(fixture).querySelector('[data-testid="commands-list"]')).toBeNull();
+
+    const tokens = [
+      ...root(fixture).querySelectorAll('[data-testid="composer-command-token"]'),
+    ].map((el) => el.textContent);
+    expect(tokens).toEqual(['/review']);
+    expect(byTestId(fixture, 'composer-command-token').classList.contains('text-working')).toBe(
+      true,
+    );
+  });
+
+  it('opens the Commands list downward when the Composer is centered and upward once the Session has started at the bottom', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerUnsafe(queue, live);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="greeting"]:not([inert])')).not.toBeNull();
+    });
+
+    type(fixture, '/');
+    await vi.waitFor(() => expect(byTestId(fixture, 'commands-list')).not.toBeNull());
+    expect(byTestId(fixture, 'commands-list').getAttribute('data-placement')).toBe('down');
+    expect(byTestId(fixture, 'commands-list').classList.contains('top-full')).toBe(true);
+
+    Queue.offerAllUnsafe(queue, [started(), userMessage('Hello'), ended()]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'commands-list').getAttribute('data-placement')).toBe('up');
+    });
+    expect(byTestId(fixture, 'commands-list').classList.contains('bottom-full')).toBe(true);
+  });
+
   it('arms Coordinator without sending the command to the Agent', async () => {
     const served = serve([Stream.make(liveWith()).pipe(Stream.concat(Stream.never))]);
     const fixture = mount(served);
@@ -1575,6 +1601,41 @@ describe('SessionView', () => {
     const dividers = root(fixture).querySelectorAll('[data-testid="context-divider"]');
     expect(dividers.length).toBe(1);
     expect(dividers[0]?.textContent?.trim()).toContain('Context cleared');
+    expect(byTestId(fixture, 'fresh-boundary-space').textContent).toContain('Start fresh');
+  });
+
+  it('adds start-fresh space after Compaction or Clear and clears it once a new message arrives', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const fixture = mount(serve([Stream.fromQueue(queue)]));
+
+    Queue.offerAllUnsafe(queue, [
+      live,
+      started(),
+      userMessage('Old prompt'),
+      agentMessage('Old reply'),
+      ended(),
+      compaction(),
+    ]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'fresh-boundary-space').textContent).toContain('Ready to continue');
+    });
+
+    const nextTurn = TurnId.make('turn-2');
+    Queue.offerAllUnsafe(queue, [
+      event({ _tag: 'TurnStarted', turnId: nextTurn, permissionMode: 'auto' }),
+      event({
+        _tag: 'Message',
+        id: MessageId.make('user-2'),
+        turnId: nextTurn,
+        role: 'user',
+        parts: [{ _tag: 'text', text: 'New prompt' }],
+      }),
+    ]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="fresh-boundary-space"]')).toBeNull();
+    });
   });
 
   it('shows the Ticker while a Turn runs and the Receipt when it ends', async () => {
@@ -1583,7 +1644,7 @@ describe('SessionView', () => {
 
     Queue.offerAllUnsafe(queue, [live, started(), userMessage('Hi'), plan(), step()]);
     await vi.waitFor(() => expect(ticker(fixture)).not.toBeNull());
-    expect(ticker(fixture)?.querySelectorAll('ng-icon')).toHaveLength(2);
+    expect(ticker(fixture)?.querySelectorAll('ng-icon')).toHaveLength(3);
     expect(ticker(fixture)?.getAttribute('title')).toContain('Reading');
     expect(receipt(fixture)).toBeNull();
     expect(dock(fixture)?.textContent).toContain('Plan 0 of 1');
@@ -1738,11 +1799,12 @@ describe('SessionView', () => {
 
     // Stream live StepDelta chunks while Turn is running.
     Queue.offerAllUnsafe(queue, [event({ _tag: 'StepDelta', id: execId, output: 'first-line\n' })]);
-    await vi.waitFor(() =>
+    await vi.waitFor(() => {
+      fixture.detectChanges();
       expect(tick.querySelector('[data-testid="ticker-step-output"]')?.textContent).toContain(
         'first-line',
-      ),
-    );
+      );
+    });
     expect(tick.querySelector('[data-testid="ticker-step-truncated"]')).toBeNull();
 
     Queue.offerAllUnsafe(queue, [
@@ -1759,11 +1821,12 @@ describe('SessionView', () => {
         endedAt: 2_500,
       }),
     ]);
-    await vi.waitFor(() =>
+    await vi.waitFor(() => {
+      fixture.detectChanges();
       expect(tick.querySelector('[data-testid="ticker-step-output"]')?.textContent).toContain(
         'second-line',
-      ),
-    );
+      );
+    });
     expect(tick.querySelector('[data-testid="ticker-step-truncated"]')).not.toBeNull();
     expect(tick.querySelector('[data-testid="ticker-step-exit-code"]')?.textContent).toContain('1');
   });
@@ -3780,12 +3843,18 @@ describe('SessionView', () => {
         fixture.nativeElement.querySelector('[data-testid="model-picker"]')?.textContent,
       ).toContain('Antigravity');
     });
+    expect(
+      byTestId(fixture, 'composer-card').querySelector('[data-testid="models-limitation"]'),
+    ).toBeNull();
     openPicker(fixture);
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(menuItem('models-unavailable')).not.toBeNull();
     });
-    expect(byTestId(fixture, 'models-limitation').textContent).toContain('Third-party models');
+    expect(
+      byTestId(fixture, 'agent-menu').querySelector('[data-testid="models-limitation"]')
+        ?.textContent,
+    ).toContain('Third-party models');
     expect(menuItem('effort-unavailable')).not.toBeNull();
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     fixture.detectChanges();
@@ -3806,6 +3875,82 @@ describe('SessionView', () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(served.optionChanges).toEqual([]);
+  });
+
+  it('shows modelsLimitation as a dismissible toast once per session without rendering it in the composer', async () => {
+    @Component({
+      imports: [SessionView, HlmToaster],
+      template: `
+        <app-session-view [sessionId]="sessionId" />
+        <hlm-toaster theme="light" />
+      `,
+    })
+    class HostWithToaster {
+      readonly sessionId = sessionId;
+    }
+
+    const served = serve([
+      Stream.make(
+        liveWith({
+          agentId: AgentId.make('antigravity'),
+          agentName: 'Antigravity',
+          modelsLimitation: 'Third-party models in Antigravity are unavailable for Spence clients.',
+        }),
+      ).pipe(Stream.concat(Stream.never)),
+      Stream.make(
+        liveWith({
+          agentId: AgentId.make('antigravity'),
+          agentName: 'Antigravity',
+          modelsLimitation: 'Third-party models in Antigravity are unavailable for Spence clients.',
+        }),
+      ).pipe(Stream.concat(Stream.never)),
+    ]);
+
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers(served)) },
+        { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
+      ],
+    });
+    const fixture = TestBed.createComponent(HostWithToaster);
+    fixture.detectChanges();
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      const notice = document.querySelector<HTMLElement>('[data-testid="models-limitation-toast"]');
+      expect(notice).not.toBeNull();
+      expect(notice?.textContent).toContain(
+        'Third-party models in Antigravity are unavailable for Spence clients.',
+      );
+    });
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="models-limitation"]'),
+    ).toBeNull();
+
+    const closeBtn = document.querySelector<HTMLButtonElement>(
+      '[data-testid="models-limitation-toast"] [data-close-button]',
+    );
+    expect(closeBtn).not.toBeNull();
+    closeBtn?.click();
+    fixture.detectChanges();
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      const active = document.querySelector<HTMLElement>(
+        '[data-testid="models-limitation-toast"]:not([data-removed="true"])',
+      );
+      expect(active).toBeNull();
+    });
+
+    // Remounting SessionView for the same session must not show the toast again.
+    fixture.destroy();
+    const remounted = TestBed.createComponent(HostWithToaster);
+    remounted.detectChanges();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    remounted.detectChanges();
+    expect(
+      document.querySelector('[data-testid="models-limitation-toast"]:not([data-removed="true"])'),
+    ).toBeNull();
   });
 
   describe('Context usage ring', () => {

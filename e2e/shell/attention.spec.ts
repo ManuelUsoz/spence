@@ -57,11 +57,7 @@ test('Attention marks appear in Needs you and the other-project switcher dot', a
   await expect(rows.getByTestId('status-working')).toHaveCount(1);
 
   await spence.shot('attention-marks', {
-    mask: [
-      page.getByTestId('project-path'),
-      page.getByTestId('session-meta'),
-      page.getByTestId('ticker'),
-    ],
+    mask: [page.getByTestId('project-path'), page.getByTestId('ticker')],
   });
 
   // Add a second Project and switch to it: the first Project still has Attention.

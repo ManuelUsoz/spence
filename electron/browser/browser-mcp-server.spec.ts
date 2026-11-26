@@ -66,7 +66,7 @@ const withBrowserMcp = <A, E, R>(
   }).pipe(Effect.scoped);
 
 describe('browser MCP server', () => {
-  it.live('initializes, lists all 19 tools, enforces Bearer auth, and revokes cleanly', () =>
+  it.live('initializes, lists all 20 tools, enforces Bearer auth, and revokes cleanly', () =>
     withBrowserMcp(({ mcp, runEffect }) =>
       Effect.gen(function* () {
         const registered = mcp.register(
@@ -74,6 +74,7 @@ describe('browser MCP server', () => {
             sessionId: s1,
             active: () => true,
             runEffect,
+            feedback: () => Effect.die('unused'),
           }),
         );
 
@@ -113,6 +114,7 @@ describe('browser MCP server', () => {
           'wait_for',
           'eval',
           'handoff',
+          'report_feedback',
         ]);
 
         // Rejects wrong Bearer token and non-POST requests before reading body.
@@ -149,6 +151,7 @@ describe('browser MCP server', () => {
               sessionId: s1,
               active: () => turnActive,
               runEffect,
+              feedback: () => Effect.die('unused'),
             }),
           );
 
@@ -192,6 +195,7 @@ describe('browser MCP server', () => {
             waitFor: () => Promise.resolve({ content: [{ type: 'text', text: '{}' }] }),
             eval: () => Promise.resolve({ content: [{ type: 'text', text: '{}' }] }),
             handoff: () => Promise.resolve({ content: [{ type: 'text', text: '{}' }] }),
+            reportFeedback: () => Promise.resolve({ content: [{ type: 'text', text: '{}' }] }),
           });
           const pendingFiber = yield* callTool(slowReg, 'pages', { action: 'list' }).pipe(
             Effect.forkChild,
@@ -217,6 +221,7 @@ describe('browser MCP server', () => {
               sessionId: s1,
               active: () => true,
               runEffect,
+              feedback: () => Effect.die('unused'),
             }),
           );
           const reg2 = mcp.register(
@@ -224,6 +229,7 @@ describe('browser MCP server', () => {
               sessionId: s2,
               active: () => true,
               runEffect,
+              feedback: () => Effect.die('unused'),
             }),
           );
 
@@ -394,6 +400,7 @@ describe('browser MCP server', () => {
             sessionId: s1,
             active: () => true,
             runEffect,
+            feedback: () => Effect.die('unused'),
           }),
         );
         const nav = yield* callTool(reg, 'navigate', { url: 'http://localhost:3000/login' });
@@ -474,6 +481,7 @@ describe('browser MCP server', () => {
             sessionId: s1,
             active: () => true,
             runEffect,
+            feedback: () => Effect.die('unused'),
           }),
         );
 

@@ -1,5 +1,12 @@
 import { NgTemplateOutlet } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, input, linkedSignal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  input,
+  linkedSignal,
+  untracked,
+} from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { HlmButtonImports } from '@ui/button';
 import { DiffPatch, type DiffHunk } from '@ui/diff';
@@ -36,128 +43,139 @@ let nextDrawerId = 0;
   host: { class: 'block', 'data-testid': 'ticker', '[attr.title]': 'accessibleName()' },
   template: `
     <div hlmTrace>
-      <button
-        type="button"
-        hlmTraceLine
-        class="w-full max-w-full cursor-pointer text-left"
-        [attr.aria-expanded]="expanded()"
-        [attr.aria-controls]="expanded() ? drawerId : null"
-        (click)="toggleExpanded()"
-        data-testid="ticker-toggle"
+      <div
+        hlmTraceCollapsible
+        [expanded]="expanded()"
+        [disabled]="work().endedAt !== null"
+        (expandedChange)="onExpandedChange($event)"
       >
-        <ng-icon name="lucideLoaderCircle" class="size-4 shrink-0 animate-spin" />
-        @if (icon(); as iconName) {
-          <ng-icon [name]="iconName" class="size-4 shrink-0" />
-        }
-        @if (thinking(); as tail) {
-          <span class="min-w-0 flex-1 truncate italic" [attr.aria-label]="accessibleName()">{{
-            tail
-          }}</span>
-        } @else {
-          <span
-            class="font-mono text-xs min-w-0 flex-1 truncate"
-            [attr.aria-label]="accessibleName()"
-            >{{ target() }}</span
-          >
-        }
-        <span class="tabular-nums shrink-0">{{ elapsed() }}</span>
-      </button>
-
-      @if (expanded()) {
-        <div
-          [id]="drawerId"
-          class="border-border/60 mt-1.5 ml-[calc(--spacing(1.75)-1px)] flex flex-col gap-2 border-l pl-3.75 text-xs"
-          data-testid="ticker-drawer"
+        <button
+          type="button"
+          hlmTraceCollapsibleTrigger
+          hlmTraceLine
+          class="w-full max-w-full cursor-pointer text-left"
+          data-testid="ticker-toggle"
         >
-          @if (work().steps.length === 0) {
-            <p class="text-muted-foreground text-xs" data-testid="ticker-empty" i18n>
-              No steps yet.
-            </p>
+          <ng-icon name="lucideLoaderCircle" class="size-4 shrink-0 animate-spin" />
+          @if (icon(); as iconName) {
+            <ng-icon [name]="iconName" class="size-4 shrink-0" />
+          }
+          @if (thinking(); as tail) {
+            <span class="min-w-0 flex-1 truncate italic" [attr.aria-label]="accessibleName()">{{
+              tail
+            }}</span>
+          } @else if (target(); as text) {
+            <span
+              class="min-w-0 flex-1 truncate"
+              [class.font-mono]="isTargetMachine()"
+              [class.text-xs]="isTargetMachine()"
+              [attr.aria-label]="accessibleName()"
+              >{{ text }}</span
+            >
           } @else {
-            <div class="flex flex-col gap-1" data-testid="ticker-steps">
-              @for (step of work().steps; track step.id) {
-                <div class="flex min-w-0 flex-col">
-                  @if (canExpandStep(step)) {
-                    <button
-                      type="button"
-                      hlmTraceLine
-                      class="w-full text-left"
-                      [status]="stepStatus(step.status)"
-                      [attr.data-step-status]="step.status"
-                      [attr.aria-expanded]="isStepExpanded(step.id)"
-                      (click)="toggleStep(step.id)"
-                      data-testid="ticker-step"
-                    >
-                      <ng-container
-                        *ngTemplateOutlet="stepRowContent; context: { $implicit: step }"
-                      />
-                    </button>
-                  } @else {
-                    <div
-                      hlmTraceLine
-                      class="w-full"
-                      [status]="stepStatus(step.status)"
-                      [attr.data-step-status]="step.status"
-                      data-testid="ticker-step"
-                    >
-                      <ng-container
-                        *ngTemplateOutlet="stepRowContent; context: { $implicit: step }"
-                      />
-                    </div>
-                  }
-                  @if (canExpandStep(step) && isStepExpanded(step.id)) {
-                    <app-step-details [step]="step" prefix="ticker-step" [live]="true" />
+            <span class="min-w-0 flex-1 truncate" [attr.aria-label]="accessibleName()" i18n>
+              Starting…
+            </span>
+          }
+          <span class="tabular-nums shrink-0">{{ elapsed() }}</span>
+        </button>
+
+        @if (expanded()) {
+          <hlm-trace-collapsible-content
+            [id]="drawerId"
+            contentInnerClasses="flex flex-col gap-2 text-xs"
+            data-testid="ticker-drawer"
+          >
+            @if (work().steps.length === 0) {
+              <p class="text-muted-foreground text-xs" data-testid="ticker-empty" i18n>
+                No steps yet.
+              </p>
+            } @else {
+              <div class="flex flex-col gap-1" data-testid="ticker-steps">
+                @for (step of work().steps; track step.id) {
+                  <div class="flex min-w-0 flex-col">
+                    @if (canExpandStep(step)) {
+                      <button
+                        type="button"
+                        hlmTraceLine
+                        class="w-full text-left"
+                        [status]="stepStatus(step.status)"
+                        [attr.data-step-status]="step.status"
+                        [attr.aria-expanded]="isStepExpanded(step.id)"
+                        (click)="toggleStep(step.id)"
+                        data-testid="ticker-step"
+                      >
+                        <ng-container
+                          *ngTemplateOutlet="stepRowContent; context: { $implicit: step }"
+                        />
+                      </button>
+                    } @else {
+                      <div
+                        hlmTraceLine
+                        class="w-full"
+                        [status]="stepStatus(step.status)"
+                        [attr.data-step-status]="step.status"
+                        data-testid="ticker-step"
+                      >
+                        <ng-container
+                          *ngTemplateOutlet="stepRowContent; context: { $implicit: step }"
+                        />
+                      </div>
+                    }
+                    @if (canExpandStep(step) && isStepExpanded(step.id)) {
+                      <app-step-details [step]="step" prefix="ticker-step" [live]="true" />
+                    }
+                  </div>
+                }
+              </div>
+            }
+            @if (files().length > 0) {
+              <div class="flex flex-col gap-1.5 pt-1">
+                <div class="flex flex-wrap items-center gap-1.5" data-testid="ticker-touched-files">
+                  <span class="text-muted-foreground shrink-0 text-[11px]" i18n>Files touched</span>
+                  @for (file of files(); track file.path) {
+                    @if (file.diff !== null) {
+                      <button
+                        type="button"
+                        hlmBtn
+                        variant="outline"
+                        size="sm"
+                        class="h-6 px-2 font-mono text-xs font-normal"
+                        [class.ring-primary]="selectedFile() === file.path"
+                        [attr.aria-expanded]="selectedFile() === file.path"
+                        [attr.title]="file.path"
+                        (click)="toggleFile(file.path)"
+                        data-testid="ticker-touched-file"
+                      >
+                        {{ file.name }}
+                        @if (file.stats; as stats) {
+                          <span class="text-muted-foreground tabular-nums">
+                            +{{ stats.added }} −{{ stats.removed }}
+                          </span>
+                        }
+                      </button>
+                    } @else {
+                      <span
+                        class="bg-tray border-border/60 text-muted-foreground inline-flex h-6 items-center rounded-md border px-2 font-mono text-xs"
+                        [attr.title]="file.path"
+                        data-testid="ticker-touched-file"
+                        >{{ file.name }}</span
+                      >
+                    }
                   }
                 </div>
-              }
-            </div>
-          }
-          @if (files().length > 0) {
-            <div class="flex flex-col gap-1.5 pt-1">
-              <div class="flex flex-wrap items-center gap-1.5" data-testid="ticker-touched-files">
-                <span class="text-muted-foreground shrink-0 text-[11px]" i18n>Files touched</span>
-                @for (file of files(); track file.path) {
-                  @if (file.diff !== null) {
-                    <button
-                      type="button"
-                      hlmBtn
-                      variant="outline"
-                      size="sm"
-                      class="h-6 px-2 font-mono text-xs font-normal"
-                      [class.ring-primary]="selectedFile() === file.path"
-                      [attr.aria-expanded]="selectedFile() === file.path"
-                      [attr.title]="file.path"
-                      (click)="toggleFile(file.path)"
-                      data-testid="ticker-touched-file"
-                    >
-                      {{ file.name }}
-                      @if (file.stats; as stats) {
-                        <span class="text-muted-foreground tabular-nums">
-                          +{{ stats.added }} −{{ stats.removed }}
-                        </span>
-                      }
-                    </button>
-                  } @else {
-                    <span
-                      class="bg-tray border-border/60 text-muted-foreground inline-flex h-6 items-center rounded-md border px-2 font-mono text-xs"
-                      [attr.title]="file.path"
-                      data-testid="ticker-touched-file"
-                      >{{ file.name }}</span
-                    >
+                @if (selectedFile(); as path) {
+                  @if (diffFor(path); as hunks) {
+                    <div class="max-h-60 overflow-auto" data-testid="ticker-file-diff">
+                      <app-diff-patch [hunks]="hunks" />
+                    </div>
                   }
                 }
               </div>
-              @if (selectedFile(); as path) {
-                @if (diffFor(path); as hunks) {
-                  <div class="max-h-60 overflow-auto" data-testid="ticker-file-diff">
-                    <app-diff-patch [hunks]="hunks" />
-                  </div>
-                }
-              }
-            </div>
-          }
-        </div>
-      }
+            }
+          </hlm-trace-collapsible-content>
+        }
+      </div>
     </div>
 
     <ng-template #stepRowContent let-step>
@@ -201,7 +219,7 @@ export class Ticker {
 
   protected readonly expanded = linkedSignal<string | null, boolean>({
     source: this.activeTurnKey,
-    computation: () => false,
+    computation: (key) => key !== null && untracked(() => this.work().workflow !== undefined),
   });
 
   private readonly expandedSteps = linkedSignal<string | null, ReadonlySet<StepId>>({
@@ -232,6 +250,13 @@ export class Ticker {
     return '';
   });
 
+  protected readonly isTargetMachine = computed(() => {
+    const work = this.work();
+    if (work.activity !== 'step') return false;
+    const step = work.steps.at(-1);
+    return step !== undefined && isMachineStepTarget(step);
+  });
+
   protected readonly icon = computed(() => {
     const work = this.work();
     if (work.activity === 'step') {
@@ -250,9 +275,9 @@ export class Ticker {
     return activityLabel(work.activity);
   });
 
-  protected toggleExpanded(): void {
+  protected onExpandedChange(next: boolean): void {
     if (this.work().endedAt !== null) return;
-    this.expanded.update((current) => !current);
+    this.expanded.set(next);
   }
 
   protected canExpandStep(step: Step): boolean {

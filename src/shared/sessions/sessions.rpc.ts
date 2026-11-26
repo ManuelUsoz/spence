@@ -788,6 +788,8 @@ export const SessionWorkerSummary = Schema.Struct({
   state: WorkerInfo.fields.state,
   activity: Schema.optionalKey(LiveActivity),
   blockedTarget: Schema.optionalKey(Schema.String),
+  /** The purpose a Spence workflow gave this Worker ("Worker", "Verifier", ...); absent for plain Workers. */
+  role: Schema.optionalKey(Schema.String),
 }).annotate({ identifier: 'SessionWorkerSummary' });
 export type SessionWorkerSummary = typeof SessionWorkerSummary.Type;
 
@@ -804,6 +806,8 @@ export const SessionSummary = Schema.Struct({
   workerCount: Schema.optionalKey(Schema.Number),
   /** Worker descendants with their immediate Parent, in sidebar order. */
   workers: Schema.optionalKey(Schema.Array(SessionWorkerSummary)),
+  /** The workflow this Session orchestrates (its latest run), so its title is never what identifies it. */
+  workflow: Schema.optionalKey(Schema.Literals(['coordinate', 'divide-and-conquer'])),
 }).annotate({ identifier: 'SessionSummary' });
 export type SessionSummary = typeof SessionSummary.Type;
 

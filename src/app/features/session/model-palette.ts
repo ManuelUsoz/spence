@@ -1,3 +1,4 @@
+import { DOCUMENT } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -17,6 +18,7 @@ import { HlmKbdImports } from '@ui/kbd';
 import { HlmTooltipImports } from '@ui/tooltip';
 import type { Effort, Model } from '../../../shared/agents/agents.rpc';
 import { Keymap } from '../../core/keymap';
+import { choosePopoverPlacement, type PopoverPlacement } from './composer-commands';
 
 export interface PaletteAgent {
   readonly id: string;
@@ -179,7 +181,8 @@ export function parseModelPaletteQuery(raw: string): {
           role="dialog"
           data-testid="agent-menu"
           [attr.aria-label]="pickerLabel()"
-          class="bg-popover text-popover-foreground ring-foreground/10 absolute bottom-full left-0 z-40 mb-2 flex w-[28rem] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl shadow-lg ring-1"
+          [attr.data-placement]="menuPlacement()"
+          [class]="menuClass()"
         >
           <!-- Search input + parsed effort indicator -->
           <div class="border-border/60 flex items-center gap-2 border-b px-3 py-2.5">
@@ -230,12 +233,13 @@ export function parseModelPaletteQuery(raw: string): {
           @if (modelsLimitation(); as limitation) {
             <p
               class="border-border/60 bg-muted/50 text-muted-foreground border-b px-3 py-1.5 text-xs"
+              data-testid="models-limitation"
             >
               {{ limitation }}
             </p>
           }
 
-          <div class="max-h-80 overflow-y-auto p-1.5">
+          <div class="max-h-[min(20rem,45vh)] overflow-y-auto p-1.5">
             <!-- Active Agent's Models -->
             <div class="flex items-center justify-between gap-2 px-2 pt-1.5 pb-1">
               <span class="text-muted-foreground flex items-center gap-1.5 text-[11px] font-medium">
@@ -497,6 +501,7 @@ export function parseModelPaletteQuery(raw: string): {
 })
 export class ModelPalette {
   protected readonly keymap = inject(Keymap);
+  private readonly document = inject(DOCUMENT);
   private readonly hostRef = inject(ElementRef<HTMLElement>);
   private readonly destroyRef = inject(DestroyRef);
 
@@ -516,12 +521,19 @@ export class ModelPalette {
   readonly effort = input<EffortOptionState | undefined>(undefined);
   readonly controlsDisabled = input.required<boolean>();
   readonly pickerLabel = input.required<string>();
+  readonly preferUpward = input(true);
 
   readonly agentSelect = output<string>();
   readonly modelSelect = output<string>();
   readonly effortSelect = output<Effort>();
 
   protected readonly open = signal(false);
+  protected readonly menuPlacement = signal<PopoverPlacement>('up');
+  protected readonly menuClass = computed(() =>
+    this.menuPlacement() === 'up'
+      ? 'bg-popover text-popover-foreground ring-foreground/10 absolute bottom-full left-0 z-40 mb-2 flex w-[28rem] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl shadow-lg ring-1'
+      : 'bg-popover text-popover-foreground ring-foreground/10 absolute top-full left-0 z-40 mt-2 flex w-[28rem] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl shadow-lg ring-1',
+  );
   protected readonly query = signal('');
   protected readonly highlightedModelId = signal<string | null>(null);
   protected readonly highlightedAgentId = signal<string | null>(null);
@@ -619,13 +631,21 @@ export class ModelPalette {
 
   protected toggle(): void {
     const next = !this.open();
-    this.open.set(next);
     if (next) {
+      this.menuPlacement.set(
+        choosePopoverPlacement(
+          this.triggerBtn()?.nativeElement,
+          this.document.defaultView?.innerHeight ?? 0,
+          this.preferUpward() ? 'up' : 'down',
+          360,
+        ),
+      );
       this.query.set('');
       this.hoveredEffort.set(null);
       this.highlightedModelId.set(this.model()?.value ?? null);
       this.highlightedAgentId.set(null);
     }
+    this.open.set(next);
   }
 
   protected onSearch(value: string): void {

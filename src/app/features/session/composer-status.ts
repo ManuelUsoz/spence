@@ -112,6 +112,7 @@ type Mode = 'current' | 'new';
             title="Where this Session works"
             i18n-title
             [hlmDropdownMenuTrigger]="modeMenu"
+            [side]="preferUpward() ? 'top' : 'bottom'"
           >
             <ng-container *ngTemplateOutlet="branchIcon" />
             @if (mode() === 'new') {
@@ -334,6 +335,8 @@ export class ComposerStatus {
   readonly sessionId = input.required<SessionId>();
   /** Reads the folder again when a running Turn ends, since that is when its edits are done. */
   readonly running = input<boolean>(false);
+  /** Whether the Composer is pinned to the bottom of the screen so the branch menu should prefer opening upward. */
+  readonly preferUpward = input<boolean>(false);
   readonly openChanges = output<void>();
 
   private readonly runtime = inject(EffectRuntime);
