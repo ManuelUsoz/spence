@@ -111,3 +111,68 @@ test('the gear opens Settings and the permanent rail stays unobstructed across s
     .toBe(-206);
   await expect(rail).toBeVisible();
 });
+
+test('rail Project mark shows active initial, tooltip, quiet no-Project fallback, and expands sidebar to open Switch Project', async ({
+  spence,
+}) => {
+  const page = spence.page;
+  const mark = page.getByTestId('rail-brand');
+
+  const markBox = await mark.boundingBox();
+  expect(markBox).not.toBeNull();
+  expect(markBox!.width).toBe(30);
+  expect(markBox!.height).toBe(30);
+  await expect(mark).toHaveText('S');
+
+  // Quiet fallback tooltip & no-op click when no Project exists yet.
+  await mark.hover();
+  await expect(page.getByRole('tooltip')).toContainText(
+    spence.t({ en: 'Spence — No Project yet', es: 'Spence — Aún no hay Proyecto' }),
+  );
+  await mark.click();
+  await expect(page.getByTestId('project-menu')).toBeHidden();
+  await expect(page.locator('hlm-sidebar')).toHaveAttribute('data-state', 'collapsed');
+  await page.mouse.move(400, 400);
+
+  // Expand sidebar and add demo-project -> initial updates to 'D' with Project tooltip.
+  await page.locator('[data-slot="sidebar-trigger"]').click();
+  await page.getByTestId('add-project').click();
+  await expect(mark).toHaveText('D');
+  await mark.hover();
+  await expect(page.getByRole('tooltip')).toContainText(
+    spence.t({
+      en: 'demo-project — Switch Project',
+      es: 'demo-project — Cambiar de Proyecto',
+    }),
+  );
+  await page.mouse.move(400, 400);
+
+  // Add second-project -> initial updates to 'S'.
+  await spence.pickNext('second-project');
+  await page.getByTestId('current-project').click();
+  await page
+    .getByRole('menuitem', { name: spence.t({ en: 'Add Project', es: 'Añadir Proyecto' }) })
+    .click();
+  await expect(mark).toHaveText('S');
+
+  // Collapse the Sessions sidebar, then click the rail Project mark to expand + open Switch Project.
+  await page.keyboard.press('ControlOrMeta+b');
+  await expect
+    .poll(async () => (await page.locator('[data-slot="sidebar-container"]').boundingBox())?.x)
+    .toBe(-206);
+
+  await mark.click();
+  await expect(page.locator('hlm-sidebar')).toHaveAttribute('data-state', 'expanded');
+  await expect
+    .poll(async () => (await page.locator('[data-slot="sidebar-container"]').boundingBox())?.x)
+    .toBe(50);
+  await expect(page.getByTestId('project-menu')).toBeVisible();
+  await expect(page.getByTestId('project-option-name')).toHaveText([
+    'second-project',
+    'demo-project',
+  ]);
+
+  // Switch via the opened menu and verify the rail initial updates back to 'D'.
+  await page.getByTestId('project-option').filter({ hasText: 'demo-project' }).click();
+  await expect(mark).toHaveText('D');
+});

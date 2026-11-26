@@ -21,7 +21,7 @@ import {
 } from '../../../shared/browser/browser.rpc';
 import { toast } from '@ui/toast';
 import { HlmSidebarService, provideHlmSidebarConfig } from '@ui/sidebar';
-import { DevicesRpcs, DeviceId } from '../../../shared/devices/devices.rpc';
+import { DEVICE_SCOPE_HEADER, DevicesRpcs, DeviceId } from '../../../shared/devices/devices.rpc';
 import { NotificationsRpcs } from '../../../shared/notifications/notifications.rpc';
 import { ProjectId, ProjectsRpcs, type Project } from '../../../shared/projects/projects.rpc';
 import {
@@ -62,6 +62,7 @@ import { PANEL_DEFINITION, type PanelDefinition } from '../../core/panel-registr
 import { Tabs } from '../../core/tabs';
 import { ChangesPage } from '../changes/changes-page';
 import { WorkersPanelHost } from '../session/workers-panel';
+import { ProjectsState } from './projects-state';
 import { SessionsState } from './sessions-state';
 import { SettingsState } from './settings-state';
 import { Shell } from './shell';
@@ -242,6 +243,7 @@ const makeRestored = (
 
 interface DesktopFixtureOptions {
   readonly projects?: ReadonlyArray<Project>;
+  readonly remoteProjects?: ReadonlyArray<Project>;
   readonly sessionsByProject?: Readonly<Record<string, ReadonlyArray<SessionSummary>>>;
   readonly restored?: RestoredWorkspace;
   readonly extraPanels?: ReadonlyArray<PanelDefinition>;
@@ -388,9 +390,19 @@ const desktopLayer = (options: DesktopFixtureOptions = {}) => {
             : Effect.die('unused'),
       }),
       ProjectsRpcs.toLayer({
-        'Projects.list': () => Effect.succeed([...projects]),
+        'Projects.list': (_payload, { headers }) =>
+          Effect.succeed(
+            headers[DEVICE_SCOPE_HEADER] === dRemote
+              ? [...(options.remoteProjects ?? projects)]
+              : [...projects],
+          ),
         'Projects.add': () => Effect.die('unused'),
-        'Projects.rename': () => Effect.die('unused'),
+        'Projects.rename': ({ id, name }) => {
+          const target = projects.find((p) => p.id === id);
+          return target === undefined
+            ? Effect.die('unknown project')
+            : Effect.succeed({ ...target, name });
+        },
         'Projects.remove': () => Effect.die('unused'),
         'Projects.locate': () => Effect.die('unused'),
         'Projects.addFolder': () => Effect.die('unused'),
@@ -1338,6 +1350,103 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
     expect(settings.open()).toBe(false);
     expect(host.querySelector('[data-testid="tab-strip"]')).not.toBeNull();
     expect(sessionsBtn.getAttribute('aria-current')).toBe('page');
+  });
+
+  it('shows neutral S fallback on the rail mark when no Project exists and ignores clicks quietly', async () => {
+    document.cookie = 'sidebar_state=; max-age=0; path=/';
+    TestBed.configureTestingModule({
+      providers: [provideHlmSidebarConfig({ defaultOpen: false })],
+    });
+    const { fixture } = await mountShell('other', { projects: [] });
+    const host = fixture.nativeElement as HTMLElement;
+    const mark = host.querySelector<HTMLButtonElement>('[data-testid="rail-brand"]')!;
+    const sidebarService = TestBed.inject(HlmSidebarService);
+
+    expect(mark.textContent?.trim()).toBe('S');
+    expect(mark.getAttribute('aria-label')).toContain('Spence');
+    expect(sidebarService.open()).toBe(false);
+
+    mark.click();
+    fixture.detectChanges();
+    expect(sidebarService.open()).toBe(false);
+    expect(document.querySelector('[data-testid="project-menu"]')).toBeNull();
+    document.cookie = 'sidebar_state=; max-age=0; path=/';
+  });
+
+  it('expands a collapsed Sessions sidebar and opens Switch Project when clicking the active Project rail mark', async () => {
+    document.cookie = 'sidebar_state=; max-age=0; path=/';
+    TestBed.configureTestingModule({
+      providers: [provideHlmSidebarConfig({ defaultOpen: false })],
+    });
+    const { fixture } = await mountShell('other', {
+      projects: [project1, project2],
+      restored: makeRestored([], p1),
+    });
+    const host = fixture.nativeElement as HTMLElement;
+    const mark = host.querySelector<HTMLButtonElement>('[data-testid="rail-brand"]')!;
+    const sidebarService = TestBed.inject(HlmSidebarService);
+
+    expect(sidebarService.open()).toBe(false);
+    expect(document.querySelector('[data-testid="project-menu"]')).toBeNull();
+
+    mark.click();
+    fixture.detectChanges();
+
+    expect(sidebarService.open()).toBe(true);
+    expect(host.querySelector('hlm-sidebar')?.getAttribute('data-state')).toBe('expanded');
+    const currentProject = host.querySelector('[data-testid="current-project"]');
+    expect(currentProject?.getAttribute('aria-expanded')).toBe('true');
+    const menu = document.querySelector('[data-testid="project-menu"]');
+    expect(menu).not.toBeNull();
+    expect(menu?.contains(document.activeElement)).toBe(true);
+    expect(menu?.querySelectorAll('[data-testid="project-option"]').length).toBeGreaterThanOrEqual(
+      2,
+    );
+    document.cookie = 'sidebar_state=; max-age=0; path=/';
+  });
+
+  it('shows active Project uppercase initial on the rail mark and updates on switch and rename', async () => {
+    const backendProject: Project = { ...project2, name: 'backend' };
+    const { fixture, tabs } = await mountShell('other', {
+      projects: [project1, backendProject],
+      restored: makeRestored([], p1),
+    });
+    const host = fixture.nativeElement as HTMLElement;
+    const mark = host.querySelector<HTMLElement>('[data-testid="rail-brand"]')!;
+    expect(mark.textContent?.trim()).toBe('A');
+    expect(mark.getAttribute('aria-label')).toContain('app');
+
+    // Switching Project updates the initial and label.
+    tabs.switchProject(p2);
+    fixture.detectChanges();
+    expect(mark.textContent?.trim()).toBe('B');
+    expect(mark.getAttribute('aria-label')).toContain('backend');
+
+    // Renaming the active Project updates the initial and label.
+    const projects = TestBed.inject(ProjectsState);
+    await projects.rename(p2, 'zenith');
+    fixture.detectChanges();
+    expect(mark.textContent?.trim()).toBe('Z');
+    expect(mark.getAttribute('aria-label')).toContain('zenith');
+  });
+
+  it('includes the Remote device name in the rail Project mark label when active Project is on a Remote device', async () => {
+    const remoteProject: Project = { ...project2, name: 'cloud-api' };
+    const { fixture, tabs } = await mountShell('other', {
+      projects: [project1],
+      remoteProjects: [remoteProject],
+      restored: makeRestored([], p1),
+    });
+    const host = fixture.nativeElement as HTMLElement;
+    const mark = host.querySelector<HTMLButtonElement>('[data-testid="rail-brand"]')!;
+    expect(mark.textContent?.trim()).toBe('A');
+    expect(mark.getAttribute('aria-label')).not.toContain('Peer Mac');
+
+    tabs.switchProject(p2);
+    fixture.detectChanges();
+    expect(mark.textContent?.trim()).toBe('C');
+    expect(mark.getAttribute('aria-label')).toContain('cloud-api');
+    expect(mark.getAttribute('aria-label')).toContain('Peer Mac');
   });
 
   it('keeps Settings outside Tabs with sidebar trigger, back button, and live notice, and closes cleanly on Tab activation', async () => {

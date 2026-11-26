@@ -1,7 +1,11 @@
-import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, output } from '@angular/core';
 import { HlmKbdImports } from '@ui/kbd';
 import { HlmTooltipImports } from '@ui/tooltip';
+import type { DeviceProject } from './projects-state';
 import { Keymap } from '../../core/keymap';
+import { RemoteDevices } from '../../core/remote-devices';
+import { Tabs } from '../../core/tabs';
+import { ProjectsState } from './projects-state';
 import { SettingsState } from './settings-state';
 
 export interface RailNavItem {
@@ -30,13 +34,22 @@ export interface RailNavItem {
       data-testid="workspace-rail"
       class="bg-sidebar text-sidebar-foreground border-sidebar-border flex h-full w-full flex-col items-center gap-1.5 border-r py-2.5"
     >
-      <div
+      <button
+        type="button"
         data-testid="rail-brand"
-        class="bg-sidebar-accent text-sidebar-foreground/80 mb-1 flex size-[30px] shrink-0 items-center justify-center rounded-[7px] text-xs font-semibold select-none"
-        aria-hidden="true"
+        [attr.aria-label]="projectMarkLabel()"
+        [hlmTooltip]="projectMarkLabel()"
+        position="right"
+        class="focus-visible:ring-ring mb-1 flex size-[30px] shrink-0 items-center justify-center rounded-[7px] text-xs font-semibold transition-opacity outline-none select-none focus-visible:ring-2"
+        [class]="
+          activeProject() !== null
+            ? 'bg-sidebar-primary text-sidebar-primary-foreground cursor-pointer hover:opacity-90'
+            : 'bg-sidebar-accent text-sidebar-foreground/80 cursor-default'
+        "
+        (click)="requestProjectSwitcher()"
       >
-        S
-      </div>
+        {{ projectMarkInitial() }}
+      </button>
 
       @for (item of navItems(); track item.id) {
         <button
@@ -120,8 +133,40 @@ export interface RailNavItem {
   `,
 })
 export class WorkspaceRail {
+  readonly projectSwitcherRequested = output<void>();
+
   protected readonly keymap = inject(Keymap);
   protected readonly settings = inject(SettingsState);
+  private readonly projects = inject(ProjectsState);
+  private readonly tabs = inject(Tabs);
+  private readonly devices = inject(RemoteDevices);
+
+  protected readonly activeProject = computed((): DeviceProject | null => {
+    const ordered = this.projects.ordered();
+    const activeId = this.tabs.activeProjectId();
+    const matched = activeId === null ? undefined : ordered.find((p) => p.id === activeId);
+    return matched ?? this.projects.lastUsed() ?? ordered[0] ?? null;
+  });
+
+  protected readonly projectMarkInitial = computed(
+    (): string => this.activeProject()?.name.slice(0, 1).toUpperCase() ?? 'S',
+  );
+
+  protected readonly projectMarkLabel = computed((): string => {
+    const project = this.activeProject();
+    if (project === null) return $localize`Spence — No Project yet`;
+    const device =
+      project.device === undefined ? null : (this.devices.nameOf(project.device) ?? null);
+    return device === null
+      ? $localize`${project.name}:project: — Switch Project`
+      : $localize`${project.name}:project: (${device}:device:) — Switch Project`;
+  });
+
+  protected requestProjectSwitcher(): void {
+    if (this.activeProject() !== null) {
+      this.projectSwitcherRequested.emit();
+    }
+  }
 
   protected readonly navItems = computed<ReadonlyArray<RailNavItem>>(() => [
     {
