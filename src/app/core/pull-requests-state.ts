@@ -1,4 +1,4 @@
-import { DestroyRef, Injectable, inject, signal } from '@angular/core';
+import { DestroyRef, Injectable, InjectionToken, inject, signal, type Type } from '@angular/core';
 import { Effect, Stream } from 'effect';
 import type { ProjectId } from '../../shared/projects/projects.rpc';
 import type {
@@ -12,6 +12,12 @@ import { EffectRuntime } from './effect-runtime';
 const normalizePath = (p: string): string =>
   p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 
+/** Injection token for the dedicated Pull requests page component, avoiding shell -> feature imports. */
+export const PULL_REQUESTS_PAGE_VIEW = new InjectionToken<Type<unknown> | null>(
+  'PULL_REQUESTS_PAGE_VIEW',
+  { providedIn: 'root', factory: () => null },
+);
+
 /** Shared renderer state for Project Pull requests, Worktree PR links, and PR page navigation. */
 @Injectable({ providedIn: 'root' })
 export class PullRequestsState {
@@ -24,6 +30,7 @@ export class PullRequestsState {
   readonly activeProjectId = signal<ProjectId | null>(null);
   readonly prPageOpen = signal(false);
   readonly selectedPrNumber = signal<PullRequestNumber | null>(null);
+  readonly openSettingsRequested = signal(0);
 
   constructor() {
     const controller = new AbortController();
@@ -142,5 +149,9 @@ export class PullRequestsState {
     this.prPageOpen.set(false);
     this.selectedPrNumber.set(null);
     this.setActiveView({ projectId, prPageOpen: false, activePrNumber: null });
+  }
+
+  requestOpenSettings(): void {
+    this.openSettingsRequested.update((n) => n + 1);
   }
 }

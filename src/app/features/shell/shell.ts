@@ -28,7 +28,7 @@ import { DeviceScopeDirective } from '../../core/device-scope.directive';
 import { FontPresets } from '../../core/font-presets';
 import { Keymap } from '../../core/keymap';
 import { PanelRegistry, type PanelRenderContext } from '../../core/panel-registry';
-import { PullRequestsState } from '../../core/pull-requests-state';
+import { PULL_REQUESTS_PAGE_VIEW, PullRequestsState } from '../../core/pull-requests-state';
 import { RemoteDevices } from '../../core/remote-devices';
 import { Tabs } from '../../core/tabs';
 import { AppSidebar } from './app-sidebar';
@@ -126,71 +126,17 @@ const clampPaneWidth = (container: HTMLElement, width: number): number => {
           </div>
         } @else if (prState.prPageOpen()) {
           @let project = activeProject();
-          @let prView = prState.stateForProject(project?.id ?? null);
-          <header
-            class="border-border/60 flex h-12 min-w-0 shrink-0 items-center justify-between gap-2 border-b px-4"
-            data-testid="pull-requests-header"
-          >
-            <div class="flex min-w-0 items-center gap-2">
-              <h1 class="font-display text-xl font-normal truncate" i18n>Pull requests</h1>
-              @if (project !== null) {
-                <span class="text-muted-foreground text-xs truncate">{{ project.name }}</span>
-              }
-            </div>
-            @if (project !== null) {
-              <button
-                type="button"
-                class="hover:bg-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring rounded-md px-2.5 py-1 text-xs outline-none focus-visible:ring-2"
-                data-testid="pull-requests-refresh"
-                (click)="prState.refreshProject(project.id)"
-                i18n
-              >
-                Refresh
-              </button>
-            }
-          </header>
-          <div class="min-h-0 flex-1 overflow-y-auto p-6" data-testid="pull-requests-view">
-            @if (project === null) {
-              <p class="font-display text-xl font-normal text-muted-foreground" i18n>
-                Select a Project to view Pull requests.
-              </p>
-            } @else if (prView?._tag === 'Unavailable') {
-              <p class="text-muted-foreground text-sm">{{ prView.detail }}</p>
-            } @else if (prView?._tag === 'Available') {
-              @if (prView.summaries.length === 0) {
-                <p class="font-display text-xl font-normal text-muted-foreground" i18n>
-                  No Pull requests in {{ project.name }} yet.
-                </p>
-              } @else {
-                <ul class="divide-border/60 divide-y">
-                  @for (pr of prView.summaries; track pr.ref.number) {
-                    <li class="flex items-center justify-between gap-3 py-2.5 text-sm">
-                      <div class="min-w-0 flex-1">
-                        <div class="flex items-center gap-2">
-                          <span class="text-muted-foreground font-mono text-xs tabular-nums">
-                            #{{ pr.ref.number }}
-                          </span>
-                          <span class="truncate font-medium">{{ pr.title }}</span>
-                        </div>
-                        <div
-                          class="text-muted-foreground mt-0.5 flex items-center gap-2 font-mono text-xs"
-                        >
-                          <span>{{ pr.headRef }}</span>
-                          <span>→</span>
-                          <span>{{ pr.baseRef }}</span>
-                        </div>
-                      </div>
-                      <span class="text-muted-foreground shrink-0 text-xs capitalize">
-                        {{ pr.state }}
-                      </span>
-                    </li>
-                  }
-                </ul>
-              }
-            } @else {
-              <p class="text-muted-foreground text-sm" i18n>Loading Pull requests…</p>
-            }
-          </div>
+          @if (prPageView !== null) {
+            <ng-container
+              *ngComponentOutlet="
+                prPageView;
+                inputs: {
+                  projectId: project?.id ?? null,
+                  projectName: project?.name ?? '',
+                }
+              "
+            />
+          }
         } @else if (activeProject(); as project) {
           <app-tab-strip />
           @if (tabs.activeTab(); as activeTab) {
@@ -342,6 +288,7 @@ export class Shell {
   private readonly document = inject(DOCUMENT);
   protected readonly settings = inject(SettingsState);
   protected readonly prState = inject(PullRequestsState);
+  protected readonly prPageView = inject(PULL_REQUESTS_PAGE_VIEW);
   private readonly destroyRef = inject(DestroyRef);
   private stopActiveDrag: (() => void) | undefined;
 
@@ -462,6 +409,11 @@ export class Shell {
     });
     effect(() => {
       this.tabs.setSettingsOpen(this.settings.open());
+    });
+    effect(() => {
+      if (this.prState.openSettingsRequested() > 0) {
+        untracked(() => this.settings.show());
+      }
     });
     effect(() => {
       const state = this.projects.state();
