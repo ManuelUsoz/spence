@@ -1,5 +1,4 @@
 import {
-  afterNextRender,
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
@@ -21,7 +20,7 @@ import { HlmContextMenuImports } from '@ui/context-menu';
 import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
 import { HlmInputImports } from '@ui/input';
 import { HlmKbdImports } from '@ui/kbd';
-import { HlmSidebarImports, HlmSidebarService } from '@ui/sidebar';
+import { HlmSidebarImports } from '@ui/sidebar';
 import { HlmTooltipImports } from '@ui/tooltip';
 import { Effect, Schedule, Stream } from 'effect';
 import type { DeviceId } from '../../../shared/devices/devices.rpc';
@@ -701,7 +700,6 @@ export class AppSidebar {
   protected readonly projects = inject(ProjectsState);
   private readonly sessionsState = inject(SessionsState);
   protected readonly devices = inject(RemoteDevices);
-  private readonly sidebar = inject(HlmSidebarService);
   private readonly injector = inject(Injector);
 
   private readonly renameInput = viewChild<ElementRef<HTMLInputElement>>('renameInput');
@@ -711,7 +709,6 @@ export class AppSidebar {
 
   private readonly aborts = new AbortController();
   private readonly pendingSwitcherFocus = signal(false);
-  private readonly pendingSwitcherOpen = signal(false);
 
   /** The selector's groups; with no Remote device, only the Local one, unnamed. */
   protected readonly projectGroups = computed(() => this.projects.groups());
@@ -864,14 +861,6 @@ export class AppSidebar {
       if (trigger !== undefined) {
         untracked(() => this.pendingSwitcherFocus.set(false));
         trigger.focus({ preventScroll: true });
-      }
-    });
-    effect(() => {
-      if (!this.pendingSwitcherOpen() || this.renamingProject() !== null) return;
-      const trigger = this.switcherTrigger()?.nativeElement;
-      if (trigger !== undefined) {
-        untracked(() => this.pendingSwitcherOpen.set(false));
-        this.focusAndClickSwitcher(trigger);
       }
     });
     let seen = false;
@@ -1168,52 +1157,6 @@ export class AppSidebar {
       return result;
     };
     return rows(session.id, []);
-  }
-
-  /** Expands the Sessions sidebar if collapsed and opens/focuses the Switch Project menu. */
-  openProjectSwitcher(): void {
-    if (this.current() === null) return;
-    if (this.renamingProject() !== null) this.cancelRename(false);
-    if (this.sidebar.isMobile()) {
-      if (this.sidebar.openMobile()) {
-        const trigger = this.switcherTrigger()?.nativeElement;
-        if (trigger !== undefined) this.focusAndClickSwitcher(trigger);
-      } else {
-        this.pendingSwitcherOpen.set(true);
-        this.sidebar.setOpenMobile(true);
-      }
-      return;
-    }
-    if (this.sidebar.open()) {
-      const trigger = this.switcherTrigger()?.nativeElement;
-      if (trigger !== undefined) this.focusAndClickSwitcher(trigger);
-      return;
-    }
-    this.sidebar.setOpen(true);
-    afterNextRender(
-      () => {
-        const trigger = this.switcherTrigger()?.nativeElement;
-        if (trigger === undefined) return;
-        const container = trigger.closest('[data-slot="sidebar-container"]');
-        const animations =
-          typeof container?.getAnimations === 'function' ? container.getAnimations() : [];
-        if (animations.length === 0) {
-          this.focusAndClickSwitcher(trigger);
-          return;
-        }
-        void Promise.all(animations.map((a) => a.finished)).then(() => {
-          if (!this.destroyRef.destroyed) {
-            this.focusAndClickSwitcher(trigger);
-          }
-        });
-      },
-      { injector: this.injector },
-    );
-  }
-
-  private focusAndClickSwitcher(trigger: HTMLButtonElement): void {
-    trigger.focus({ preventScroll: true });
-    trigger.click();
   }
 
   private registerShortcuts(): void {

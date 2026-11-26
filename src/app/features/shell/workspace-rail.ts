@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, inject, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { HlmKbdImports } from '@ui/kbd';
 import { HlmTooltipImports } from '@ui/tooltip';
 import type { DeviceProject } from './projects-state';
@@ -41,8 +41,12 @@ export interface RailNavItem {
         [hlmTooltip]="projectMarkLabel()"
         position="right"
         class="focus-visible:ring-ring mb-1 flex size-[30px] shrink-0 items-center justify-center rounded-[7px] bg-transparent transition-opacity outline-none select-none focus-visible:ring-2"
-        [class]="activeProject() !== null ? 'cursor-pointer hover:opacity-90' : 'cursor-default'"
-        (click)="requestProjectSwitcher()"
+        [class]="
+          activeProject() !== null || settings.open()
+            ? 'cursor-pointer hover:opacity-90'
+            : 'cursor-default'
+        "
+        (click)="openSessions()"
       >
         <img src="icon.png" alt="" aria-hidden="true" class="size-[30px] object-contain" />
       </button>
@@ -57,11 +61,7 @@ export interface RailNavItem {
           [hlmTooltip]="item.label"
           position="right"
           class="focus-visible:ring-ring flex size-[34px] shrink-0 items-center justify-center rounded-lg transition-colors outline-none focus-visible:ring-2"
-          [class]="
-            item.active
-              ? 'bg-sidebar-accent text-foreground shadow-[inset_0_0_0_1px_var(--border)]'
-              : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
-          "
+          [class]="item.active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'"
           (click)="item.select()"
         >
           @switch (item.id) {
@@ -96,9 +96,7 @@ export interface RailNavItem {
         position="right"
         class="focus-visible:ring-ring flex size-[34px] shrink-0 items-center justify-center rounded-lg transition-colors outline-none focus-visible:ring-2"
         [class]="
-          settings.open()
-            ? 'bg-sidebar-accent text-foreground shadow-[inset_0_0_0_1px_var(--border)]'
-            : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
+          settings.open() ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
         "
         (click)="settings.toggle()"
       >
@@ -129,8 +127,6 @@ export interface RailNavItem {
   `,
 })
 export class WorkspaceRail {
-  readonly projectSwitcherRequested = output<void>();
-
   protected readonly keymap = inject(Keymap);
   protected readonly settings = inject(SettingsState);
   private readonly projects = inject(ProjectsState);
@@ -150,13 +146,14 @@ export class WorkspaceRail {
     const device =
       project.device === undefined ? null : (this.devices.nameOf(project.device) ?? null);
     return device === null
-      ? $localize`${project.name}:project: — Switch Project`
-      : $localize`${project.name}:project: (${device}:device:) — Switch Project`;
+      ? $localize`${project.name}:project: — Sessions`
+      : $localize`${project.name}:project: (${device}:device:) — Sessions`;
   });
 
-  protected requestProjectSwitcher(): void {
-    if (this.activeProject() !== null) {
-      this.projectSwitcherRequested.emit();
+  protected openSessions(): void {
+    this.settings.set(false);
+    if (this.tabs.activeTabOverlay() !== null) {
+      this.tabs.closeTabOverlay();
     }
   }
 

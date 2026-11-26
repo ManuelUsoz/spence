@@ -112,7 +112,7 @@ test('the gear opens Settings and the permanent rail stays unobstructed across s
   await expect(rail).toBeVisible();
 });
 
-test('rail Project mark shows Spence app icon with no background fill, tooltip, quiet no-Project fallback, and expands sidebar to open Switch Project', async ({
+test('rail app icon has no background fill, shows Project Sessions tooltip, and returns to active Project Sessions without opening Switch Project', async ({
   spence,
 }) => {
   const page = spence.page;
@@ -143,7 +143,7 @@ test('rail Project mark shows Spence app icon with no background fill, tooltip, 
   await expect(page.locator('hlm-sidebar')).toHaveAttribute('data-state', 'collapsed');
   await page.mouse.move(400, 400);
 
-  // Expand sidebar and add demo-project -> app icon remains with Project tooltip and no background fill.
+  // Expand sidebar and add demo-project -> app icon remains with Project Sessions tooltip and no background fill.
   await page.locator('[data-slot="sidebar-trigger"]').click();
   await page.getByTestId('add-project').click();
   await expect(markImg).toHaveAttribute('src', 'icon.png');
@@ -153,50 +153,25 @@ test('rail Project mark shows Spence app icon with no background fill, tooltip, 
   await expect(
     page.getByRole('tooltip', {
       name: spence.t({
-        en: 'demo-project — Switch Project',
-        es: 'demo-project — Cambiar de Proyecto',
+        en: 'demo-project — Sessions',
+        es: 'demo-project — Sesiones',
       }),
     }),
   ).toBeVisible();
   await page.mouse.move(400, 400);
 
-  // Add second-project -> app icon remains with no background fill and updated Project tooltip.
-  await spence.pickNext('second-project');
-  await page.getByTestId('current-project').click();
-  await page
-    .getByRole('menuitem', { name: spence.t({ en: 'Add Project', es: 'Añadir Proyecto' }) })
-    .click();
-  await expect(markImg).toHaveAttribute('src', 'icon.png');
-  await expect(mark).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
-
-  // Collapse the Sessions sidebar, then click the rail Project mark to expand + open Switch Project.
+  // Collapse the Sessions sidebar, open Settings, then click the rail app icon to return to Sessions
+  // without expanding the sidebar or opening Switch Project.
   await page.keyboard.press('ControlOrMeta+b');
   await expect
     .poll(async () => (await page.locator('[data-slot="sidebar-container"]').boundingBox())?.x)
     .toBe(-206);
+  await page.getByTestId('open-settings').click();
+  await expect(page.getByTestId('settings-header')).toBeVisible();
 
   await mark.click();
-  await expect(page.locator('hlm-sidebar')).toHaveAttribute('data-state', 'expanded');
-  await expect
-    .poll(async () => (await page.locator('[data-slot="sidebar-container"]').boundingBox())?.x)
-    .toBe(50);
-  await expect(page.getByTestId('project-menu')).toBeVisible();
-  await expect(page.getByTestId('project-option-name')).toHaveText([
-    'second-project',
-    'demo-project',
-  ]);
-
-  // Switch via the opened menu and verify the rail mark keeps the app icon and updates tooltip back to demo-project.
-  await page.getByTestId('project-option').filter({ hasText: 'demo-project' }).click();
-  await expect(markImg).toHaveAttribute('src', 'icon.png');
-  await expect(mark).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
-  await mark.hover();
-  await expect(
-    page.getByRole('tooltip', {
-      name: spence.t({
-        en: 'demo-project — Switch Project',
-        es: 'demo-project — Cambiar de Proyecto',
-      }),
-    }),
-  ).toBeVisible();
+  await expect(page.getByTestId('settings-header')).toBeHidden();
+  await expect(page.getByTestId('tab-strip')).toBeVisible();
+  await expect(page.locator('hlm-sidebar')).toHaveAttribute('data-state', 'collapsed');
+  await expect(page.getByTestId('project-menu')).toBeHidden();
 });

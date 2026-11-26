@@ -1382,35 +1382,51 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
     document.cookie = 'sidebar_state=; max-age=0; path=/';
   });
 
-  it('expands a collapsed Sessions sidebar and opens Switch Project when clicking the active Project rail mark', async () => {
+  it('redirects to the active Project Sessions view without opening Switch Project when clicking the rail app icon', async () => {
     document.cookie = 'sidebar_state=; max-age=0; path=/';
     TestBed.configureTestingModule({
       providers: [provideHlmSidebarConfig({ defaultOpen: false })],
     });
-    const { fixture } = await mountShell('other', {
+    const { fixture, tabs } = await mountShell('other', {
       projects: [project1, project2],
-      restored: makeRestored([], p1),
+      restored: makeRestored(
+        [
+          {
+            projectId: p1,
+            tabs: [
+              {
+                tabId: 't1',
+                paneId: 'pane1',
+                panelId: 'panel1',
+                sessionId: SessionId.make('s1'),
+                title: 'One',
+              },
+            ],
+          },
+        ],
+        p1,
+      ),
     });
     const host = fixture.nativeElement as HTMLElement;
     const mark = host.querySelector<HTMLButtonElement>('[data-testid="rail-brand"]')!;
     const sidebarService = TestBed.inject(HlmSidebarService);
+    const settings = TestBed.inject(SettingsState);
 
+    settings.show();
+    fixture.detectChanges();
+    expect(settings.open()).toBe(true);
     expect(sidebarService.open()).toBe(false);
     expect(document.querySelector('[data-testid="project-menu"]')).toBeNull();
 
     mark.click();
     fixture.detectChanges();
 
-    expect(sidebarService.open()).toBe(true);
-    expect(host.querySelector('hlm-sidebar')?.getAttribute('data-state')).toBe('expanded');
-    const currentProject = host.querySelector('[data-testid="current-project"]');
-    expect(currentProject?.getAttribute('aria-expanded')).toBe('true');
-    const menu = document.querySelector('[data-testid="project-menu"]');
-    expect(menu).not.toBeNull();
-    expect(menu?.contains(document.activeElement)).toBe(true);
-    expect(menu?.querySelectorAll('[data-testid="project-option"]').length).toBeGreaterThanOrEqual(
-      2,
-    );
+    expect(settings.open()).toBe(false);
+    expect(tabs.activeProjectId()).toBe(p1);
+    expect(host.querySelector('[data-testid="tab-strip"]')).not.toBeNull();
+    expect(sidebarService.open()).toBe(false);
+    expect(host.querySelector('hlm-sidebar')?.getAttribute('data-state')).toBe('collapsed');
+    expect(document.querySelector('[data-testid="project-menu"]')).toBeNull();
     document.cookie = 'sidebar_state=; max-age=0; path=/';
   });
 
