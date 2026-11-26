@@ -2,7 +2,6 @@ import { expect, test } from '../fixtures';
 
 test('renames a Session inline', async ({ spence }) => {
   const page = spence.page;
-  await page.locator('[data-slot="sidebar-trigger"]').click();
   await page.getByTestId('add-project').click();
   await page.getByTestId('new-session').click();
   await page.getByTestId('composer-input').fill('echo:First message');
@@ -29,7 +28,6 @@ test('two Projects: switch between them and start a Session in each', async ({ s
   const addProjectLabel = spence.t({ en: 'Add Project', es: 'Añadir Proyecto' });
   const newSessionLabel = spence.t({ en: 'New Session', es: 'Nueva Sesión' });
 
-  await page.locator('[data-slot="sidebar-trigger"]').click();
   await page.getByTestId('add-project').click();
   await expect(current).toContainText('demo-project');
   await expect(page.getByTestId('sessions-empty')).toHaveText(
@@ -69,109 +67,113 @@ test('two Projects: switch between them and start a Session in each', async ({ s
   await expect(current).toContainText('second-project');
 });
 
-test('the gear opens Settings and the permanent rail stays unobstructed across sidebar collapse/expand', async ({
-  spence,
-}) => {
-  const page = spence.page;
-  const rail = page.getByTestId('workspace-rail');
-  const railBox = await rail.boundingBox();
-  expect(railBox).not.toBeNull();
-  expect(railBox!.width).toBe(50);
+test.describe('collapsed by default', () => {
+  test.use({ spenceSidebarOpen: false });
 
-  // Rail is visible and clickable even while the Sessions sidebar starts collapsed.
-  await page.getByTestId('open-settings').click();
-  await expect(page.getByTestId('settings-page')).toBeVisible();
-  await expect(page.getByTestId('settings-header')).toContainText(
-    spence.t({ en: 'Settings', es: 'Ajustes' }),
-  );
+  test('the gear opens Settings and the permanent rail stays unobstructed across sidebar collapse/expand', async ({
+    spence,
+  }) => {
+    const page = spence.page;
+    const rail = page.getByTestId('workspace-rail');
+    const railBox = await rail.boundingBox();
+    expect(railBox).not.toBeNull();
+    expect(railBox!.width).toBe(50);
 
-  // Clicking Sessions on the rail closes Settings and returns to the workspace.
-  await page.getByTestId('rail-nav-sessions').click();
-  await expect(page.getByTestId('settings-page')).toBeHidden();
+    // Rail is visible and clickable even while the Sessions sidebar starts collapsed.
+    await page.getByTestId('open-settings').click();
+    await expect(page.getByTestId('settings-page')).toBeVisible();
+    await expect(page.getByTestId('settings-header')).toContainText(
+      spence.t({ en: 'Settings', es: 'Ajustes' }),
+    );
 
-  // Expanding the Sessions sidebar places it beside the 50px rail without overlapping it.
-  await page.locator('[data-slot="sidebar-trigger"]').click();
-  await expect
-    .poll(async () => (await page.locator('[data-slot="sidebar-container"]').boundingBox())?.x)
-    .toBe(50);
-  const containerBox = await page.locator('[data-slot="sidebar-container"]').boundingBox();
-  expect(containerBox).not.toBeNull();
-  expect(containerBox!.width).toBe(256);
+    // Clicking Sessions on the rail closes Settings and returns to the workspace.
+    await page.getByTestId('rail-nav-sessions').click();
+    await expect(page.getByTestId('settings-page')).toBeHidden();
 
-  // Settings on the rail remains clickable while the Sessions sidebar is expanded.
-  await page.getByTestId('open-settings').click();
-  await expect(page.getByTestId('settings-page')).toBeVisible();
-  await page.getByTestId('settings-back').click();
-  await expect(page.getByTestId('settings-page')).toBeHidden();
+    // Expanding the Sessions sidebar places it beside the 50px rail without overlapping it.
+    await page.locator('[data-slot="sidebar-trigger"]').click();
+    await expect
+      .poll(async () => (await page.locator('[data-slot="sidebar-container"]').boundingBox())?.x)
+      .toBe(50);
+    const containerBox = await page.locator('[data-slot="sidebar-container"]').boundingBox();
+    expect(containerBox).not.toBeNull();
+    expect(containerBox!.width).toBe(256);
 
-  // Collapsing via Mod+B tucks the Sessions sidebar behind the 50px rail without hiding the rail.
-  await page.keyboard.press('ControlOrMeta+b');
-  await expect
-    .poll(async () => (await page.locator('[data-slot="sidebar-container"]').boundingBox())?.x)
-    .toBe(-206);
-  await expect(rail).toBeVisible();
-});
+    // Settings on the rail remains clickable while the Sessions sidebar is expanded.
+    await page.getByTestId('open-settings').click();
+    await expect(page.getByTestId('settings-page')).toBeVisible();
+    await page.getByTestId('settings-back').click();
+    await expect(page.getByTestId('settings-page')).toBeHidden();
 
-test('rail app icon has no background fill, shows Project Sessions tooltip, and returns to active Project Sessions without opening Switch Project', async ({
-  spence,
-}) => {
-  const page = spence.page;
-  const mark = page.getByTestId('rail-brand');
-  const markImg = mark.locator('img');
+    // Collapsing via Mod+B tucks the Sessions sidebar behind the 50px rail without hiding the rail.
+    await page.keyboard.press('ControlOrMeta+b');
+    await expect
+      .poll(async () => (await page.locator('[data-slot="sidebar-container"]').boundingBox())?.x)
+      .toBe(-206);
+    await expect(rail).toBeVisible();
+  });
 
-  const markBox = await mark.boundingBox();
-  expect(markBox).not.toBeNull();
-  expect(markBox!.width).toBe(30);
-  expect(markBox!.height).toBe(30);
-  await expect(markImg).toBeVisible();
-  await expect(markImg).toHaveAttribute('src', 'icon.png');
-  await expect
-    .poll(async () =>
-      markImg.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0),
-    )
-    .toBe(true);
-  await expect(mark).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
-  await expect(mark).toHaveText('');
+  test('rail app icon has no background fill, shows Project Sessions tooltip, and returns to active Project Sessions without opening Switch Project', async ({
+    spence,
+  }) => {
+    const page = spence.page;
+    const mark = page.getByTestId('rail-brand');
+    const markImg = mark.locator('img');
 
-  // Quiet fallback tooltip & no-op click when no Project exists yet.
-  await mark.hover();
-  await expect(page.getByRole('tooltip')).toContainText(
-    spence.t({ en: 'Spence — No Project yet', es: 'Spence — Aún no hay Proyecto' }),
-  );
-  await mark.click();
-  await expect(page.getByTestId('project-menu')).toBeHidden();
-  await expect(page.locator('hlm-sidebar')).toHaveAttribute('data-state', 'collapsed');
-  await page.mouse.move(400, 400);
+    const markBox = await mark.boundingBox();
+    expect(markBox).not.toBeNull();
+    expect(markBox!.width).toBe(30);
+    expect(markBox!.height).toBe(30);
+    await expect(markImg).toBeVisible();
+    await expect(markImg).toHaveAttribute('src', 'icon.png');
+    await expect
+      .poll(async () =>
+        markImg.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0),
+      )
+      .toBe(true);
+    await expect(mark).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await expect(mark).toHaveText('');
 
-  // Expand sidebar and add demo-project -> app icon remains with Project Sessions tooltip and no background fill.
-  await page.locator('[data-slot="sidebar-trigger"]').click();
-  await page.getByTestId('add-project').click();
-  await expect(markImg).toHaveAttribute('src', 'icon.png');
-  await expect(mark).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
-  await expect(mark).toHaveText('');
-  await mark.hover();
-  await expect(
-    page.getByRole('tooltip', {
-      name: spence.t({
-        en: 'demo-project — Sessions',
-        es: 'demo-project — Sesiones',
+    // Quiet fallback tooltip & no-op click when no Project exists yet.
+    await mark.hover();
+    await expect(page.getByRole('tooltip')).toContainText(
+      spence.t({ en: 'Spence — No Project yet', es: 'Spence — Aún no hay Proyecto' }),
+    );
+    await mark.click();
+    await expect(page.getByTestId('project-menu')).toBeHidden();
+    await expect(page.locator('hlm-sidebar')).toHaveAttribute('data-state', 'collapsed');
+    await page.mouse.move(400, 400);
+
+    // Expand sidebar and add demo-project -> app icon remains with Project Sessions tooltip and no background fill.
+    await page.locator('[data-slot="sidebar-trigger"]').click();
+    await page.getByTestId('add-project').click();
+    await expect(markImg).toHaveAttribute('src', 'icon.png');
+    await expect(mark).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await expect(mark).toHaveText('');
+    await mark.hover();
+    await expect(
+      page.getByRole('tooltip', {
+        name: spence.t({
+          en: 'demo-project — Sessions',
+          es: 'demo-project — Sesiones',
+        }),
       }),
-    }),
-  ).toBeVisible();
-  await page.mouse.move(400, 400);
+    ).toBeVisible();
+    await page.mouse.move(400, 400);
 
-  // Collapse the Sessions sidebar, open Settings, then click the rail app icon to return to Sessions
-  // without expanding the sidebar or opening Switch Project.
-  await page.keyboard.press('ControlOrMeta+b');
-  await expect
-    .poll(async () => (await page.locator('[data-slot="sidebar-container"]').boundingBox())?.x)
-    .toBe(-206);
-  await page.getByTestId('open-settings').click();
-  await expect(page.getByTestId('settings-header')).toBeVisible();
+    // Collapse the Sessions sidebar, open Settings, then click the rail app icon to return to Sessions
+    // without expanding the sidebar or opening Switch Project.
+    await page.keyboard.press('ControlOrMeta+b');
+    await expect
+      .poll(async () => (await page.locator('[data-slot="sidebar-container"]').boundingBox())?.x)
+      .toBe(-206);
+    await page.getByTestId('open-settings').click();
+    await expect(page.getByTestId('settings-header')).toBeVisible();
 
-  await mark.click();
-  await expect(page.getByTestId('settings-header')).toBeHidden();
-  await expect(page.getByTestId('tab-strip')).toBeVisible();
-  await expect(page.locator('hlm-sidebar')).toHaveAttribute('data-state', 'collapsed');
-  await expect(page.getByTestId('project-menu')).toBeHidden();
+    await mark.click();
+    await expect(page.getByTestId('settings-header')).toBeHidden();
+    await expect(page.getByTestId('tab-strip')).toBeVisible();
+    await expect(page.locator('hlm-sidebar')).toHaveAttribute('data-state', 'collapsed');
+    await expect(page.getByTestId('project-menu')).toBeHidden();
+  });
 });

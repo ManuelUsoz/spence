@@ -1,7 +1,7 @@
 import { _electron as electron } from '@playwright/test';
 import { createServer } from 'node:http';
 import path from 'node:path';
-import { expect, sandboxArgs, test } from '../fixtures';
+import { ensureSidebarOpen, expect, sandboxArgs, test } from '../fixtures';
 
 const root = path.resolve(__dirname, '../..');
 
@@ -143,7 +143,8 @@ test('embedded Browser syncs WebContentsView bounds, enforces zero-preload isola
           return view?.getBounds().width ?? 0;
         }),
       )
-      .toBeGreaterThan((viewBounds?.width ?? 0) + 80);
+      // With both the 50px rail and 256px sidebar open, clampPaneWidth caps growth around +78px.
+      .toBeGreaterThan((viewBounds?.width ?? 0) + 70);
 
     // Navigate to page2, verify back/forward/reload, and hide/restore across Settings.
     await urlInput.fill(`${server.baseUrl}/page2`);
@@ -233,6 +234,7 @@ test('persists cookies across restarts in persist:spence-browser', async ({ spen
     try {
       const restartedPage = await restarted.firstWindow();
       await restartedPage.waitForLoadState('domcontentloaded');
+      await ensureSidebarOpen(restartedPage);
       await expect(restartedPage.getByTestId('current-project')).toContainText('demo-project');
       await restartedPage.getByTestId('new-session').click();
       await restartedPage.getByTestId('toggle-browser').click();

@@ -58,6 +58,7 @@ export type SpenceLocale = 'en' | 'es';
 export interface SpenceOptions {
   spenceLocale: SpenceLocale;
   spenceSettings: Record<string, unknown>;
+  spenceSidebarOpen: boolean;
 }
 
 /** Helpers shared by every spec. */
@@ -125,12 +126,25 @@ interface LaunchOptions {
   readonly locale: SpenceLocale;
   readonly settings: Record<string, unknown>;
   readonly installedAgents: string[];
+  readonly sidebarOpen: boolean;
 }
 
 interface Launched {
   readonly spence: Spence;
   readonly close: () => Promise<void>;
 }
+
+export const ensureSidebarOpen = async (page: Page): Promise<void> => {
+  const sidebar = page.locator('hlm-sidebar');
+  await sidebar.waitFor({ state: 'attached' });
+  if ((await sidebar.getAttribute('data-state')) === 'collapsed') {
+    await page.locator('[data-slot="sidebar-trigger"]').click();
+    await expect(sidebar).toHaveAttribute('data-state', 'expanded');
+    await expect
+      .poll(async () => (await page.locator('[data-slot="sidebar-container"]').boundingBox())?.x)
+      .toBe(50);
+  }
+};
 
 /** Starts one Spence over its own fresh data directory; `close` quits it and removes the directory. */
 const launch = async (options: LaunchOptions, peer: () => Promise<Spence>): Promise<Launched> => {
@@ -175,6 +189,9 @@ const launch = async (options: LaunchOptions, peer: () => Promise<Spence>): Prom
   });
   const page = await app.firstWindow();
   await page.waitForLoadState('domcontentloaded');
+  if (options.sidebarOpen) {
+    await ensureSidebarOpen(page);
+  }
   const close = async () => {
     // A clean close can stall (e.g. main's quit confirmation while an Agent still works, which nobody answers): after
     // a grace period the process is killed so one test cannot eat the whole 60s timeout, then its folder is removed.
@@ -201,6 +218,7 @@ export const test = base.extend<{
   spenceLocale: SpenceLocale;
   spenceSettings: Record<string, unknown>;
   spenceInstalledAgents: string[];
+  spenceSidebarOpen: boolean;
 }>({
   /**
    * Catalog binaries (e.g. `claude-agent-acp`) that must count as installed. They are appended to PATH, so a real
@@ -213,11 +231,20 @@ export const test = base.extend<{
    * The `settings.json` a run starts with. Dark by default, so the OS appearance never decides the screenshots.
    */
   spenceSettings: [{ theme: 'dark' }, { option: true }],
-  spence: async ({ spenceLocale, spenceSettings, spenceInstalledAgents }, use) => {
+  /**
+   * Whether the fixture expands the Sessions sidebar after launch. Most specs interact with sidebar controls
+   * directly; specs testing the collapsed-by-default launch state set `spenceSidebarOpen: false`.
+   */
+  spenceSidebarOpen: [true, { option: true }],
+  spence: async (
+    { spenceLocale, spenceSettings, spenceInstalledAgents, spenceSidebarOpen },
+    use,
+  ) => {
     const options: LaunchOptions = {
       locale: spenceLocale,
       settings: spenceSettings,
       installedAgents: spenceInstalledAgents,
+      sidebarOpen: spenceSidebarOpen,
     };
     const closers: Array<() => Promise<void>> = [];
     const peer = async (): Promise<Spence> => {
