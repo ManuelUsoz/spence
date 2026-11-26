@@ -278,6 +278,17 @@ export const layerPullRequestsUnused = PullRequestsRpcs.toLayer({
   'HostAuth.importGhCli': () => Effect.die('HostAuth.importGhCli is not served in this test'),
   'HostAuth.verify': () => Effect.die('HostAuth.verify is not served in this test'),
   'HostAuth.disconnect': () => Effect.die('HostAuth.disconnect is not served in this test'),
+  'PullRequests.changes': () => Stream.empty,
+  'PullRequests.setActiveView': () => Effect.void,
+  'PullRequests.getProjectState': () =>
+    Effect.die('PullRequests.getProjectState is not served in this test'),
+  'PullRequests.refreshProject': () =>
+    Effect.die('PullRequests.refreshProject is not served in this test'),
+  'PullRequests.lookupByNumber': () =>
+    Effect.die('PullRequests.lookupByNumber is not served in this test'),
+  'PullRequests.unpinNumber': () => Effect.void,
+  'PullRequests.getDetail': () => Effect.die('PullRequests.getDetail is not served in this test'),
+  'PullRequests.getDiff': () => Effect.die('PullRequests.getDiff is not served in this test'),
 });
 
 /** Every domain's `layerXUnused`; the handlers a test passes replace the ones it exercises. */

@@ -23,6 +23,7 @@ import type { PrepareDraftResult, WorktreePrepStep } from '../../../shared/workt
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { prepareRejectionText, unavailableText } from '../../core/git-text';
+import { PullRequestsState } from '../../core/pull-requests-state';
 
 const loadChanges = Effect.fnUntraced(function* (sessionId: SessionId) {
   const api = yield* DesktopApi;
@@ -160,6 +161,25 @@ type Mode = 'current' | 'new';
             >
           }
         </button>
+        @if (showPrPill()) {
+          <button
+            type="button"
+            class="hover:bg-accent hover:text-foreground focus-visible:ring-ring flex h-6.5 items-center gap-1.5 rounded-lg px-2 text-xs outline-none focus-visible:ring-2"
+            data-testid="composer-status-pr"
+            (click)="openPr()"
+          >
+            @if (linkedPr(); as pr) {
+              <span
+                class="size-1.5 shrink-0 rounded-full"
+                [class]="prCheckDotClass(pr.checkRollup)"
+                aria-hidden="true"
+              ></span>
+              <span class="font-mono tabular-nums">#{{ pr.ref.number }}</span>
+            } @else {
+              <span i18n>Create PR</span>
+            }
+          </button>
+        }
       </div>
       @if (canSelect() && mode() === 'new') {
         <div
@@ -341,6 +361,7 @@ export class ComposerStatus {
 
   private readonly runtime = inject(EffectRuntime);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly prState = inject(PullRequestsState);
   /** Counts reads; an answer for another Session or an older read is dropped. */
   private seq = 0;
   private readonly result = signal<ChangesResult | null>(null);
@@ -372,6 +393,34 @@ export class ComposerStatus {
     if (head === undefined) return '';
     return head._tag === 'Detached' ? head.commit.slice(0, 7) : head.branch;
   });
+  protected readonly linkedPrLink = computed(() => {
+    const head = this.repo()?.head;
+    if (head === undefined || head._tag === 'Detached') return null;
+    return this.prState.linkForBranch(head.branch);
+  });
+  protected readonly linkedPr = computed(() => this.linkedPrLink()?.primary ?? null);
+  protected readonly showPrPill = computed(() => {
+    const activeId = this.prState.activeProjectId();
+    const state = this.prState.stateForProject(activeId);
+    return state?._tag === 'Available';
+  });
+
+  protected prCheckDotClass(rollup: 'pending' | 'passing' | 'failing' | 'none'): string {
+    switch (rollup) {
+      case 'passing':
+        return 'bg-diff-add';
+      case 'failing':
+        return 'bg-destructive';
+      case 'pending':
+        return 'bg-amber-500';
+      case 'none':
+        return 'bg-muted-foreground';
+    }
+  }
+
+  protected openPr(): void {
+    this.prState.openPrPage(this.prState.activeProjectId(), this.linkedPr()?.ref.number ?? null);
+  }
   protected readonly added = computed(() =>
     (this.repo()?.files ?? []).reduce((sum, file) => sum + (file.additions ?? 0), 0),
   );

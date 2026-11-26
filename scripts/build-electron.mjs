@@ -20,6 +20,10 @@ const entryPoints = [
     entryPoints: ['electron/sessions/notification-worker.ts'],
     outfile: 'dist-electron/notification-worker.js',
   },
+  {
+    entryPoints: ['electron/git-hosts/pr-worker.ts'],
+    outfile: 'dist-electron/pr-worker.js',
+  },
 ];
 
 if (watch) {

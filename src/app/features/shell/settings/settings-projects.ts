@@ -40,6 +40,15 @@ const setSetupCommand = (
     api['Projects.setSettings']({ id, patch: { worktreeSetupCommand } }),
   ).pipe(onDevice(device));
 
+const setTargetRemote = (
+  id: ProjectId,
+  targetRemote: string | null,
+  device: DeviceId | undefined,
+) =>
+  DesktopApi.use((api) => api['Projects.setSettings']({ id, patch: { targetRemote } })).pipe(
+    onDevice(device),
+  );
+
 @Component({
   selector: 'app-settings-projects',
   imports: [HlmInputImports, HlmSelectImports],
@@ -153,6 +162,34 @@ const setSetupCommand = (
                 (keydown.enter)="setupInput.blur()"
               />
             </div>
+            <div class="flex flex-col gap-1">
+              <label
+                class="text-muted-foreground text-xs"
+                [for]="'project-target-remote-' + project.id"
+                i18n
+              >
+                Pull request target remote
+              </label>
+              <input
+                #targetRemoteInput
+                hlmInput
+                [id]="'project-target-remote-' + project.id"
+                class="h-8 font-mono text-xs"
+                data-testid="project-target-remote"
+                placeholder="Auto (upstream → origin)"
+                i18n-placeholder
+                [value]="project.settings.targetRemote ?? ''"
+                (blur)="
+                  changeTargetRemote(
+                    project.id,
+                    project.device,
+                    project.settings.targetRemote ?? '',
+                    targetRemoteInput.value
+                  )
+                "
+                (keydown.enter)="targetRemoteInput.blur()"
+              />
+            </div>
           </li>
         }
       </ul>
@@ -258,6 +295,20 @@ export class SettingsProjects {
     if (trimmed === current.trim()) return;
     const command = trimmed.length === 0 ? null : trimmed;
     const exit = await this.runtime.run(setSetupCommand(id, command, device));
+    if (exit._tag === 'Success') this.projects.changed(exit.value);
+    else toast.error($localize`Could not change the Project settings.`);
+  }
+
+  protected async changeTargetRemote(
+    id: ProjectId,
+    device: DeviceId | undefined,
+    current: string,
+    rawValue: string,
+  ): Promise<void> {
+    const trimmed = rawValue.trim();
+    if (trimmed === current.trim()) return;
+    const targetRemote = trimmed.length === 0 ? null : trimmed;
+    const exit = await this.runtime.run(setTargetRemote(id, targetRemote, device));
     if (exit._tag === 'Success') this.projects.changed(exit.value);
     else toast.error($localize`Could not change the Project settings.`);
   }

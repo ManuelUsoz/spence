@@ -89,6 +89,11 @@ const applyPatch = (settings: ProjectSettings, patch: ProjectSettingsPatch): Pro
     const trimmed = patch.worktreeSetupCommand === null ? '' : patch.worktreeSetupCommand.trim();
     next = trimmed.length === 0 ? rest : { ...rest, worktreeSetupCommand: trimmed };
   }
+  if (patch.targetRemote !== undefined) {
+    const { targetRemote: _cleared, ...rest } = next;
+    const trimmed = patch.targetRemote === null ? '' : patch.targetRemote.trim();
+    next = trimmed.length === 0 ? rest : { ...rest, targetRemote: trimmed };
+  }
   return next;
 };
 
