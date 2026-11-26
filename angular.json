@@ -40,6 +40,11 @@
               {
                 "glob": "**/*",
                 "input": "public"
+              },
+              {
+                "glob": "icon.png",
+                "input": "build",
+                "output": "."
               }
             ],
             "styles": ["src/styles.css"],
