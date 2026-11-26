@@ -14,6 +14,7 @@ import { SettingsAgents } from './settings-agents';
 import { SettingsBrowser } from './settings-browser';
 import { SettingsDevices } from './settings-devices';
 import { SettingsGeneral } from './settings-general';
+import { SettingsGitHosts } from './settings-git-hosts';
 import { SettingsKeyboard } from './settings-keyboard';
 import { SettingsPermissions } from './settings-permissions';
 import { SettingsProjects } from './settings-projects';
@@ -29,6 +30,7 @@ type SectionId =
   | 'agents'
   | 'permissions'
   | 'browser'
+  | 'git-hosts'
   | 'devices'
   | 'keyboard'
   | 'about';
@@ -46,6 +48,7 @@ const sections = (): ReadonlyArray<Section> => [
   { id: 'agents', label: $localize`Agents` },
   { id: 'permissions', label: $localize`Permissions` },
   { id: 'browser', label: $localize`Browser` },
+  { id: 'git-hosts', label: $localize`Git hosts` },
   { id: 'devices', label: $localize`Devices` },
   { id: 'keyboard', label: $localize`Keyboard` },
   { id: 'about', label: $localize`About` },
@@ -65,6 +68,7 @@ const sections = (): ReadonlyArray<Section> => [
     SettingsWorkflows,
     SettingsPermissions,
     SettingsBrowser,
+    SettingsGitHosts,
     SettingsDevices,
     SettingsKeyboard,
     SettingsAbout,
@@ -134,6 +138,7 @@ const sections = (): ReadonlyArray<Section> => [
           data-section="browser"
           data-testid="settings-browser"
         />
+        <app-settings-git-hosts class="block scroll-mt-6" data-section="git-hosts" />
         <app-settings-devices class="block scroll-mt-6" data-section="devices" />
         <app-settings-keyboard
           class="block scroll-mt-6"

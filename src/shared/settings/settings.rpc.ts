@@ -168,6 +168,24 @@ export const ExecutionSettings = Schema.Struct(executionFields).annotate({
 });
 export type ExecutionSettings = typeof ExecutionSettings.Type;
 
+/** Global Pull request defaults stored under Settings. */
+export const PullRequestSettings = Schema.Struct({
+  draftingEnabled: Schema.Boolean,
+  draftingAgent: Schema.String,
+  draftingModel: Schema.String,
+  autoUpdateBaseBranchAfterMerge: Schema.Boolean,
+  worktreeBranchPattern: Schema.String,
+}).annotate({ identifier: 'PullRequestSettings' });
+export type PullRequestSettings = typeof PullRequestSettings.Type;
+
+export const DEFAULT_PULL_REQUEST_SETTINGS: PullRequestSettings = {
+  draftingEnabled: true,
+  draftingAgent: 'claude',
+  draftingModel: 'lastUsed',
+  autoUpdateBaseBranchAfterMerge: true,
+  worktreeBranchPattern: 'pr/{number}',
+};
+
 /**
  * Every Setting, fully resolved: defaults filled in, one entry per Catalog Agent. Language, Theme, notifications,
  * Project order and the cross-Project allow-list are the viewing Device's own and never reach a Paired device.
@@ -175,6 +193,7 @@ export type ExecutionSettings = typeof ExecutionSettings.Type;
 export const Settings = Schema.Struct({
   coordinator: Schema.optional(CoordinatorSettings),
   divideAndConquer: Schema.optional(DivideAndConquerSettings),
+  pullRequests: Schema.optional(PullRequestSettings),
   language: Language,
   theme: Theme,
   /** Absent in Settings from a Device that predates Font presets; read as goeist. */
@@ -220,6 +239,7 @@ export type ExecutionSettingsPatch = typeof ExecutionSettingsPatch.Type;
 export const SettingsPatch = Schema.Struct({
   coordinator: Schema.optional(CoordinatorSettings),
   divideAndConquer: Schema.optional(DivideAndConquerSettings),
+  pullRequests: Schema.optional(PullRequestSettings),
   language: Schema.optional(Language),
   theme: Schema.optional(Theme),
   fontPreset: Schema.optional(FontPreset),

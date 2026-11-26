@@ -11,6 +11,7 @@ import { RemoteInfoRpcs } from '../../shared/remote/remote.rpc';
 import { LinksRpcs } from '../../shared/links/links.rpc';
 import { NotificationsRpcs } from '../../shared/notifications/notifications.rpc';
 import { ProjectsRpcs } from '../../shared/projects/projects.rpc';
+import { PullRequestsRpcs } from '../../shared/pull-requests/pull-requests.rpc';
 import { DesktopRpcs } from '../../shared/rpc/desktop-rpcs';
 import { SessionsRpcs } from '../../shared/sessions/sessions.rpc';
 import { ExecutionSettingsRpcs, SettingsRpcs } from '../../shared/settings/settings.rpc';
@@ -264,6 +265,21 @@ export const layerNotificationsUnused = NotificationsRpcs.toLayer({
   'Notifications.events': () => Stream.empty,
 });
 
+/** Pull requests & HostAuth handlers that die: lets tests of other domains build `DesktopRpcs`. */
+export const layerPullRequestsUnused = PullRequestsRpcs.toLayer({
+  'HostAuth.getAccounts': () => Effect.die('HostAuth.getAccounts is not served in this test'),
+  'HostAuth.startDeviceFlow': () =>
+    Effect.die('HostAuth.startDeviceFlow is not served in this test'),
+  'HostAuth.pollDeviceFlow': () => Effect.die('HostAuth.pollDeviceFlow is not served in this test'),
+  'HostAuth.cancelDeviceFlow': () =>
+    Effect.die('HostAuth.cancelDeviceFlow is not served in this test'),
+  'HostAuth.connectPat': () => Effect.die('HostAuth.connectPat is not served in this test'),
+  'HostAuth.checkGhCli': () => Effect.die('HostAuth.checkGhCli is not served in this test'),
+  'HostAuth.importGhCli': () => Effect.die('HostAuth.importGhCli is not served in this test'),
+  'HostAuth.verify': () => Effect.die('HostAuth.verify is not served in this test'),
+  'HostAuth.disconnect': () => Effect.die('HostAuth.disconnect is not served in this test'),
+});
+
 /** Every domain's `layerXUnused`; the handlers a test passes replace the ones it exercises. */
 const layerUnusedHandlers = Layer.mergeAll(
   layerAppInfoUnused,
@@ -289,6 +305,7 @@ const layerUnusedHandlers = Layer.mergeAll(
   layerAssetsUnused,
   layerMessagingUnused,
   layerNotificationsUnused,
+  layerPullRequestsUnused,
 );
 
 type DesktopHandler = Rpc.ToHandler<RpcGroup.Rpcs<typeof DesktopRpcs>>;

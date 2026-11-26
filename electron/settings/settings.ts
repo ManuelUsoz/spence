@@ -8,11 +8,13 @@ import {
   CrossProjectAccess,
   CoordinatorSettings,
   CustomWallpaper,
+  DEFAULT_PULL_REQUEST_SETTINGS,
   DEFAULT_WALLPAPER_ID,
   DivideAndConquerSettings,
   FontPreset,
   Language,
   ProjectOrder,
+  PullRequestSettings,
   SendMode,
   SettingsError,
   SubagentMode,
@@ -40,6 +42,7 @@ export const SettingsFile: LenientFile<Stored> = {
   fields: {
     coordinator: Schema.optional(CoordinatorSettings),
     divideAndConquer: Schema.optional(DivideAndConquerSettings),
+    pullRequests: Schema.optional(PullRequestSettings),
     language: Language,
     theme: Theme,
     fontPreset: Schema.optional(FontPreset),
@@ -60,6 +63,7 @@ export const SettingsFile: LenientFile<Stored> = {
   defaults: {
     coordinator: {},
     divideAndConquer: {},
+    pullRequests: DEFAULT_PULL_REQUEST_SETTINGS,
     language: 'system',
     theme: 'system',
     fontPreset: 'goeist',
@@ -108,7 +112,7 @@ const normalizeBinaryPath = (value: string | null | undefined): string | undefin
 
 const applyPatch = (
   stored: Stored,
-  { agents, coordinator, divideAndConquer, ...rest }: SettingsPatch,
+  { agents, coordinator, divideAndConquer, pullRequests, ...rest }: SettingsPatch,
 ): Stored => {
   const defined = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined));
   const merged = Object.entries(agents ?? {}).reduce<Record<AgentId, AgentDefaults>>(
@@ -149,6 +153,14 @@ const applyPatch = (
     ...(coordinator === undefined
       ? {}
       : { coordinator: { ...stored.coordinator, ...coordinator } }),
+    ...(pullRequests === undefined
+      ? {}
+      : {
+          pullRequests: {
+            ...(stored.pullRequests ?? DEFAULT_PULL_REQUEST_SETTINGS),
+            ...pullRequests,
+          },
+        }),
   };
 };
 
