@@ -1,6 +1,6 @@
 {
   "name": "spence",
-  "version": "0.1.0-rc.2",
+  "version": "0.1.0-rc.3",
   "description": "Desktop app built with Electron and an Angular renderer.",
   "author": "",
   "main": "dist-electron/main.js",
