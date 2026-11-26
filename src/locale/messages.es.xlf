@@ -2397,10 +2397,6 @@
         <source> No Sessions match. </source>
         <target> Ninguna Sesión coincide. </target>
       </trans-unit>
-      <trans-unit id="4930506384627295710" datatype="html">
-        <source>Settings</source>
-        <target>Ajustes</target>
-      </trans-unit>
       <trans-unit id="7061270127169880382" datatype="html">
         <source>This Device</source>
         <target state="translated">Este Dispositivo</target>
@@ -3636,6 +3632,10 @@
         <source>Breadcrumb</source>
         <target>Ruta de navegación</target>
       </trans-unit>
+      <trans-unit id="4930506384627295710" datatype="html">
+        <source>Settings</source>
+        <target>Ajustes</target>
+      </trans-unit>
       <trans-unit id="3334074470958853341" datatype="html">
         <source>Changes apply at once</source>
         <target state="translated">Los cambios se aplican al instante</target>
@@ -3667,6 +3667,10 @@
       <trans-unit id="2246216427798412612" datatype="html">
         <source>Switch Tab</source>
         <target state="translated">Cambiar de Pestaña</target>
+      </trans-unit>
+      <trans-unit id="2244471832629453998" datatype="html">
+        <source>Workspace</source>
+        <target state="translated">Espacio de trabajo</target>
       </trans-unit>
       <trans-unit id="6357866423106114276" datatype="html">
         <source>Needs an answer</source>

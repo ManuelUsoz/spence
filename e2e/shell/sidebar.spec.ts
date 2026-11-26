@@ -2,6 +2,7 @@ import { expect, test } from '../fixtures';
 
 test('renames a Session inline', async ({ spence }) => {
   const page = spence.page;
+  await page.locator('[data-slot="sidebar-trigger"]').click();
   await page.getByTestId('add-project').click();
   await page.getByTestId('new-session').click();
   await page.getByTestId('composer-input').fill('echo:First message');
@@ -28,6 +29,7 @@ test('two Projects: switch between them and start a Session in each', async ({ s
   const addProjectLabel = spence.t({ en: 'Add Project', es: 'Añadir Proyecto' });
   const newSessionLabel = spence.t({ en: 'New Session', es: 'Nueva Sesión' });
 
+  await page.locator('[data-slot="sidebar-trigger"]').click();
   await page.getByTestId('add-project').click();
   await expect(current).toContainText('demo-project');
   await expect(page.getByTestId('sessions-empty')).toHaveText(
@@ -67,13 +69,45 @@ test('two Projects: switch between them and start a Session in each', async ({ s
   await expect(current).toContainText('second-project');
 });
 
-test('the gear opens Settings', async ({ spence }) => {
+test('the gear opens Settings and the permanent rail stays unobstructed across sidebar collapse/expand', async ({
+  spence,
+}) => {
   const page = spence.page;
+  const rail = page.getByTestId('workspace-rail');
+  const railBox = await rail.boundingBox();
+  expect(railBox).not.toBeNull();
+  expect(railBox!.width).toBe(50);
+
+  // Rail is visible and clickable even while the Sessions sidebar starts collapsed.
   await page.getByTestId('open-settings').click();
   await expect(page.getByTestId('settings-page')).toBeVisible();
   await expect(page.getByTestId('settings-header')).toContainText(
     spence.t({ en: 'Settings', es: 'Ajustes' }),
   );
+
+  // Clicking Sessions on the rail closes Settings and returns to the workspace.
+  await page.getByTestId('rail-nav-sessions').click();
+  await expect(page.getByTestId('settings-page')).toBeHidden();
+
+  // Expanding the Sessions sidebar places it beside the 50px rail without overlapping it.
+  await page.locator('[data-slot="sidebar-trigger"]').click();
+  await expect
+    .poll(async () => (await page.locator('[data-slot="sidebar-container"]').boundingBox())?.x)
+    .toBe(50);
+  const containerBox = await page.locator('[data-slot="sidebar-container"]').boundingBox();
+  expect(containerBox).not.toBeNull();
+  expect(containerBox!.width).toBe(256);
+
+  // Settings on the rail remains clickable while the Sessions sidebar is expanded.
+  await page.getByTestId('open-settings').click();
+  await expect(page.getByTestId('settings-page')).toBeVisible();
   await page.getByTestId('settings-back').click();
   await expect(page.getByTestId('settings-page')).toBeHidden();
+
+  // Collapsing via Mod+B tucks the Sessions sidebar behind the 50px rail without hiding the rail.
+  await page.keyboard.press('ControlOrMeta+b');
+  await expect
+    .poll(async () => (await page.locator('[data-slot="sidebar-container"]').boundingBox())?.x)
+    .toBe(-206);
+  await expect(rail).toBeVisible();
 });

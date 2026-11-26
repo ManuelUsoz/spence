@@ -46,6 +46,7 @@ import { SettingsPage } from './settings/settings-page';
 import { SettingsState } from './settings-state';
 import { TabStrip } from './tab-strip';
 import { TabSwitcher } from './tab-switcher';
+import { WorkspaceRail } from './workspace-rail';
 
 const clampPaneWidth = (container: HTMLElement, width: number): number => {
   const maxAllowed =
@@ -79,6 +80,7 @@ const clampPaneWidth = (container: HTMLElement, width: number): number => {
     RouterOutlet,
     TabStrip,
     TabSwitcher,
+    WorkspaceRail,
     SessionConfirmDialog,
     SendToSessionDialog,
   ],
@@ -86,6 +88,7 @@ const clampPaneWidth = (container: HTMLElement, width: number): number => {
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div hlmSidebarWrapper>
+      <app-workspace-rail />
       <app-sidebar />
       <main hlmSidebarInset class="h-svh min-w-0 overflow-hidden">
         @if (settings.open()) {
