@@ -169,7 +169,7 @@ const displayTitle = (
   template: `
     <hlm-sidebar
       collapsible="offcanvas"
-      sidebarContainerClass="data-[side=left]:left-[50px]! data-[side=left]:group-data-[collapsible=offcanvas]:left-[calc(50px-var(--sidebar-width))]!"
+      sidebarContainerClass="data-[side=left]:left-(--workspace-rail-width)! data-[side=left]:group-data-[collapsible=offcanvas]:left-[calc(var(--workspace-rail-width)-var(--sidebar-width))]!"
       srOnlySheetTitle="Sidebar"
       i18n-srOnlySheetTitle
       srOnlySheetDescription="Displays the mobile sidebar."

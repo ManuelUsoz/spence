@@ -25,7 +25,7 @@ export interface RailNavItem {
   imports: [HlmKbdImports, HlmTooltipImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
-    class: 'relative z-20 flex h-svh w-[50px] shrink-0',
+    class: 'relative z-20 flex h-svh w-(--workspace-rail-width) shrink-0',
   },
   template: `
     <nav
@@ -162,7 +162,7 @@ export class WorkspaceRail {
       id: 'sessions',
       label: $localize`Sessions`,
       active: !this.settings.open(),
-      select: () => this.settings.set(false),
+      select: () => this.openSessions(),
     },
   ]);
 }
