@@ -1253,6 +1253,93 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
     document.cookie = 'sidebar_state=; max-age=0; path=/';
   });
 
+  it('renders the permanent WorkspaceRail beside AppSidebar, keeps it visible when collapsed, and offsets the sidebar container', async () => {
+    document.cookie = 'sidebar_state=; max-age=0; path=/';
+    TestBed.configureTestingModule({
+      providers: [provideHlmSidebarConfig({ defaultOpen: false })],
+    });
+    const { fixture } = await mountShell('other');
+    const host = fixture.nativeElement as HTMLElement;
+    const wrapper = host.querySelector('[data-slot="sidebar-wrapper"]');
+    const rail = host.querySelector('[data-testid="workspace-rail"]');
+    const sidebar = host.querySelector('app-sidebar');
+    const container = host.querySelector('[data-slot="sidebar-container"]');
+
+    expect(wrapper).not.toBeNull();
+    expect(rail).not.toBeNull();
+    expect(sidebar).not.toBeNull();
+    // Rail sits before AppSidebar inside the sidebar wrapper.
+    expect(rail!.compareDocumentPosition(sidebar!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Settings button lives on the rail, not in AppSidebar.
+    expect(rail!.querySelector('[data-testid="open-settings"]')).not.toBeNull();
+    expect(sidebar!.querySelector('[data-testid="open-settings"]')).toBeNull();
+    // Sidebar container is offset by the 50px rail both collapsed and expanded.
+    expect(container?.className).toContain('left-[50px]!');
+    expect(container?.className).toContain('left-[calc(50px-var(--sidebar-width))]!');
+
+    host.querySelector<HTMLButtonElement>('[data-slot="sidebar-trigger"]')?.click();
+    fixture.detectChanges();
+    expect(host.querySelector('hlm-sidebar')?.getAttribute('data-state')).toBe('expanded');
+    expect(host.querySelector('[data-testid="workspace-rail"]')).not.toBeNull();
+    document.cookie = 'sidebar_state=; max-age=0; path=/';
+  });
+
+  it('tracks active state on rail Sessions and Settings, toggles Settings, and returns to workspace via Sessions', async () => {
+    const s1 = SessionId.make('s1');
+    const { fixture } = await mountShell('other', {
+      restored: makeRestored(
+        [
+          {
+            projectId: p1,
+            tabs: [
+              { tabId: 't1', paneId: 'pane1', panelId: 'panel1', sessionId: s1, title: 'One' },
+            ],
+          },
+        ],
+        p1,
+      ),
+    });
+    const host = fixture.nativeElement as HTMLElement;
+    const settings = TestBed.inject(SettingsState);
+    const rail = host.querySelector('[data-testid="workspace-rail"]')!;
+    const sessionsBtn = rail.querySelector<HTMLButtonElement>('[data-testid="rail-nav-sessions"]')!;
+    const settingsBtn = rail.querySelector<HTMLButtonElement>('[data-testid="open-settings"]')!;
+
+    // Only Sessions is in the extensible nav list today (no stubbed PR/Issues buttons or mock badges).
+    expect(
+      Array.from(rail.querySelectorAll('[data-testid^="rail-nav-"]')).map((el) =>
+        el.getAttribute('data-testid'),
+      ),
+    ).toEqual(['rail-nav-sessions']);
+    expect(sessionsBtn.getAttribute('aria-current')).toBe('page');
+    expect(settingsBtn.getAttribute('aria-current')).toBeNull();
+
+    // Clicking open-settings in the rail toggles Settings on and updates active indicators.
+    settingsBtn.click();
+    fixture.detectChanges();
+    expect(settings.open()).toBe(true);
+    expect(host.querySelector('[data-testid="settings-header"]')).not.toBeNull();
+    expect(settingsBtn.getAttribute('aria-current')).toBe('page');
+    expect(sessionsBtn.getAttribute('aria-current')).toBeNull();
+
+    // Clicking open-settings again toggles Settings off.
+    settingsBtn.click();
+    fixture.detectChanges();
+    expect(settings.open()).toBe(false);
+    expect(host.querySelector('[data-testid="tab-strip"]')).not.toBeNull();
+    expect(sessionsBtn.getAttribute('aria-current')).toBe('page');
+
+    // Clicking Sessions while Settings is open closes Settings and returns to the workspace.
+    settingsBtn.click();
+    fixture.detectChanges();
+    expect(settings.open()).toBe(true);
+    sessionsBtn.click();
+    fixture.detectChanges();
+    expect(settings.open()).toBe(false);
+    expect(host.querySelector('[data-testid="tab-strip"]')).not.toBeNull();
+    expect(sessionsBtn.getAttribute('aria-current')).toBe('page');
+  });
+
   it('keeps Settings outside Tabs with sidebar trigger, back button, and live notice, and closes cleanly on Tab activation', async () => {
     const s1 = SessionId.make('s1');
     const { fixture, tabs } = await mountShell('other', {
