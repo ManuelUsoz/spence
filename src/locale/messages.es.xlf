@@ -3232,6 +3232,162 @@
         <source>Custom</source>
         <target state="translated">Personalizado</target>
       </trans-unit>
+      <trans-unit id="1464134678151157152" datatype="html">
+        <source>OAuth Device Flow</source>
+        <target state="translated">Flujo de dispositivo OAuth</target>
+      </trans-unit>
+      <trans-unit id="1412749119171733013" datatype="html">
+        <source>Personal Access Token</source>
+        <target state="translated">Token de acceso personal</target>
+      </trans-unit>
+      <trans-unit id="849471663998358335" datatype="html">
+        <source>GitHub CLI</source>
+        <target state="translated">GitHub CLI</target>
+      </trans-unit>
+      <trans-unit id="4172155654923865125" datatype="html">
+        <source>Git hosts</source>
+        <target state="translated">Hosts de Git</target>
+      </trans-unit>
+      <trans-unit id="5964055238036643365" datatype="html">
+        <source> Could not load Git hosts. </source>
+        <target state="translated"> No se pudieron cargar los hosts de Git. </target>
+      </trans-unit>
+      <trans-unit id="329021733446822754" datatype="html">
+        <source>OS secure storage is unavailable</source>
+        <target state="translated">El almacenamiento seguro del sistema no está disponible</target>
+      </trans-unit>
+      <trans-unit id="8507269527692900707" datatype="html">
+        <source> No OS keyring was detected (Linux basic_text fallback). Spence will not save tokens to disk. Connecting uses session-only in-memory storage until you quit Spence. </source>
+        <target state="translated"> No se detectó ningún llavero del sistema (respaldo basic_text de Linux). Spence no guardará tokens en disco. Al conectar se usará almacenamiento en memoria solo para esta sesión hasta que cierres Spence. </target>
+      </trans-unit>
+      <trans-unit id="1131510698831463667" datatype="html">
+        <source>Session-only</source>
+        <target state="translated">Solo sesión</target>
+      </trans-unit>
+      <trans-unit id="1853474645590476992" datatype="html">
+        <source> Connected </source>
+        <target state="translated"> Conectado </target>
+      </trans-unit>
+      <trans-unit id="7706788635752176184" datatype="html">
+        <source> Needs reconnect </source>
+        <target state="translated"> Necesita reconexión </target>
+      </trans-unit>
+      <trans-unit id="1812429098722823159" datatype="html">
+        <source> Verify </source>
+        <target state="translated"> Verificar </target>
+      </trans-unit>
+      <trans-unit id="3533564343860030179" datatype="html">
+        <source> Reconnect </source>
+        <target state="translated"> Reconectar </target>
+      </trans-unit>
+      <trans-unit id="7485995976269020304" datatype="html">
+        <source> Disconnect </source>
+        <target state="translated"> Desconectar </target>
+      </trans-unit>
+      <trans-unit id="3658050885783066573" datatype="html">
+        <source>Reconnect your GitHub account</source>
+        <target state="translated">Reconecta tu cuenta de GitHub</target>
+      </trans-unit>
+      <trans-unit id="9141752656406613056" datatype="html">
+        <source>Enter this code on GitHub</source>
+        <target state="translated">Introduce este código en GitHub</target>
+      </trans-unit>
+      <trans-unit id="457783086904641183" datatype="html">
+        <source> Copy code </source>
+        <target state="translated"> Copiar código </target>
+      </trans-unit>
+      <trans-unit id="1631313345549014098" datatype="html">
+        <source> Open GitHub </source>
+        <target state="translated"> Abrir GitHub </target>
+      </trans-unit>
+      <trans-unit id="7223244762811292403" datatype="html">
+        <source>Waiting for GitHub authorization…</source>
+        <target state="translated">Esperando autorización de GitHub…</target>
+      </trans-unit>
+      <trans-unit id="59171013126527673" datatype="html">
+        <source>GitHub OAuth</source>
+        <target state="translated">GitHub OAuth</target>
+      </trans-unit>
+      <trans-unit id="3296240187645156855" datatype="html">
+        <source>Sign in via your browser with repo and read:org access.</source>
+        <target state="translated">Inicia sesión en tu navegador con acceso repo y read:org.</target>
+      </trans-unit>
+      <trans-unit id="7152709565822773816" datatype="html">
+        <source> Sign in with GitHub </source>
+        <target state="translated"> Iniciar sesión con GitHub </target>
+      </trans-unit>
+      <trans-unit id="6319862504074456118" datatype="html">
+        <source>Personal access token</source>
+        <target state="translated">Token de acceso personal</target>
+      </trans-unit>
+      <trans-unit id="480760977881173939" datatype="html">
+        <source>Classic PAT with repo and read:org scopes.</source>
+        <target state="translated">PAT clásico con alcances repo y read:org.</target>
+      </trans-unit>
+      <trans-unit id="1545005867911976778" datatype="html">
+        <source> Connect </source>
+        <target state="translated"> Conectar </target>
+      </trans-unit>
+      <trans-unit id="5662317177151217278" datatype="html">
+        <source> Import from gh CLI </source>
+        <target state="translated"> Importar desde gh CLI </target>
+      </trans-unit>
+      <trans-unit id="5012961779948868354" datatype="html">
+        <source> Disconnect GitHub account? </source>
+        <target state="translated"> ¿Desconectar cuenta de GitHub? </target>
+      </trans-unit>
+      <trans-unit id="4492621289333105725" datatype="html">
+        <source> This removes <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;font-mono text-xs&quot;&gt;"/>@<x id="INTERPOLATION" equiv-text="{{ account.handle }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/> and clears cached Pull requests from this Device. </source>
+        <target state="translated"> Esto elimina <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;font-mono text-xs&quot;&gt;"/>@<x id="INTERPOLATION" equiv-text="{{ account.handle }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/> y borra los Pull requests en caché de este Dispositivo. </target>
+      </trans-unit>
+      <trans-unit id="1619503028303150156" datatype="html">
+        <source>gh CLI not found on Merged PATH.</source>
+        <target state="translated">No se encontró gh CLI en Merged PATH.</target>
+      </trans-unit>
+      <trans-unit id="7590350972432240206" datatype="html">
+        <source>gh CLI found, but not signed in to github.com.</source>
+        <target state="translated">Se encontró gh CLI, pero no ha iniciado sesión en github.com.</target>
+      </trans-unit>
+      <trans-unit id="7581585852420227803" datatype="html">
+        <source>One-time import for @<x id="handle" equiv-text="cli.handle"/> via gh auth token.</source>
+        <target state="translated">Importación única para @<x id="handle" equiv-text="cli.handle"/> mediante gh auth token.</target>
+      </trans-unit>
+      <trans-unit id="4084805053722470274" datatype="html">
+        <source>One-time import via gh auth token.</source>
+        <target state="translated">Importación única mediante gh auth token.</target>
+      </trans-unit>
+      <trans-unit id="5636746108814264916" datatype="html">
+        <source>Connected GitHub as @<x id="handle" equiv-text="exit.value.handle"/>.</source>
+        <target state="translated">GitHub conectado como @<x id="handle" equiv-text="exit.value.handle"/>.</target>
+      </trans-unit>
+      <trans-unit id="3285092439283035864" datatype="html">
+        <source>Imported GitHub account @<x id="handle" equiv-text="exit.value.handle"/>.</source>
+        <target state="translated">Cuenta de GitHub importada @<x id="handle" equiv-text="exit.value.handle"/>.</target>
+      </trans-unit>
+      <trans-unit id="3516052818074393125" datatype="html">
+        <source>Copied code to clipboard.</source>
+        <target state="translated">Código copiado al portapapeles.</target>
+      </trans-unit>
+      <trans-unit id="2119481508900462945" datatype="html">
+        <source>Could not copy code.</source>
+        <target state="translated">No se pudo copiar el código.</target>
+      </trans-unit>
+      <trans-unit id="4000435185388636624" datatype="html">
+        <source>GitHub connection verified.</source>
+        <target state="translated">Conexión con GitHub verificada.</target>
+      </trans-unit>
+      <trans-unit id="7776171653230769095" datatype="html">
+        <source>GitHub account needs reconnect.</source>
+        <target state="translated">La cuenta de GitHub necesita reconexión.</target>
+      </trans-unit>
+      <trans-unit id="7369313760004031171" datatype="html">
+        <source>Disconnected GitHub account.</source>
+        <target state="translated">Cuenta de GitHub desconectada.</target>
+      </trans-unit>
+      <trans-unit id="2791145711254308885" datatype="html">
+        <source>GitHub authentication failed.</source>
+        <target state="translated">Falló la autenticación con GitHub.</target>
+      </trans-unit>
       <trans-unit id="1762579199463627317" datatype="html">
         <source>Open Settings</source>
         <target>Abrir Ajustes</target>
@@ -3587,10 +3743,6 @@
       <trans-unit id="8528940254923623619" datatype="html">
         <source>Connected now</source>
         <target state="translated">Conectados ahora</target>
-      </trans-unit>
-      <trans-unit id="7485995976269020304" datatype="html">
-        <source> Disconnect </source>
-        <target state="translated"> Desconectar </target>
       </trans-unit>
       <trans-unit id="2595779289609119263" datatype="html">
         <source> No Remote device is connected. </source>

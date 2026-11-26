@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { AgentId } from '../../src/shared/agents/agents.rpc';
 import {
+  DEFAULT_PULL_REQUEST_SETTINGS,
   DEFAULT_WALLPAPER_ID,
   type Language,
   type Settings as SettingsValue,
@@ -23,6 +24,7 @@ const NEVER_RUN = { model: 'lastUsed', effort: 'lastUsed', models: [], ran: fals
 const DEFAULTS: SettingsValue = {
   coordinator: {},
   divideAndConquer: {},
+  pullRequests: DEFAULT_PULL_REQUEST_SETTINGS,
   language: 'system',
   theme: 'system',
   fontPreset: 'goeist',
