@@ -133,26 +133,6 @@ export const GhCliStatus = Schema.Struct({
 }).annotate({ identifier: 'GhCliStatus' });
 export type GhCliStatus = typeof GhCliStatus.Type;
 
-/** Normalized failure across all Git host auth, transport, and API boundaries. */
-export class GitHostError extends Schema.TaggedError<GitHostError>()('GitHostError', {
-  reason: Schema.Literals([
-    'NotAuthenticated',
-    'TokenExpired',
-    'Forbidden',
-    'NotFound',
-    'ValidationFailed',
-    'Conflict',
-    'RateLimited',
-    'UnsupportedCapability',
-    'NetworkUnavailable',
-    'HostError',
-  ]),
-  detail: Schema.String,
-  retryAfterSeconds: Schema.optionalKey(Schema.Number),
-  resetAt: Schema.optionalKey(Timestamp),
-  conflictingFields: Schema.optionalKey(Schema.Array(Schema.String)),
-}) {}
-
 /** Supported merge strategies on a Git host. */
 export const MergeMethod = Schema.Literals(['merge', 'squash', 'rebase']).annotate({
   identifier: 'MergeMethod',
@@ -219,6 +199,7 @@ export type PullRequestLabel = typeof PullRequestLabel.Type;
 /** Repository milestone. */
 export const PullRequestMilestone = Schema.Struct({
   id: Schema.String,
+  number: Schema.optionalKey(Schema.Int),
   title: Schema.String,
   dueOn: Schema.NullOr(Timestamp),
 }).annotate({ identifier: 'PullRequestMilestone' });
@@ -271,6 +252,7 @@ export type Review = typeof Review.Type;
 /** A comment inside an inline Review thread. */
 export const ReviewComment = Schema.Struct({
   id: CommentId,
+  reviewId: Schema.optionalKey(ReviewId),
   author: HostActor,
   body: Schema.String,
   createdAt: Timestamp,
@@ -375,8 +357,78 @@ export const PullRequestDetail = Schema.Struct({
   comments: Schema.Array(PullRequestComment),
   actions: PullRequestActions,
   revision: PullRequestRevision,
+  viewerLogin: Schema.optionalKey(Schema.NullOr(Schema.String)),
 }).annotate({ identifier: 'PullRequestDetail' });
 export type PullRequestDetail = typeof PullRequestDetail.Type;
+
+/** Normalized failure across all Git host auth, transport, and API boundaries. */
+export class GitHostError extends Schema.TaggedError<GitHostError>()('GitHostError', {
+  reason: Schema.Literals([
+    'NotAuthenticated',
+    'TokenExpired',
+    'Forbidden',
+    'NotFound',
+    'ValidationFailed',
+    'Conflict',
+    'RateLimited',
+    'UnsupportedCapability',
+    'NetworkUnavailable',
+    'HostError',
+  ]),
+  detail: Schema.String,
+  retryAfterSeconds: Schema.optionalKey(Schema.Number),
+  resetAt: Schema.optionalKey(Timestamp),
+  conflictingFields: Schema.optionalKey(Schema.Array(Schema.String)),
+  latestDetail: Schema.optionalKey(PullRequestDetail),
+}) {}
+
+/** Editable metadata fields for `PullRequests.update`. */
+export const PullRequestUpdatePatch = Schema.Struct({
+  title: Schema.optionalKey(Schema.String),
+  body: Schema.optionalKey(Schema.String),
+  baseRef: Schema.optionalKey(Schema.String),
+  draft: Schema.optionalKey(Schema.Boolean),
+  reviewers: Schema.optionalKey(Schema.Array(Schema.String)),
+  assignees: Schema.optionalKey(Schema.Array(Schema.String)),
+  labels: Schema.optionalKey(Schema.Array(Schema.String)),
+  milestoneId: Schema.optionalKey(Schema.NullOr(Schema.String)),
+}).annotate({ identifier: 'PullRequestUpdatePatch' });
+export type PullRequestUpdatePatch = typeof PullRequestUpdatePatch.Type;
+
+/** Target for `PullRequests.addComment` (general conversation, thread reply, or diff line/range). */
+export const AddCommentTarget = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal('General'),
+  }),
+  Schema.Struct({
+    _tag: Schema.Literal('ThreadReply'),
+    threadId: ReviewThreadId,
+  }),
+  Schema.Struct({
+    _tag: Schema.Literal('DiffLine'),
+    path: Schema.String,
+    line: Schema.Int,
+    side: Schema.Literals(['LEFT', 'RIGHT']),
+    startLine: Schema.optionalKey(Schema.Int),
+    startSide: Schema.optionalKey(Schema.Literals(['LEFT', 'RIGHT'])),
+    pending: Schema.Boolean,
+  }),
+]).annotate({ identifier: 'AddCommentTarget' });
+export type AddCommentTarget = typeof AddCommentTarget.Type;
+
+/** Kind of comment for edit/delete operations. */
+export const PullRequestCommentKind = Schema.Literals(['issue', 'review']).annotate({
+  identifier: 'PullRequestCommentKind',
+});
+export type PullRequestCommentKind = typeof PullRequestCommentKind.Type;
+
+/** Verdict event when submitting a Pull request Review. */
+export const ReviewSubmitEvent = Schema.Literals(['comment', 'approve', 'requestChanges']).annotate(
+  {
+    identifier: 'ReviewSubmitEvent',
+  },
+);
+export type ReviewSubmitEvent = typeof ReviewSubmitEvent.Type;
 
 /** One line in a parsed PR unified diff hunk. */
 export const PrDiffLine = Schema.Struct({
@@ -551,6 +603,86 @@ export const PullRequestsRpcs = RpcGroup.make(
   Rpc.make('PullRequests.getDiff', {
     payload: { projectId: ProjectId, number: PullRequestNumber },
     success: PullRequestDiff,
+    error: GitHostError,
+  }),
+  Rpc.make('PullRequests.update', {
+    payload: {
+      projectId: ProjectId,
+      number: PullRequestNumber,
+      revision: PullRequestRevision,
+      patch: PullRequestUpdatePatch,
+      baseline: Schema.optionalKey(PullRequestUpdatePatch),
+    },
+    success: PullRequestDetail,
+    error: GitHostError,
+  }),
+  Rpc.make('PullRequests.addComment', {
+    payload: {
+      projectId: ProjectId,
+      number: PullRequestNumber,
+      body: Schema.String,
+      target: AddCommentTarget,
+    },
+    success: PullRequestDetail,
+    error: GitHostError,
+  }),
+  Rpc.make('PullRequests.editComment', {
+    payload: {
+      projectId: ProjectId,
+      number: PullRequestNumber,
+      commentId: CommentId,
+      kind: PullRequestCommentKind,
+      body: Schema.String,
+    },
+    success: PullRequestDetail,
+    error: GitHostError,
+  }),
+  Rpc.make('PullRequests.deleteComment', {
+    payload: {
+      projectId: ProjectId,
+      number: PullRequestNumber,
+      commentId: CommentId,
+      kind: PullRequestCommentKind,
+    },
+    success: PullRequestDetail,
+    error: GitHostError,
+  }),
+  Rpc.make('PullRequests.submitReview', {
+    payload: {
+      projectId: ProjectId,
+      number: PullRequestNumber,
+      reviewId: Schema.optionalKey(ReviewId),
+      event: ReviewSubmitEvent,
+      body: Schema.String,
+    },
+    success: PullRequestDetail,
+    error: GitHostError,
+  }),
+  Rpc.make('PullRequests.deletePendingReview', {
+    payload: {
+      projectId: ProjectId,
+      number: PullRequestNumber,
+      reviewId: ReviewId,
+    },
+    success: PullRequestDetail,
+    error: GitHostError,
+  }),
+  Rpc.make('PullRequests.resolveThread', {
+    payload: {
+      projectId: ProjectId,
+      number: PullRequestNumber,
+      threadId: ReviewThreadId,
+    },
+    success: PullRequestDetail,
+    error: GitHostError,
+  }),
+  Rpc.make('PullRequests.unresolveThread', {
+    payload: {
+      projectId: ProjectId,
+      number: PullRequestNumber,
+      threadId: ReviewThreadId,
+    },
+    success: PullRequestDetail,
     error: GitHostError,
   }),
 );

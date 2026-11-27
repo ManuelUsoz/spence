@@ -122,6 +122,18 @@ export const layerPullRequestsHandlersWith = PullRequestsRpcs.toLayer({
     PullRequestsService.use((svc) => svc.getDetail(projectId, number, bypassEtag)),
   'PullRequests.getDiff': ({ projectId, number }) =>
     PullRequestsService.use((svc) => svc.getDiff(projectId, number)),
+  'PullRequests.update': (input) => PullRequestsService.use((svc) => svc.update(input)),
+  'PullRequests.addComment': (input) => PullRequestsService.use((svc) => svc.addComment(input)),
+  'PullRequests.editComment': (input) => PullRequestsService.use((svc) => svc.editComment(input)),
+  'PullRequests.deleteComment': (input) =>
+    PullRequestsService.use((svc) => svc.deleteComment(input)),
+  'PullRequests.submitReview': (input) => PullRequestsService.use((svc) => svc.submitReview(input)),
+  'PullRequests.deletePendingReview': (input) =>
+    PullRequestsService.use((svc) => svc.deletePendingReview(input)),
+  'PullRequests.resolveThread': (input) =>
+    PullRequestsService.use((svc) => svc.resolveThread(input)),
+  'PullRequests.unresolveThread': (input) =>
+    PullRequestsService.use((svc) => svc.unresolveThread(input)),
 });
 
 /** Local-only Pull requests & HostAuth handlers wired to production `HostAuth` and `PullRequestsService`. */

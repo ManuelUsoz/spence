@@ -1,13 +1,20 @@
 import { Context, Effect, Layer } from 'effect';
 import {
   GitHostError,
+  type AddCommentTarget,
+  type CommentId,
   type GitHostKind,
   type HostCapabilities,
+  type PullRequestCommentKind,
   type PullRequestDetail,
   type PullRequestDiff,
   type PullRequestNumber,
   type PullRequestSummary,
+  type PullRequestUpdatePatch,
   type RemoteRepoRef,
+  type ReviewId,
+  type ReviewSubmitEvent,
+  type ReviewThreadId,
   type WorktreePullRequestLink,
 } from '../../src/shared/pull-requests/pull-requests.rpc';
 
@@ -239,6 +246,53 @@ export interface GitHost {
     readonly headSha: string;
     readonly baseSha: string;
   }) => Effect.Effect<PullRequestDiff, GitHostError>;
+  readonly update: (input: {
+    readonly repo: RemoteRepoRef;
+    readonly number: PullRequestNumber;
+    readonly patch: PullRequestUpdatePatch;
+    readonly currentDetail: PullRequestDetail;
+  }) => Effect.Effect<PullRequestDetail, GitHostError>;
+  readonly addComment: (input: {
+    readonly repo: RemoteRepoRef;
+    readonly number: PullRequestNumber;
+    readonly body: string;
+    readonly target: AddCommentTarget;
+  }) => Effect.Effect<PullRequestDetail, GitHostError>;
+  readonly editComment: (input: {
+    readonly repo: RemoteRepoRef;
+    readonly number: PullRequestNumber;
+    readonly commentId: CommentId;
+    readonly kind: PullRequestCommentKind;
+    readonly body: string;
+  }) => Effect.Effect<PullRequestDetail, GitHostError>;
+  readonly deleteComment: (input: {
+    readonly repo: RemoteRepoRef;
+    readonly number: PullRequestNumber;
+    readonly commentId: CommentId;
+    readonly kind: PullRequestCommentKind;
+  }) => Effect.Effect<PullRequestDetail, GitHostError>;
+  readonly submitReview: (input: {
+    readonly repo: RemoteRepoRef;
+    readonly number: PullRequestNumber;
+    readonly reviewId?: ReviewId;
+    readonly event: ReviewSubmitEvent;
+    readonly body: string;
+  }) => Effect.Effect<PullRequestDetail, GitHostError>;
+  readonly deletePendingReview: (input: {
+    readonly repo: RemoteRepoRef;
+    readonly number: PullRequestNumber;
+    readonly reviewId: ReviewId;
+  }) => Effect.Effect<PullRequestDetail, GitHostError>;
+  readonly resolveThread: (input: {
+    readonly repo: RemoteRepoRef;
+    readonly number: PullRequestNumber;
+    readonly threadId: ReviewThreadId;
+  }) => Effect.Effect<PullRequestDetail, GitHostError>;
+  readonly unresolveThread: (input: {
+    readonly repo: RemoteRepoRef;
+    readonly number: PullRequestNumber;
+    readonly threadId: ReviewThreadId;
+  }) => Effect.Effect<PullRequestDetail, GitHostError>;
   readonly clearEtags: (repo?: RemoteRepoRef) => Effect.Effect<void>;
 }
 
