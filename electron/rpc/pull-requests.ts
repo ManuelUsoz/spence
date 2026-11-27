@@ -1,5 +1,6 @@
 import { Effect, Layer, Option, Stream } from 'effect';
 import { PullRequestsRpcs } from '../../src/shared/pull-requests/pull-requests.rpc';
+import { layerAcpClientMain } from '../acp/acpMain';
 import { layerMergedPathMain } from '../agents/e2e-agent';
 import { layerPathSources } from '../agents/merged-path';
 import { layerSecretStorageLive } from '../devices/secret-storage-electron';
@@ -15,7 +16,9 @@ import {
 } from '../git-hosts/pull-requests-service';
 import { layerProjectsLive } from '../projects/projects';
 import { layerWindowFocus } from '../sessions/window-focus';
+import { layerSettingsMain } from '../settings/window';
 import { layerStoreUserData } from '../store/store';
+import { layerBranchOrigins } from '../worktrees/branch-origins';
 
 /** Production `HostAuth` layer for the Local device. */
 export const layerHostAuthMain = layerHostAuth.pipe(
@@ -38,6 +41,8 @@ export const layerGitHostRegistryMain = Layer.effect(
 
 const layerPrStoreMain = layerPrStore.pipe(Layer.provide(layerStoreUserData));
 
+const layerBranchOriginsMain = layerBranchOrigins.pipe(Layer.provide(layerStoreUserData));
+
 /** Production `PullRequestsService` layer for the Local device. */
 export const layerPullRequestsServiceMain = layerPullRequestsService.pipe(
   Layer.provideMerge(
@@ -48,6 +53,9 @@ export const layerPullRequestsServiceMain = layerPullRequestsService.pipe(
       layerHostAuthMain,
       layerPrStoreMain,
       layerWindowFocus,
+      layerBranchOriginsMain,
+      layerSettingsMain,
+      layerAcpClientMain,
     ),
   ),
 );
@@ -122,6 +130,22 @@ export const layerPullRequestsHandlersWith = PullRequestsRpcs.toLayer({
     PullRequestsService.use((svc) => svc.getDetail(projectId, number, bypassEtag)),
   'PullRequests.getDiff': ({ projectId, number }) =>
     PullRequestsService.use((svc) => svc.getDiff(projectId, number)),
+  'PullRequests.prepareCreate': (input) =>
+    PullRequestsService.use((svc) => svc.prepareCreate(input)),
+  'PullRequests.draftCreate': (input) => PullRequestsService.use((svc) => svc.draftCreate(input)),
+  'PullRequests.create': (input) => PullRequestsService.use((svc) => svc.create(input)),
+  'PullRequests.update': (input) => PullRequestsService.use((svc) => svc.update(input)),
+  'PullRequests.addComment': (input) => PullRequestsService.use((svc) => svc.addComment(input)),
+  'PullRequests.editComment': (input) => PullRequestsService.use((svc) => svc.editComment(input)),
+  'PullRequests.deleteComment': (input) =>
+    PullRequestsService.use((svc) => svc.deleteComment(input)),
+  'PullRequests.submitReview': (input) => PullRequestsService.use((svc) => svc.submitReview(input)),
+  'PullRequests.deletePendingReview': (input) =>
+    PullRequestsService.use((svc) => svc.deletePendingReview(input)),
+  'PullRequests.resolveThread': (input) =>
+    PullRequestsService.use((svc) => svc.resolveThread(input)),
+  'PullRequests.unresolveThread': (input) =>
+    PullRequestsService.use((svc) => svc.unresolveThread(input)),
 });
 
 /** Local-only Pull requests & HostAuth handlers wired to production `HostAuth` and `PullRequestsService`. */

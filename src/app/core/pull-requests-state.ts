@@ -56,6 +56,7 @@ export class PullRequestsState {
   readonly selectedPrNumber = signal<PullRequestNumber | null>(null);
   readonly selectedThreadId = signal<ReviewThreadId | null>(null);
   readonly selectedCheckId = signal<CheckRunId | null>(null);
+  readonly createRequested = signal<{ readonly worktreePath: string | null } | null>(null);
   readonly openSettingsRequested = signal(0);
   readonly pendingSessionAction = signal<PendingSessionPrAction | null>(null);
   readonly pendingAttachmentsBySession = signal<
@@ -178,6 +179,7 @@ export class PullRequestsState {
     prNumber: PullRequestNumber | null = null,
     target?: { readonly threadId?: ReviewThreadId; readonly checkId?: CheckRunId },
   ): void {
+    this.createRequested.set(null);
     this.selectedPrNumber.set(prNumber);
     this.selectedThreadId.set(target?.threadId ?? null);
     this.selectedCheckId.set(target?.checkId ?? null);
@@ -186,6 +188,20 @@ export class PullRequestsState {
       this.loadProject(projectId);
       this.setActiveView({ projectId, prPageOpen: true, activePrNumber: prNumber });
     }
+  }
+
+  openCreatePr(projectId: ProjectId | null, worktreePath: string | null = null): void {
+    this.selectedPrNumber.set(null);
+    this.createRequested.set({ worktreePath });
+    this.prPageOpen.set(true);
+    if (projectId !== null) {
+      this.loadProject(projectId);
+      this.setActiveView({ projectId, prPageOpen: true, activePrNumber: null });
+    }
+  }
+
+  clearCreateRequest(): void {
+    this.createRequested.set(null);
   }
 
   closePrPage(projectId: ProjectId | null): void {

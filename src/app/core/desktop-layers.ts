@@ -289,6 +289,25 @@ export const layerPullRequestsUnused = PullRequestsRpcs.toLayer({
   'PullRequests.unpinNumber': () => Effect.void,
   'PullRequests.getDetail': () => Effect.die('PullRequests.getDetail is not served in this test'),
   'PullRequests.getDiff': () => Effect.die('PullRequests.getDiff is not served in this test'),
+  'PullRequests.prepareCreate': () =>
+    Effect.die('PullRequests.prepareCreate is not served in this test'),
+  'PullRequests.draftCreate': () =>
+    Effect.die('PullRequests.draftCreate is not served in this test'),
+  'PullRequests.create': () => Effect.die('PullRequests.create is not served in this test'),
+  'PullRequests.update': () => Effect.die('PullRequests.update is not served in this test'),
+  'PullRequests.addComment': () => Effect.die('PullRequests.addComment is not served in this test'),
+  'PullRequests.editComment': () =>
+    Effect.die('PullRequests.editComment is not served in this test'),
+  'PullRequests.deleteComment': () =>
+    Effect.die('PullRequests.deleteComment is not served in this test'),
+  'PullRequests.submitReview': () =>
+    Effect.die('PullRequests.submitReview is not served in this test'),
+  'PullRequests.deletePendingReview': () =>
+    Effect.die('PullRequests.deletePendingReview is not served in this test'),
+  'PullRequests.resolveThread': () =>
+    Effect.die('PullRequests.resolveThread is not served in this test'),
+  'PullRequests.unresolveThread': () =>
+    Effect.die('PullRequests.unresolveThread is not served in this test'),
 });
 
 /** Every domain's `layerXUnused`; the handlers a test passes replace the ones it exercises. */

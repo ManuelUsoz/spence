@@ -8,25 +8,38 @@ import {
   input,
   output,
   signal,
+  viewChild,
 } from '@angular/core';
-import { Effect, Exit } from 'effect';
+import { Cause, Effect, Exit } from 'effect';
 import { HlmBadgeImports } from '@ui/badge';
 import { HlmButtonImports } from '@ui/button';
 import { HlmInputImports } from '@ui/input';
+import { toast } from '@ui/toast';
 import type { ProjectId } from '../../../shared/projects/projects.rpc';
 import {
+  GitHostError,
   PullRequestNumber,
+  type AddCommentTarget,
   type CheckRollupStatus,
   type CheckRun,
+  type CommentId,
+  type HostCapabilities,
   type ProjectPullRequestsState,
+  type PullRequestCommentKind,
   type PullRequestDetail,
+  type PullRequestRevision,
   type PullRequestSummary,
   type ReviewThread,
+  type PullRequestUpdatePatch,
+  type ReviewId,
+  type ReviewSubmitEvent,
+  type ReviewThreadId,
 } from '../../../shared/pull-requests/pull-requests.rpc';
-import { DesktopApi } from '../../core/desktop-api';
+import { DesktopApi, type DesktopApiShape } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { PullRequestsState } from '../../core/pull-requests-state';
-import { PrDetailPane, type DiffLoadState } from './pr-detail-pane';
+import { PrCreateForm } from './pr-create-form';
+import { PrDetailPane, type DiffLoadState, type PrConflictState } from './pr-detail-pane';
 import { PrRenderClient } from './pr-render-client';
 import { formatCachedAge, formatResetTime, prStateLabel } from './pr-status';
 
@@ -46,7 +59,7 @@ type DetailLoadState =
  */
 @Component({
   selector: 'app-pull-requests-page',
-  imports: [HlmBadgeImports, HlmButtonImports, HlmInputImports, PrDetailPane],
+  imports: [HlmBadgeImports, HlmButtonImports, HlmInputImports, PrDetailPane, PrCreateForm],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
     class: 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden',
@@ -175,7 +188,7 @@ type DetailLoadState =
             size="sm"
             class="h-7 px-2.5 text-xs"
             data-testid="pr-create-button"
-            (click)="createMode.set(true)"
+            (click)="openCreate()"
             i18n
           >
             Create PR
@@ -391,24 +404,14 @@ type DetailLoadState =
 
             <div class="min-h-0 flex-1 px-8 py-6">
               @if (createMode()) {
-                <div class="space-y-3" data-testid="pr-create-placeholder">
-                  <div class="flex items-center justify-between gap-2">
-                    <h2 class="font-display text-xl font-normal" i18n>Create Pull request</h2>
-                    <button
-                      hlmBtn
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      (click)="createMode.set(false)"
-                      i18n
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                  <p class="text-muted-foreground text-sm" i18n>
-                    Select a Pull request on the left to inspect its details, checks, and diff.
-                  </p>
-                </div>
+                @if (projectId(); as pid) {
+                  <app-pr-create-form
+                    [projectId]="pid"
+                    [worktreePath]="createWorktreePath()"
+                    (cancelled)="closeCreateMode()"
+                    (created)="onPrCreated($event)"
+                  />
+                }
               } @else if (selectedNumber() === null) {
                 <div class="flex h-full items-center justify-center">
                   <p class="font-display text-muted-foreground text-xl font-normal" i18n>
@@ -448,12 +451,23 @@ type DetailLoadState =
                           [renderClient]="renderClient"
                           [selectedThreadId]="prState.selectedThreadId()"
                           [selectedCheckId]="prState.selectedCheckId()"
+                          [capabilities]="projectCapabilities()"
+                          [mutating]="mutating()"
+                          [conflictState]="conflictState()"
                           (retryDiff)="reloadDiffOnly()"
                           (openLink)="openExternal($event)"
                           (referencePr)="referencePrInSession(loaded.value)"
                           (startSession)="startSessionFromPr(loaded.value)"
                           (referenceThread)="referenceThreadInSession(loaded.value, $event)"
                           (referenceCheck)="referenceCheckInSession(loaded.value, $event)"
+                          (saveEdit)="handleSaveEdit($event)"
+                          (clearConflict)="conflictState.set(null)"
+                          (addComment)="handleAddComment($event)"
+                          (editComment)="handleEditComment($event)"
+                          (deleteComment)="handleDeleteComment($event)"
+                          (submitReview)="handleSubmitReview($event)"
+                          (deletePendingReview)="handleDeletePendingReview($event)"
+                          (resolveThread)="handleResolveThread($event)"
                         />
                       }
                     }
@@ -487,16 +501,25 @@ export class PullRequestsPage {
   protected readonly lookingUp = signal(false);
   protected readonly lookupError = signal<string | null>(null);
   protected readonly createMode = signal(false);
+  protected readonly createWorktreePath = signal<string | null>(null);
   protected readonly narrowPane = signal<'list' | 'viewer'>('list');
   protected readonly extraSummaries = signal<ReadonlyArray<PullRequestSummary>>([]);
   protected readonly detailLoad = signal<DetailLoadState>({ status: 'idle' });
   protected readonly diffLoad = signal<DiffLoadState>({ status: 'loading' });
+  protected readonly mutating = signal(false);
+  protected readonly conflictState = signal<PrConflictState | null>(null);
+  private readonly detailPane = viewChild(PrDetailPane);
 
   protected readonly prStateLabel = prStateLabel;
 
   protected readonly projectState = computed<ProjectPullRequestsState | null>(() =>
     this.prState.stateForProject(this.projectId()),
   );
+
+  protected readonly projectCapabilities = computed<HostCapabilities | null>(() => {
+    const state = this.projectState();
+    return state?._tag === 'Available' ? state.capabilities : null;
+  });
 
   protected readonly selectedNumber = computed<PullRequestNumber | null>(() =>
     this.prState.selectedPrNumber(),
@@ -572,6 +595,15 @@ export class PullRequestsPage {
     });
 
     effect(() => {
+      const req = this.prState.createRequested();
+      if (req !== null) {
+        this.createWorktreePath.set(req.worktreePath);
+        this.createMode.set(true);
+        this.narrowPane.set('viewer');
+      }
+    });
+
+    effect(() => {
       const pid = this.projectId();
       const num = this.selectedNumber();
       if (pid === null || num === null) {
@@ -580,6 +612,29 @@ export class PullRequestsPage {
       }
       this.fetchPr(pid, num);
     });
+  }
+
+  protected openCreate(): void {
+    this.createWorktreePath.set(null);
+    this.createMode.set(true);
+    this.narrowPane.set('viewer');
+  }
+
+  protected closeCreateMode(): void {
+    this.createMode.set(false);
+    this.createWorktreePath.set(null);
+    this.prState.clearCreateRequest();
+  }
+
+  protected onPrCreated(summary: PullRequestSummary): void {
+    this.createMode.set(false);
+    this.createWorktreePath.set(null);
+    this.prState.clearCreateRequest();
+    const pid = this.projectId();
+    if (pid !== null) {
+      this.prState.refreshProject(pid);
+    }
+    this.selectPr(summary.ref.number);
   }
 
   protected selectPr(num: PullRequestNumber): void {
@@ -791,6 +846,155 @@ export class PullRequestsPage {
     const state = this.projectState();
     const targetRemoteName = state?._tag === 'Available' ? state.targetRemoteName : 'origin';
     this.prState.startSessionFromPr(pid, detail, targetRemoteName);
+  }
+
+  private runDetailMutation(
+    fn: (
+      api: DesktopApiShape,
+      projectId: ProjectId,
+      number: PullRequestNumber,
+    ) => ReturnType<DesktopApiShape['PullRequests.update']>,
+    options?: { readonly onSuccess?: () => void },
+  ): void {
+    const pid = this.projectId();
+    const num = this.selectedNumber();
+    if (pid === null || num === null) return;
+    this.mutating.set(true);
+    void this.runtime.run(
+      DesktopApi.use((api) => fn(api, pid, num)).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            this.mutating.set(false);
+            if (Exit.isSuccess(exit)) {
+              this.detailLoad.set({ status: 'loaded', value: exit.value });
+              options?.onSuccess?.();
+              return;
+            }
+            const err = Cause.squash(exit.cause);
+            if (err instanceof GitHostError && err.reason === 'Conflict' && err.latestDetail) {
+              this.conflictState.set({
+                conflictingFields: err.conflictingFields ?? [],
+                latestDetail: err.latestDetail,
+              });
+              this.detailLoad.set({ status: 'loaded', value: err.latestDetail });
+              return;
+            }
+            const message =
+              err instanceof GitHostError ? err.detail : $localize`Pull request action failed.`;
+            toast.error(message);
+          }),
+        ),
+      ),
+    );
+  }
+
+  protected handleSaveEdit(event: {
+    readonly revision: PullRequestRevision;
+    readonly patch: PullRequestUpdatePatch;
+    readonly baseline: PullRequestUpdatePatch;
+  }): void {
+    this.conflictState.set(null);
+    this.runDetailMutation(
+      (api, projectId, number) =>
+        api['PullRequests.update']({
+          projectId,
+          number,
+          revision: event.revision,
+          patch: event.patch,
+          baseline: event.baseline,
+        }),
+      { onSuccess: () => this.detailPane()?.closeEditForm() },
+    );
+  }
+
+  protected handleAddComment(event: {
+    readonly body: string;
+    readonly target: AddCommentTarget;
+  }): void {
+    this.runDetailMutation((api, projectId, number) =>
+      api['PullRequests.addComment']({
+        projectId,
+        number,
+        body: event.body,
+        target: event.target,
+      }),
+    );
+  }
+
+  protected handleEditComment(event: {
+    readonly commentId: CommentId;
+    readonly kind: PullRequestCommentKind;
+    readonly body: string;
+  }): void {
+    this.runDetailMutation((api, projectId, number) =>
+      api['PullRequests.editComment']({
+        projectId,
+        number,
+        commentId: event.commentId,
+        kind: event.kind,
+        body: event.body,
+      }),
+    );
+  }
+
+  protected handleDeleteComment(event: {
+    readonly commentId: CommentId;
+    readonly kind: PullRequestCommentKind;
+  }): void {
+    this.runDetailMutation((api, projectId, number) =>
+      api['PullRequests.deleteComment']({
+        projectId,
+        number,
+        commentId: event.commentId,
+        kind: event.kind,
+      }),
+    );
+  }
+
+  protected handleSubmitReview(event: {
+    readonly reviewId?: ReviewId;
+    readonly event: ReviewSubmitEvent;
+    readonly body: string;
+  }): void {
+    this.runDetailMutation((api, projectId, number) =>
+      api['PullRequests.submitReview']({
+        projectId,
+        number,
+        ...(event.reviewId !== undefined ? { reviewId: event.reviewId } : {}),
+        event: event.event,
+        body: event.body,
+      }),
+    );
+  }
+
+  protected handleDeletePendingReview(event: { readonly reviewId: ReviewId }): void {
+    this.runDetailMutation((api, projectId, number) =>
+      api['PullRequests.deletePendingReview']({
+        projectId,
+        number,
+        reviewId: event.reviewId,
+      }),
+    );
+  }
+
+  protected handleResolveThread(event: {
+    readonly threadId: ReviewThreadId;
+    readonly resolved: boolean;
+  }): void {
+    this.runDetailMutation((api, projectId, number) =>
+      event.resolved
+        ? api['PullRequests.resolveThread']({
+            projectId,
+            number,
+            threadId: event.threadId,
+          })
+        : api['PullRequests.unresolveThread']({
+            projectId,
+            number,
+            threadId: event.threadId,
+          }),
+    );
   }
 
   protected rollupDotClass(rollup: CheckRollupStatus): string {

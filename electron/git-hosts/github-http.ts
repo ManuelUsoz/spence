@@ -46,6 +46,22 @@ export interface GitHubHttpShape {
       readonly host?: string;
     },
   ) => Effect.Effect<GitHubHttpResponse<A>, GitHostError>;
+  readonly patchJson: <A>(
+    url: string,
+    body: unknown,
+    options?: {
+      readonly headers?: Readonly<Record<string, string>>;
+      readonly host?: string;
+    },
+  ) => Effect.Effect<GitHubHttpResponse<A>, GitHostError>;
+  readonly deleteJson: <A>(
+    url: string,
+    body?: unknown,
+    options?: {
+      readonly headers?: Readonly<Record<string, string>>;
+      readonly host?: string;
+    },
+  ) => Effect.Effect<GitHubHttpResponse<A>, GitHostError>;
   readonly postForm: <A>(
     url: string,
     body: Readonly<Record<string, string>>,
@@ -313,8 +329,8 @@ export const layerGitHubHttp = Layer.effect(
       });
     };
 
-    const postJson: GitHubHttpShape['postJson'] = <A>(
-      url: string,
+    const sendJson = <A>(
+      baseRequest: HttpClientRequest.HttpClientRequest,
       body: unknown,
       options?: {
         readonly headers?: Readonly<Record<string, string>>;
@@ -322,7 +338,7 @@ export const layerGitHubHttp = Layer.effect(
       },
     ): Effect.Effect<GitHubHttpResponse<A>, GitHostError> => {
       const host = options?.host ?? DEFAULT_HOST;
-      const request = HttpClientRequest.post(url).pipe(
+      const withHeaders = baseRequest.pipe(
         HttpClientRequest.setHeaders({
           accept: 'application/vnd.github+json',
           'content-type': 'application/json',
@@ -330,10 +346,22 @@ export const layerGitHubHttp = Layer.effect(
           'x-github-api-version': '2022-11-28',
           ...(options?.headers ?? {}),
         }),
-        HttpClientRequest.bodyText(JSON.stringify(body), 'application/json'),
       );
+      const request =
+        body === undefined
+          ? withHeaders
+          : HttpClientRequest.bodyText(withHeaders, JSON.stringify(body), 'application/json');
       return runRequest<A>(request, host);
     };
+
+    const postJson: GitHubHttpShape['postJson'] = (url, body, options) =>
+      sendJson(HttpClientRequest.post(url), body, options);
+
+    const patchJson: GitHubHttpShape['patchJson'] = (url, body, options) =>
+      sendJson(HttpClientRequest.patch(url), body, options);
+
+    const deleteJson: GitHubHttpShape['deleteJson'] = (url, body, options) =>
+      sendJson(HttpClientRequest.delete(url), body, options);
 
     const postForm: GitHubHttpShape['postForm'] = <A>(
       url: string,
@@ -355,7 +383,7 @@ export const layerGitHubHttp = Layer.effect(
       return runRequest<A>(request, host);
     };
 
-    return { getJson, getText, postJson, postForm };
+    return { getJson, getText, postJson, patchJson, deleteJson, postForm };
   }),
 );
 

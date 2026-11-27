@@ -13,6 +13,7 @@ import { folderKey } from '../projects/folder-key';
 import { Projects } from '../projects/projects';
 import { Sessions } from '../sessions/sessions';
 import type { WorkerCapabilityFailure } from '../source-control/worker-protocol';
+import { BranchOrigins } from './branch-origins';
 import { detectProjectSetupCommand, runWorktreeSetupCommand } from './worktree-setup';
 import { createWorktree, createWorktreeFromPullRequest, listWorktrees } from './worktrees-core';
 
@@ -51,6 +52,7 @@ export const layerWorktrees = Layer.effect(
   Effect.gen(function* () {
     const sessions = yield* Sessions;
     const projects = Option.getOrUndefined(yield* Effect.serviceOption(Projects));
+    const branchOrigins = Option.getOrUndefined(yield* Effect.serviceOption(BranchOrigins));
     const notFound = (id: SessionId) =>
       new WorktreesError({ reason: 'SessionNotFound', detail: `No Session ${id}.` });
     const folderOf = (id: SessionId) =>
@@ -133,7 +135,18 @@ export const layerWorktrees = Layer.effect(
                   if (created._tag === 'Rejected') return Effect.succeed(created);
                   if (created._tag !== 'Created') return Effect.succeed(unavailable(created));
                   const entry = created.entry;
-                  return sessions.setDraftFolder(id, entry.path).pipe(
+                  const recordOrigin =
+                    branchOrigins !== undefined &&
+                    created.createdFromBranch !== null &&
+                    entry.branch !== null
+                      ? branchOrigins.record({
+                          worktreePath: entry.path,
+                          branch: entry.branch,
+                          createdFromBranch: created.createdFromBranch,
+                        })
+                      : Effect.void;
+                  return recordOrigin.pipe(
+                    Effect.andThen(sessions.setDraftFolder(id, entry.path)),
                     Effect.as<PrepareDraftResult>({ _tag: 'Prepared', entry }),
                     Effect.catchTag('SessionError', (error) =>
                       Effect.succeed<PrepareDraftResult>({
@@ -219,6 +232,17 @@ export const layerWorktrees = Layer.effect(
             }
 
             const entry = created.entry;
+            if (
+              branchOrigins !== undefined &&
+              created.createdFromBranch !== null &&
+              entry.branch !== null
+            ) {
+              yield* branchOrigins.record({
+                worktreePath: entry.path,
+                branch: entry.branch,
+                createdFromBranch: created.createdFromBranch,
+              });
+            }
             yield* emitStep({
               id: 'createWorktree',
               title: 'Create worktree',

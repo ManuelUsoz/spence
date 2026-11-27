@@ -382,6 +382,7 @@ export class ComposerStatus {
 
   /** The Session has not run a Turn yet, so it can still start in a new worktree. */
   protected readonly canSelect = signal(false);
+  private readonly currentWorktreePath = signal<string | null>(null);
   protected readonly mode = signal<Mode>('current');
   private readonly branches = signal<ReadonlyArray<string>>([]);
   /** The branch the new worktree starts from. */
@@ -433,7 +434,12 @@ export class ComposerStatus {
   }
 
   protected openPr(): void {
-    this.prState.openPrPage(this.prState.activeProjectId(), this.linkedPr()?.ref.number ?? null);
+    const linked = this.linkedPr();
+    if (linked !== null) {
+      this.prState.openPrPage(this.prState.activeProjectId(), linked.ref.number);
+      return;
+    }
+    this.prState.openCreatePr(this.prState.activeProjectId(), this.currentWorktreePath());
   }
   protected readonly added = computed(() =>
     (this.repo()?.files ?? []).reduce((sum, file) => sum + (file.additions ?? 0), 0),
@@ -503,6 +509,9 @@ export class ComposerStatus {
       if (seq !== this.seq) return;
       if (Exit.isSuccess(exit) && exit.value._tag === 'Available') {
         this.canSelect.set(exit.value.canSelect);
+        this.currentWorktreePath.set(
+          exit.value.entries.find((entry) => entry.isCurrent)?.path ?? null,
+        );
         const cmd = exit.value.setupCommand ?? null;
         this.detectedSetupCommand.set(cmd);
         if (!this.setupCommandEdited()) {

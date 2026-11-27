@@ -195,6 +195,36 @@ const setupPage = (
       readonly activePrNumber: PullRequestNumber | null;
     }) => void;
     readonly openExternal?: (url: string) => void;
+    readonly update?: (input: {
+      readonly number: PullRequestNumber;
+      readonly revision: { readonly headSha: string; readonly updatedAt: number };
+      readonly patch: Record<string, unknown>;
+    }) => Effect.Effect<PullRequestDetail, GitHostError>;
+    readonly addComment?: (input: {
+      readonly body: string;
+      readonly target: unknown;
+    }) => Effect.Effect<PullRequestDetail, GitHostError>;
+    readonly editComment?: (input: {
+      readonly commentId: CommentId;
+      readonly body: string;
+    }) => Effect.Effect<PullRequestDetail, GitHostError>;
+    readonly deleteComment?: (input: {
+      readonly commentId: CommentId;
+    }) => Effect.Effect<PullRequestDetail, GitHostError>;
+    readonly submitReview?: (input: {
+      readonly reviewId?: ReviewId;
+      readonly event: 'comment' | 'approve' | 'requestChanges';
+      readonly body: string;
+    }) => Effect.Effect<PullRequestDetail, GitHostError>;
+    readonly deletePendingReview?: (input: {
+      readonly reviewId: ReviewId;
+    }) => Effect.Effect<PullRequestDetail, GitHostError>;
+    readonly resolveThread?: (input: {
+      readonly threadId: ReviewThreadId;
+    }) => Effect.Effect<PullRequestDetail, GitHostError>;
+    readonly unresolveThread?: (input: {
+      readonly threadId: ReviewThreadId;
+    }) => Effect.Effect<PullRequestDetail, GitHostError>;
   } = {},
 ) => {
   const layer = makeDesktopTestLayer(
@@ -234,6 +264,39 @@ const setupPage = (
           overrides.getDiff
             ? overrides.getDiff(number)
             : Effect.fail(new GitHostError({ reason: 'NotFound', detail: 'Not found' })),
+        'PullRequests.prepareCreate': () => Effect.die('unused'),
+        'PullRequests.draftCreate': () => Effect.die('unused'),
+        'PullRequests.create': () => Effect.die('unused'),
+        'PullRequests.update': (input) =>
+          overrides.update ? overrides.update(input) : Effect.die('PullRequests.update unused'),
+        'PullRequests.addComment': (input) =>
+          overrides.addComment
+            ? overrides.addComment(input)
+            : Effect.die('PullRequests.addComment unused'),
+        'PullRequests.editComment': (input) =>
+          overrides.editComment
+            ? overrides.editComment(input)
+            : Effect.die('PullRequests.editComment unused'),
+        'PullRequests.deleteComment': (input) =>
+          overrides.deleteComment
+            ? overrides.deleteComment(input)
+            : Effect.die('PullRequests.deleteComment unused'),
+        'PullRequests.submitReview': (input) =>
+          overrides.submitReview
+            ? overrides.submitReview(input)
+            : Effect.die('PullRequests.submitReview unused'),
+        'PullRequests.deletePendingReview': (input) =>
+          overrides.deletePendingReview
+            ? overrides.deletePendingReview(input)
+            : Effect.die('PullRequests.deletePendingReview unused'),
+        'PullRequests.resolveThread': (input) =>
+          overrides.resolveThread
+            ? overrides.resolveThread(input)
+            : Effect.die('PullRequests.resolveThread unused'),
+        'PullRequests.unresolveThread': (input) =>
+          overrides.unresolveThread
+            ? overrides.unresolveThread(input)
+            : Effect.die('PullRequests.unresolveThread unused'),
       }),
       LinksRpcs.toLayer({
         'Links.openExternal': ({ url }) =>
@@ -460,5 +523,236 @@ describe('PullRequestsPage', () => {
 
     el.querySelector<HTMLButtonElement>('[data-testid="pr-degraded-reconnect"]')?.click();
     expect(reconnectEmitted).toBe(true);
+  });
+
+  it('edits PR metadata and resolves field-level conflicts with Keep mine / Use theirs', async () => {
+    const s1 = makeSummary(42, { title: 'Initial title' });
+    const initialDetail: PullRequestDetail = {
+      ...makeDetail(s1),
+      viewerLogin: 'alice',
+      actions: {
+        canUpdate: true,
+        canMerge: true,
+        canReview: true,
+        canApproveOrRequestChanges: false,
+        canResolveThreads: true,
+        allowedMergeMethods: ['merge', 'squash'],
+      },
+    };
+    const remoteDetail: PullRequestDetail = {
+      ...initialDetail,
+      title: 'Remote title',
+      updatedAt: 9_999,
+      revision: { headSha: initialDetail.headSha, updatedAt: 9_999 },
+    };
+    const available: ProjectPullRequestsState = {
+      _tag: 'Available',
+      projectId,
+      repo,
+      targetRemoteName: 'origin',
+      headRemoteName: 'origin',
+      capabilities,
+      accountStatus: 'connected',
+      syncStatus: { status: 'idle' },
+      lastSyncedAt: Date.now(),
+      summaries: [s1],
+      worktreeLinks: {},
+    };
+
+    let attempt = 0;
+    const savedPatches: Array<Record<string, unknown>> = [];
+
+    const fixture = setupPage(available, {
+      getDetail: () => Effect.succeed(initialDetail),
+      getDiff: () => Effect.succeed(makeDiff(s1)),
+      update: ({ patch }) => {
+        attempt += 1;
+        if (attempt === 1) {
+          return Effect.fail(
+            new GitHostError({
+              reason: 'Conflict',
+              detail: 'Remote changed title',
+              conflictingFields: ['title'],
+              latestDetail: remoteDetail,
+            }),
+          );
+        }
+        savedPatches.push(patch);
+        return Effect.succeed({
+          ...remoteDetail,
+          title: String(patch['title'] ?? remoteDetail.title),
+        });
+      },
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    fixture.detectChanges();
+
+    const el = fixture.nativeElement as HTMLElement;
+    el.querySelector<HTMLButtonElement>('[data-testid="pr-list-item-42"]')?.click();
+    await new Promise((r) => setTimeout(r, 40));
+    fixture.detectChanges();
+
+    // Open edit form
+    el.querySelector<HTMLButtonElement>('[data-testid="pr-edit-button"]')?.click();
+    fixture.detectChanges();
+
+    const titleInput = el.querySelector<HTMLInputElement>('[data-testid="pr-edit-title"]');
+    expect(titleInput).not.toBeNull();
+    if (titleInput) {
+      titleInput.value = 'My draft title';
+      titleInput.dispatchEvent(new Event('input'));
+    }
+    fixture.detectChanges();
+
+    // Save -> triggers Conflict on title
+    el.querySelector<HTMLButtonElement>('[data-testid="pr-edit-save"]')?.click();
+    await new Promise((r) => setTimeout(r, 40));
+    fixture.detectChanges();
+
+    const conflictBanner = el.querySelector('[data-testid="pr-conflict-banner-title"]');
+    expect(conflictBanner?.textContent).toContain('Changed on GitHub');
+    expect(conflictBanner?.textContent).toContain('Remote title');
+
+    // Keep mine, then save again
+    el.querySelector<HTMLButtonElement>('[data-testid="pr-conflict-keep-title"]')?.click();
+    fixture.detectChanges();
+    el.querySelector<HTMLButtonElement>('[data-testid="pr-edit-save"]')?.click();
+    await new Promise((r) => setTimeout(r, 40));
+    fixture.detectChanges();
+
+    expect(savedPatches.length).toBe(1);
+    expect(savedPatches[0]?.['title']).toBe('My draft title');
+    expect(el.querySelector('[data-testid="pr-detail-title"]')?.textContent).toContain(
+      'My draft title',
+    );
+  });
+
+  it('supports general/inline comments, pending review submission with own-PR guards, and thread resolution', async () => {
+    const s1 = makeSummary(42, { title: 'Review PR' });
+    const ownDetail: PullRequestDetail = {
+      ...makeDetail(s1),
+      viewerLogin: 'alice',
+      reviews: [
+        {
+          id: ReviewId.make('rev-pending'),
+          author: { login: 'alice', displayName: 'Alice', avatarUrl: null },
+          state: 'pending',
+          body: '',
+          submittedAt: null,
+        },
+      ],
+      actions: {
+        canUpdate: true,
+        canMerge: true,
+        canReview: true,
+        canApproveOrRequestChanges: false,
+        canResolveThreads: true,
+        allowedMergeMethods: ['merge'],
+      },
+    };
+    const available: ProjectPullRequestsState = {
+      _tag: 'Available',
+      projectId,
+      repo,
+      targetRemoteName: 'origin',
+      headRemoteName: 'origin',
+      capabilities,
+      accountStatus: 'connected',
+      syncStatus: { status: 'idle' },
+      lastSyncedAt: Date.now(),
+      summaries: [s1],
+      worktreeLinks: {},
+    };
+
+    const actionsCalled: string[] = [];
+    const fixture = setupPage(available, {
+      getDetail: () => Effect.succeed(ownDetail),
+      getDiff: () => Effect.succeed(makeDiff(s1)),
+      addComment: ({ body }) => {
+        actionsCalled.push(`add:${body}`);
+        return Effect.succeed({
+          ...ownDetail,
+          comments: [
+            ...ownDetail.comments,
+            {
+              id: CommentId.make('c-new'),
+              author: { login: 'alice', displayName: 'Alice', avatarUrl: null },
+              body,
+              createdAt: 5_000,
+              updatedAt: 5_000,
+              url: 'https://github.com/org/repo/pull/42#c-new',
+            },
+          ],
+        });
+      },
+      resolveThread: ({ threadId }) => {
+        actionsCalled.push(`resolve:${threadId}`);
+        return Effect.succeed({
+          ...ownDetail,
+          reviewThreads: ownDetail.reviewThreads.map((t) =>
+            t.id === threadId ? { ...t, isResolved: true } : t,
+          ),
+        });
+      },
+      submitReview: ({ event, body }) => {
+        actionsCalled.push(`review:${event}:${body}`);
+        return Effect.succeed({
+          ...ownDetail,
+          reviews: [],
+        });
+      },
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    fixture.detectChanges();
+
+    const el = fixture.nativeElement as HTMLElement;
+    el.querySelector<HTMLButtonElement>('[data-testid="pr-list-item-42"]')?.click();
+    await new Promise((r) => setTimeout(r, 40));
+    fixture.detectChanges();
+
+    // Own-PR guard: Approve & Request changes disabled
+    const approveBtn = el.querySelector<HTMLButtonElement>(
+      '[data-testid="pr-review-submit-approve"]',
+    );
+    const reqChangesBtn = el.querySelector<HTMLButtonElement>(
+      '[data-testid="pr-review-submit-request-changes"]',
+    );
+    expect(approveBtn?.disabled).toBe(true);
+    expect(reqChangesBtn?.disabled).toBe(true);
+
+    // Post general comment
+    const commentInput = el.querySelector<HTMLTextAreaElement>(
+      '[data-testid="pr-general-comment-input"]',
+    );
+    expect(commentInput).not.toBeNull();
+    if (commentInput) {
+      commentInput.value = 'Nice work!';
+      commentInput.dispatchEvent(new Event('input'));
+    }
+    fixture.detectChanges();
+    el.querySelector<HTMLButtonElement>('[data-testid="pr-general-comment-submit"]')?.click();
+    await new Promise((r) => setTimeout(r, 30));
+    fixture.detectChanges();
+    expect(actionsCalled).toContain('add:Nice work!');
+
+    // One-click resolve thread
+    el.querySelector<HTMLButtonElement>('[data-testid="pr-thread-resolve-toggle-thr-1"]')?.click();
+    await new Promise((r) => setTimeout(r, 30));
+    fixture.detectChanges();
+    expect(actionsCalled).toContain('resolve:thr-1');
+
+    // Finish review as Comment
+    const reviewInput = el.querySelector<HTMLTextAreaElement>(
+      '[data-testid="pr-review-summary-input"]',
+    );
+    if (reviewInput) {
+      reviewInput.value = 'Summary note';
+      reviewInput.dispatchEvent(new Event('input'));
+    }
+    fixture.detectChanges();
+    el.querySelector<HTMLButtonElement>('[data-testid="pr-review-submit-comment"]')?.click();
+    await new Promise((r) => setTimeout(r, 30));
+    fixture.detectChanges();
+    expect(actionsCalled).toContain('review:comment:Summary note');
   });
 });

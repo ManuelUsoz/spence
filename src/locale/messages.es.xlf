@@ -953,6 +953,110 @@
         <source><x id="PH" equiv-text="branch"/> · <x id="PH_1" equiv-text="entry.folderName"/> (missing)</source>
         <target state="translated"><x id="PH" equiv-text="branch"/> · <x id="PH_1" equiv-text="entry.folderName"/> (falta)</target>
       </trans-unit>
+      <trans-unit id="5574768840758186891" datatype="html">
+        <source>Create Pull request</source>
+        <target state="translated">Crear Pull request</target>
+      </trans-unit>
+      <trans-unit id="5038555491699799353" datatype="html">
+        <source> Inspecting branch and repository… </source>
+        <target state="translated"> Inspeccionando la rama y el repositorio… </target>
+      </trans-unit>
+      <trans-unit id="3192753641165405448" datatype="html">
+        <source>Base</source>
+        <target state="translated">Base</target>
+      </trans-unit>
+      <trans-unit id="2572999724448976084" datatype="html">
+        <source>Compare</source>
+        <target state="translated">Comparar</target>
+      </trans-unit>
+      <trans-unit id="4052006402535164952" datatype="html">
+        <source>1 commit ahead</source>
+        <target state="translated">1 commit adelante</target>
+      </trans-unit>
+      <trans-unit id="1884770473820389763" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ prep.aheadCount }}"/> commits ahead</source>
+        <target state="translated"><x id="INTERPOLATION" equiv-text="{{ prep.aheadCount }}"/> commits adelante</target>
+      </trans-unit>
+      <trans-unit id="4029853311235186578" datatype="html">
+        <source> This Worktree has uncommitted changes. Only committed changes on <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;font-mono&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ prep.headRef ?? &apos;HEAD&apos; }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/> will be included. </source>
+        <target state="translated"> Este Worktree tiene cambios sin confirmar. Solo se incluirán los cambios confirmados en <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;font-mono&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ prep.headRef ?? &apos;HEAD&apos; }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>. </target>
+      </trans-unit>
+      <trans-unit id="3588237785053828437" datatype="html">
+        <source>An Agent draft is ready. Apply it over your current edits?</source>
+        <target state="translated">Hay un borrador del Agente listo. ¿Aplicarlo sobre tus ediciones actuales?</target>
+      </trans-unit>
+      <trans-unit id="1767113364662806309" datatype="html">
+        <source> Apply draft </source>
+        <target state="translated"> Aplicar borrador </target>
+      </trans-unit>
+      <trans-unit id="4128937884409277931" datatype="html">
+        <source> Dismiss </source>
+        <target state="translated"> Descartar </target>
+      </trans-unit>
+      <trans-unit id="5701618810648052610" datatype="html">
+        <source>Title</source>
+        <target state="translated">Título</target>
+      </trans-unit>
+      <trans-unit id="1865804606362701850" datatype="html">
+        <source> Drafting… </source>
+        <target state="translated"> Redactando… </target>
+      </trans-unit>
+      <trans-unit id="2762564343814333618" datatype="html">
+        <source> Couldn&apos;t draft </source>
+        <target state="translated"> No se pudo redactar </target>
+      </trans-unit>
+      <trans-unit id="5055839848328237034" datatype="html">
+        <source> Redraft </source>
+        <target state="translated"> Volver a redactar </target>
+      </trans-unit>
+      <trans-unit id="9099992574205567741" datatype="html">
+        <source>Pull request title</source>
+        <target state="translated">Título del Pull request</target>
+      </trans-unit>
+      <trans-unit id="4902817035128594900" datatype="html">
+        <source>Description</source>
+        <target state="translated">Descripción</target>
+      </trans-unit>
+      <trans-unit id="1013758269729949165" datatype="html">
+        <source>Describe your changes…</source>
+        <target state="translated">Describe tus cambios…</target>
+      </trans-unit>
+      <trans-unit id="8598935899014838898" datatype="html">
+        <source>Create as draft</source>
+        <target state="translated">Crear como borrador</target>
+      </trans-unit>
+      <trans-unit id="6107705167812898552" datatype="html">
+        <source>Pushing &amp; creating…</source>
+        <target state="translated">Enviando y creando…</target>
+      </trans-unit>
+      <trans-unit id="5554949022015540852" datatype="html">
+        <source>Creating…</source>
+        <target state="translated">Creando…</target>
+      </trans-unit>
+      <trans-unit id="5895314037334040" datatype="html">
+        <source>Push &amp; create</source>
+        <target state="translated">Enviar y crear</target>
+      </trans-unit>
+      <trans-unit id="705141540857833584" datatype="html">
+        <source>Create pull request</source>
+        <target state="translated">Crear pull request</target>
+      </trans-unit>
+      <trans-unit id="3918206930972174258" datatype="html">
+        <source> Replace edits with a fresh draft? </source>
+        <target state="translated"> ¿Reemplazar tus cambios con un borrador nuevo? </target>
+      </trans-unit>
+      <trans-unit id="2525561597731605187" datatype="html">
+        <source> Your current title and description edits will be replaced by a new Agent draft. </source>
+        <target state="translated"> Tus cambios actuales en el título y la descripción serán reemplazados por un nuevo borrador del Agente. </target>
+      </trans-unit>
+      <trans-unit id="5900134737402427405" datatype="html">
+        <source>Could not inspect branch for Pull request creation.</source>
+        <target state="translated">No se pudo inspeccionar la rama para crear el Pull request.</target>
+      </trans-unit>
+      <trans-unit id="5401888598385867722" datatype="html">
+        <source>Could not create Pull request.</source>
+        <target state="translated">No se pudo crear el Pull request.</target>
+      </trans-unit>
       <trans-unit id="5743757503664322992" datatype="html">
         <source>Pinned</source>
         <target state="translated">Fijado</target>
@@ -965,9 +1069,57 @@
         <source> Reference in Session </source>
         <target state="translated"> Referenciar en sesión </target>
       </trans-unit>
+      <trans-unit id="5377078063439833222" datatype="html">
+        <source> Edit </source>
+        <target state="translated"> Editar </target>
+      </trans-unit>
       <trans-unit id="6498416869507452450" datatype="html">
         <source> Open in GitHub </source>
         <target state="translated"> Abrir en GitHub </target>
+      </trans-unit>
+      <trans-unit id="1152705163072141759" datatype="html">
+        <source>Changed on GitHub</source>
+        <target state="translated">Cambiado en GitHub</target>
+      </trans-unit>
+      <trans-unit id="550068835569486874" datatype="html">
+        <source> Keep mine </source>
+        <target state="translated"> Conservar el mío </target>
+      </trans-unit>
+      <trans-unit id="3961745271360817448" datatype="html">
+        <source> Use theirs </source>
+        <target state="translated"> Usar el suyo </target>
+      </trans-unit>
+      <trans-unit id="4720198438622999613" datatype="html">
+        <source>Base branch</source>
+        <target state="translated">Rama base</target>
+      </trans-unit>
+      <trans-unit id="2015619356149054836" datatype="html">
+        <source>Draft Pull request</source>
+        <target state="translated">Pull request en borrador</target>
+      </trans-unit>
+      <trans-unit id="1377677897256374766" datatype="html">
+        <source>Reviewers</source>
+        <target state="translated">Revisores</target>
+      </trans-unit>
+      <trans-unit id="4580853214337140621" datatype="html">
+        <source>Assignees</source>
+        <target state="translated">Asignados</target>
+      </trans-unit>
+      <trans-unit id="546766753072101168" datatype="html">
+        <source>Labels</source>
+        <target state="translated">Etiquetas</target>
+      </trans-unit>
+      <trans-unit id="3193542763969043102" datatype="html">
+        <source>Milestone</source>
+        <target state="translated">Hito</target>
+      </trans-unit>
+      <trans-unit id="7577072957512523093" datatype="html">
+        <source>No milestone</source>
+        <target state="translated">Sin hito</target>
+      </trans-unit>
+      <trans-unit id="3620188369327429839" datatype="html">
+        <source> Save </source>
+        <target state="translated"> Guardar </target>
       </trans-unit>
       <trans-unit id="1833493149202598338" datatype="html">
         <source>Mergeability:</source>
@@ -1013,10 +1165,6 @@
         <source> Details </source>
         <target state="translated"> Detalles </target>
       </trans-unit>
-      <trans-unit id="4902817035128594900" datatype="html">
-        <source>Description</source>
-        <target state="translated">Descripción</target>
-      </trans-unit>
       <trans-unit id="3696759734324421631" datatype="html">
         <source>No description provided.</source>
         <target state="translated">No se proporcionó descripción.</target>
@@ -1036,6 +1184,42 @@
       <trans-unit id="7586623166721265395" datatype="html">
         <source>Outdated</source>
         <target state="translated">Desactualizado</target>
+      </trans-unit>
+      <trans-unit id="6660925946511264619" datatype="html">
+        <source> Delete </source>
+        <target state="translated"> Eliminar </target>
+      </trans-unit>
+      <trans-unit id="8838382386866179988" datatype="html">
+        <source>Leave a comment…</source>
+        <target state="translated">Deja un comentario…</target>
+      </trans-unit>
+      <trans-unit id="3073555100582825289" datatype="html">
+        <source> Comment </source>
+        <target state="translated"> Comentar </target>
+      </trans-unit>
+      <trans-unit id="6933917130302920891" datatype="html">
+        <source>Finish review</source>
+        <target state="translated">Finalizar revisión</target>
+      </trans-unit>
+      <trans-unit id="649519154635069825" datatype="html">
+        <source> Pending (<x id="INTERPOLATION" equiv-text="{{ pendingInlineCommentCount() }}"/> inline) </source>
+        <target state="translated"> Pendiente (<x id="INTERPOLATION" equiv-text="{{ pendingInlineCommentCount() }}"/> en línea) </target>
+      </trans-unit>
+      <trans-unit id="3868050491419665961" datatype="html">
+        <source> Discard review </source>
+        <target state="translated"> Descartar revisión </target>
+      </trans-unit>
+      <trans-unit id="8067145178979524756" datatype="html">
+        <source>Leave a review summary (optional for Comment / Approve)…</source>
+        <target state="translated">Deja un resumen de la revisión (opcional para Comentar / Aprobar)…</target>
+      </trans-unit>
+      <trans-unit id="2607565416406926368" datatype="html">
+        <source> Approve </source>
+        <target state="translated"> Aprobar </target>
+      </trans-unit>
+      <trans-unit id="9130434323505013089" datatype="html">
+        <source> Request changes </source>
+        <target state="translated"> Solicitar cambios </target>
       </trans-unit>
       <trans-unit id="4990629939000136195" datatype="html">
         <source>Loading changed files…</source>
@@ -1061,6 +1245,14 @@
         <source>Unresolved</source>
         <target state="translated">Sin resolver</target>
       </trans-unit>
+      <trans-unit id="6065889536348764958" datatype="html">
+        <source>Resolve conversation</source>
+        <target state="translated">Resolver conversación</target>
+      </trans-unit>
+      <trans-unit id="5412706730060297723" datatype="html">
+        <source>Unresolve conversation</source>
+        <target state="translated">Reabrir conversación</target>
+      </trans-unit>
       <trans-unit id="383181061702648553" datatype="html">
         <source>Queued</source>
         <target state="translated">En cola</target>
@@ -1072,6 +1264,34 @@
       <trans-unit id="1161299114153631702" datatype="html">
         <source>Completed</source>
         <target state="translated">Completado</target>
+      </trans-unit>
+      <trans-unit id="4921417678631898927" datatype="html">
+        <source>Delete comment?</source>
+        <target state="translated">¿Eliminar comentario?</target>
+      </trans-unit>
+      <trans-unit id="3682949179179846602" datatype="html">
+        <source>This will permanently delete &quot;<x id="PH" equiv-text="trimmed"/>&quot;.</source>
+        <target state="translated">Esto eliminará permanentemente &quot;<x id="PH" equiv-text="trimmed"/>&quot;.</target>
+      </trans-unit>
+      <trans-unit id="1582065382043376662" datatype="html">
+        <source>This will permanently delete your comment.</source>
+        <target state="translated">Esto eliminará permanentemente tu comentario.</target>
+      </trans-unit>
+      <trans-unit id="7022070615528435141" datatype="html">
+        <source>Delete</source>
+        <target>Eliminar</target>
+      </trans-unit>
+      <trans-unit id="3048407797263954907" datatype="html">
+        <source>Discard pending review?</source>
+        <target state="translated">¿Descartar revisión pendiente?</target>
+      </trans-unit>
+      <trans-unit id="9014758517367757308" datatype="html">
+        <source>This will delete your pending review and its unsubmitted inline comments.</source>
+        <target state="translated">Esto eliminará tu revisión pendiente y sus comentarios en línea sin enviar.</target>
+      </trans-unit>
+      <trans-unit id="3823219296477075982" datatype="html">
+        <source>Discard</source>
+        <target state="translated">Descartar</target>
       </trans-unit>
       <trans-unit id="5242351490836263910" datatype="html">
         <source> Changed files <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;text-muted-foreground ml-1 font-normal tabular-nums&quot;
@@ -1089,6 +1309,30 @@
         <source> Outdated or file-level review threads </source>
         <target state="translated"> Hilos de revisión desactualizados o a nivel de archivo </target>
       </trans-unit>
+      <trans-unit id="4865346468755261965" datatype="html">
+        <source>Comment on line (Shift+click for range)</source>
+        <target state="translated">Comentar en línea (Mayús+clic para rango)</target>
+      </trans-unit>
+      <trans-unit id="5121480097585560359" datatype="html">
+        <source>Write an inline comment…</source>
+        <target state="translated">Escribe un comentario en línea…</target>
+      </trans-unit>
+      <trans-unit id="4068515886040277348" datatype="html">
+        <source> Comment now </source>
+        <target state="translated"> Comentar ahora </target>
+      </trans-unit>
+      <trans-unit id="4416413576346763682" datatype="html">
+        <source>Pending</source>
+        <target state="translated">Pendiente</target>
+      </trans-unit>
+      <trans-unit id="8545750265571150022" datatype="html">
+        <source>Reply to thread…</source>
+        <target state="translated">Responder al hilo…</target>
+      </trans-unit>
+      <trans-unit id="226104558902258178" datatype="html">
+        <source> Reply </source>
+        <target state="translated"> Responder </target>
+      </trans-unit>
       <trans-unit id="7674699140488680835" datatype="html">
         <source> This file diff is large and has been truncated. </source>
         <target state="translated"> Este diff de archivo es grande y se ha truncado. </target>
@@ -1096,6 +1340,14 @@
       <trans-unit id="1704991989448099469" datatype="html">
         <source>Rendering diff…</source>
         <target state="translated">Renderizando diff…</target>
+      </trans-unit>
+      <trans-unit id="6649157735639798997" datatype="html">
+        <source>Add to review</source>
+        <target state="translated">Añadir a la revisión</target>
+      </trans-unit>
+      <trans-unit id="7571454467065323807" datatype="html">
+        <source>Start review</source>
+        <target state="translated">Iniciar revisión</target>
       </trans-unit>
       <trans-unit id="4797214229335185452" datatype="html">
         <source>cached</source>
@@ -1197,10 +1449,6 @@
         <source>Commented</source>
         <target state="translated">Comentado</target>
       </trans-unit>
-      <trans-unit id="4416413576346763682" datatype="html">
-        <source>Pending</source>
-        <target state="translated">Pendiente</target>
-      </trans-unit>
       <trans-unit id="1632949913064020849" datatype="html">
         <source>Dismissed</source>
         <target state="translated">Descartado</target>
@@ -1245,10 +1493,6 @@
         <source> Reconnect </source>
         <target state="translated"> Reconectar </target>
       </trans-unit>
-      <trans-unit id="4128937884409277931" datatype="html">
-        <source> Dismiss </source>
-        <target state="translated"> Descartar </target>
-      </trans-unit>
       <trans-unit id="6492421042208643881" datatype="html">
         <source> Select a Project to view Pull requests. </source>
         <target state="translated"> Selecciona un Proyecto para ver los Pull requests. </target>
@@ -1276,14 +1520,6 @@
       <trans-unit id="4313359842375603765" datatype="html">
         <source> ← Back to Pull requests </source>
         <target state="translated"> ← Volver a Pull requests </target>
-      </trans-unit>
-      <trans-unit id="5574768840758186891" datatype="html">
-        <source>Create Pull request</source>
-        <target state="translated">Crear Pull request</target>
-      </trans-unit>
-      <trans-unit id="426432386636197246" datatype="html">
-        <source> Select a Pull request on the left to inspect its details, checks, and diff. </source>
-        <target state="translated"> Selecciona un Pull request a la izquierda para inspeccionar sus detalles, comprobaciones y diff. </target>
       </trans-unit>
       <trans-unit id="7291767646559161996" datatype="html">
         <source> Select a Pull request to inspect. </source>
@@ -1320,6 +1556,10 @@
       <trans-unit id="4903640661686754480" datatype="html">
         <source>Pull request #<x id="PH" equiv-text="parsed"/> was not found.</source>
         <target state="translated">No se encontró el Pull request #<x id="PH" equiv-text="parsed"/>.</target>
+      </trans-unit>
+      <trans-unit id="1397293953960581138" datatype="html">
+        <source>Pull request action failed.</source>
+        <target state="translated">Falló la acción del Pull request.</target>
       </trans-unit>
       <trans-unit id="762864044091656147" datatype="html">
         <source>Folder not found</source>
@@ -3268,10 +3508,6 @@
         <source> Its <x id="count" equiv-text="workers"/> Workers and their Transcripts will be deleted too. To keep information from a Session, make a Fork first.</source>
         <target> Sus <x id="count" equiv-text="workers"/> Workers y sus Transcripts también se eliminarán. Para conservar información de una Session, crea un Fork antes.</target>
       </trans-unit>
-      <trans-unit id="7022070615528435141" datatype="html">
-        <source>Delete</source>
-        <target>Eliminar</target>
-      </trans-unit>
       <trans-unit id="1823672809237476345" datatype="html">
         <source>Delete <x id="count" equiv-text="targets.length"/></source>
         <target>Eliminar <x id="count" equiv-text="targets.length"/></target>
@@ -4068,6 +4304,30 @@
         <source>Could not change the Project settings.</source>
         <target>No se pudieron cambiar los ajustes del Proyecto.</target>
       </trans-unit>
+      <trans-unit id="1408560181507658828" datatype="html">
+        <source> Configure ephemeral AI drafting when opening the Create Pull request form. </source>
+        <target state="translated"> Configura la redacción efímera con IA al abrir el formulario de crear Pull request. </target>
+      </trans-unit>
+      <trans-unit id="8324369504905959757" datatype="html">
+        <source>Draft title &amp; description automatically</source>
+        <target state="translated">Redactar título y descripción automáticamente</target>
+      </trans-unit>
+      <trans-unit id="3275754223184025881" datatype="html">
+        <source>Runs an isolated, tool-free Agent prompt on the branch diff when creating a Pull request.</source>
+        <target state="translated">Ejecuta una consulta aislada sin herramientas del Agente sobre el diff de la rama al crear un Pull request.</target>
+      </trans-unit>
+      <trans-unit id="7544950521231818564" datatype="html">
+        <source>Drafting Agent</source>
+        <target state="translated">Agente de redacción</target>
+      </trans-unit>
+      <trans-unit id="6423210280939340786" datatype="html">
+        <source>Ready</source>
+        <target state="translated">Listo</target>
+      </trans-unit>
+      <trans-unit id="5440136668917934427" datatype="html">
+        <source>Drafting Model</source>
+        <target state="translated">Modelo de redacción</target>
+      </trans-unit>
       <trans-unit id="8546113143996434038" datatype="html">
         <source>PR worktree branch pattern</source>
         <target state="translated">Patrón de rama de worktree de PR</target>
@@ -4075,6 +4335,14 @@
       <trans-unit id="329034809436946533" datatype="html">
         <source>Used for fork or colliding PR branches when starting a Session. Supports {number}, {headRef}, and {author}.</source>
         <target state="translated">Se usa para ramas de PR de forks o en colisión al iniciar una Sesión. Admite {number}, {headRef} y {author}.</target>
+      </trans-unit>
+      <trans-unit id="2411953965595266064" datatype="html">
+        <source>Agent is installed and ready.</source>
+        <target state="translated">El Agente está instalado y listo.</target>
+      </trans-unit>
+      <trans-unit id="1035993033735212935" datatype="html">
+        <source>Agent is not installed.</source>
+        <target state="translated">El Agente no está instalado.</target>
       </trans-unit>
       <trans-unit id="7292902857194439444" datatype="html">
         <source>Device</source>

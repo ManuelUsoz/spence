@@ -1,14 +1,19 @@
 import { it } from '@effect/vitest';
 import { Duration, Effect, Layer } from 'effect';
 import { TestClock } from 'effect/testing';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { describe, expect } from 'vitest';
 import { ProjectId, type Project } from '../../src/shared/projects/projects.rpc';
 import {
+  CommentId,
   GitHostError,
   PullRequestNumber,
+  ReviewId,
+  ReviewThreadId,
   type HostAccount,
   type HostAccountsState,
   type PullRequestDetail,
@@ -22,7 +27,7 @@ import { layerStore } from '../store/store';
 import { layerGitHostRegistry, type GitHost } from './git-host';
 import { GITHUB_CAPABILITIES } from './github-adapter';
 import { HostAuth, type HostAuthShape } from './host-auth';
-import { PrStore, type StoredProjectSummaries } from './pr-store';
+import { layerPrStore, PrStore, type StoredProjectSummaries } from './pr-store';
 import {
   layerPullRequestsService,
   ProjectGitInspector,
@@ -108,6 +113,14 @@ const makeHarness = (options: {
   readonly listForRepo: GitHost['listForRepo'];
   readonly getDetail?: GitHost['getDetail'];
   readonly getSummaryByNumber?: GitHost['getSummaryByNumber'];
+  readonly update?: GitHost['update'];
+  readonly addComment?: GitHost['addComment'];
+  readonly editComment?: GitHost['editComment'];
+  readonly deleteComment?: GitHost['deleteComment'];
+  readonly submitReview?: GitHost['submitReview'];
+  readonly deletePendingReview?: GitHost['deletePendingReview'];
+  readonly resolveThread?: GitHost['resolveThread'];
+  readonly unresolveThread?: GitHost['unresolveThread'];
 }) => {
   let accountStatus: HostAccount['status'] = 'connected';
   const fakeAuth: HostAuthShape = {
@@ -142,6 +155,30 @@ const makeHarness = (options: {
       (({ number }) => Effect.succeed({ notModified: false, detail: makeDetail(Number(number)) })),
     getDiff: ({ number, headSha, baseSha }) =>
       Effect.succeed({ ref: { repo, number }, headSha, baseSha, files: [] }),
+    create: ({ title, head, base, draft }) =>
+      Effect.succeed(
+        makeSummary(101, {
+          title,
+          headRef: head,
+          baseRef: base,
+          state: draft ? 'draft' : 'open',
+        }),
+      ),
+    update:
+      options.update ??
+      (({ currentDetail, patch }) =>
+        Effect.succeed({
+          ...currentDetail,
+          ...(patch.title !== undefined ? { title: patch.title } : {}),
+          ...(patch.body !== undefined ? { body: patch.body } : {}),
+        })),
+    addComment: options.addComment ?? (() => Effect.die('unused')),
+    editComment: options.editComment ?? (() => Effect.die('unused')),
+    deleteComment: options.deleteComment ?? (() => Effect.die('unused')),
+    submitReview: options.submitReview ?? (() => Effect.die('unused')),
+    deletePendingReview: options.deletePendingReview ?? (() => Effect.die('unused')),
+    resolveThread: options.resolveThread ?? (() => Effect.die('unused')),
+    unresolveThread: options.unresolveThread ?? (() => Effect.die('unused')),
     clearEtags: () => Effect.void,
   };
 
@@ -372,5 +409,366 @@ describe('PullRequestsService polling & lifecycle', () => {
         Effect.ensuring(Effect.promise(() => rm(storeRoot, { recursive: true, force: true }))),
       );
     }),
+  );
+
+  it.effect('prepareCreate detects blockers and create pushes once then skips push on retry', () =>
+    Effect.gen(function* () {
+      const execFileAsync = promisify(execFile);
+      const runGitCmd = (cwd: string, ...args: string[]) =>
+        execFileAsync('git', args, { cwd, windowsHide: true }).then((r) => r.stdout.trimEnd());
+
+      const root = yield* Effect.promise(() =>
+        mkdtemp(path.join(tmpdir(), 'spence-pr-svc-create-')),
+      );
+      const storeRoot = path.join(root, 'store');
+      const bare = path.join(root, 'origin.git');
+      const work = path.join(root, 'work');
+      yield* Effect.promise(async () => {
+        await runGitCmd(root, 'init', '--bare', bare);
+        await runGitCmd(root, 'clone', bare, work);
+        await runGitCmd(work, 'config', 'user.email', 'test@spence.local');
+        await runGitCmd(work, 'config', 'user.name', 'Spence Test');
+        await runGitCmd(work, 'checkout', '-b', 'main');
+        await writeFile(path.join(work, 'README.md'), 'init\n');
+        await runGitCmd(work, 'add', 'README.md');
+        await runGitCmd(work, 'commit', '-m', 'init');
+        await runGitCmd(work, 'push', '-u', 'origin', 'main');
+        await runGitCmd(bare, 'symbolic-ref', 'HEAD', 'refs/heads/main');
+        await runGitCmd(work, 'remote', 'set-head', 'origin', 'main');
+      });
+
+      let createAttempts = 0;
+      const fakeHost: GitHost = {
+        kind: 'github',
+        capabilities: GITHUB_CAPABILITIES,
+        parseRemoteUrl: () => repo,
+        listForRepo: () => Effect.succeed({ notModified: false, summaries: [] }),
+        getSummaryByNumber: ({ number }) => Effect.succeed(makeSummary(Number(number))),
+        getDetail: ({ number }) =>
+          Effect.succeed({ notModified: false, detail: makeDetail(Number(number)) }),
+        getDiff: ({ number, headSha, baseSha }) =>
+          Effect.succeed({ ref: { repo, number }, headSha, baseSha, files: [] }),
+        create: ({ title, head, base, draft }) =>
+          Effect.suspend(() => {
+            createAttempts += 1;
+            if (createAttempts === 1) {
+              return Effect.fail(
+                new GitHostError({ reason: 'HostError', detail: 'Transient API failure' }),
+              );
+            }
+            return Effect.succeed(
+              makeSummary(202, {
+                title,
+                headRef: head,
+                baseRef: base,
+                state: draft ? 'draft' : 'open',
+              }),
+            );
+          }),
+        clearEtags: () => Effect.void,
+        update: () => Effect.die('unused'),
+        addComment: () => Effect.die('unused'),
+        editComment: () => Effect.die('unused'),
+        deleteComment: () => Effect.die('unused'),
+        submitReview: () => Effect.die('unused'),
+        deletePendingReview: () => Effect.die('unused'),
+        resolveThread: () => Effect.die('unused'),
+        unresolveThread: () => Effect.die('unused'),
+      };
+
+      const repoProject: Project = { ...sampleProject, path: work };
+      const layer = layerPullRequestsService.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(Projects, {
+              list: Effect.succeed([repoProject]),
+              check: () => Effect.succeed(repoProject),
+              add: Effect.die('unused'),
+              addFolder: () => Effect.die('unused'),
+              rename: () => Effect.die('unused'),
+              remove: () => Effect.void,
+              locate: () => Effect.die('unused'),
+              locateFolder: () => Effect.die('unused'),
+              setSettings: () => Effect.die('unused'),
+              touch: () => Effect.void,
+            }),
+            Layer.succeed(ProjectGitInspector, {
+              inspectProject: () =>
+                Effect.succeed({
+                  _tag: 'Available',
+                  remotesOutput: 'origin\thttps://github.com/org/repo.git (fetch)\n',
+                  worktrees: [{ key: work, branch: 'feat/p1', headSha: 'abc', isDetached: false }],
+                }),
+            }),
+            layerGitHostRegistry([fakeHost]),
+            Layer.succeed(HostAuth, {
+              getAccounts: Effect.succeed({
+                accounts: [connectedAccount],
+                secretStorageAvailable: true,
+              }),
+              startDeviceFlow: () => Effect.die('unused'),
+              pollDeviceFlow: () => Effect.die('unused'),
+              cancelDeviceFlow: () => Effect.void,
+              connectPat: () => Effect.die('unused'),
+              checkGhCli: () => Effect.die('unused'),
+              importGhCli: () => Effect.die('unused'),
+              verify: () => Effect.die('unused'),
+              disconnect: () => Effect.void,
+              markNeedsReconnect: () => Effect.void,
+              withToken: (_host, fn) => fn('tok'),
+            }),
+            layerPrStore.pipe(Layer.provide(layerStore(storeRoot))),
+            layerWindowFocus,
+          ),
+        ),
+      );
+
+      return yield* Effect.gen(function* () {
+        const svc = yield* PullRequestsService;
+
+        // Zero commits ahead on main -> blocker
+        const prepZero = yield* svc.prepareCreate({ projectId });
+        expect(prepZero.blockers.some((b) => b.reason === 'ZeroCommitsAhead')).toBe(true);
+
+        // Create feature branch with 1 unpushed commit
+        yield* Effect.promise(async () => {
+          await runGitCmd(work, 'checkout', '-b', 'feat/p1');
+          await writeFile(path.join(work, 'f.ts'), 'export const x = 1;\n');
+          await runGitCmd(work, 'add', 'f.ts');
+          await runGitCmd(work, 'commit', '-m', 'feat: p1');
+        });
+
+        const prepReady = yield* svc.prepareCreate({ projectId });
+        expect(prepReady.blockers).toEqual([]);
+        expect(prepReady.needsPush).toBe(true);
+        expect(prepReady.headRef).toBe('feat/p1');
+
+        // First create attempt: pushes to origin, then GitHost.create fails
+        const firstExit = yield* Effect.exit(
+          svc.create({
+            projectId,
+            title: 'Feat P1',
+            body: 'Body',
+            baseRef: 'main',
+            headRef: 'feat/p1',
+            draft: false,
+            pushFirst: true,
+          }),
+        );
+        expect(firstExit._tag).toBe('Failure');
+
+        // Verify push actually landed in bare origin
+        const remoteRef = yield* Effect.promise(() =>
+          runGitCmd(bare, 'rev-parse', '--verify', 'refs/heads/feat/p1'),
+        );
+        expect(remoteRef.length).toBeGreaterThan(10);
+
+        // Delete remote branch in bare repo to prove retry skips git push for same headSha
+        yield* Effect.promise(() => runGitCmd(bare, 'branch', '-D', 'feat/p1'));
+
+        const created = yield* svc.create({
+          projectId,
+          title: 'Feat P1',
+          body: 'Body',
+          baseRef: 'main',
+          headRef: 'feat/p1',
+          draft: false,
+          pushFirst: true,
+        });
+        expect(created.ref.number).toBe(202);
+        // Bare branch should still be absent because push was skipped on retry
+        const stillMissing = yield* Effect.promise(() =>
+          runGitCmd(bare, 'rev-parse', '--verify', 'refs/heads/feat/p1').catch(() => 'missing'),
+        );
+        expect(stillMissing).toBe('missing');
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(Effect.promise(() => rm(root, { recursive: true, force: true }))),
+      );
+    }),
+  );
+
+  it.effect(
+    'detects field-level conflicts on update when edited field changed remotely, but allows edits when only unrelated fields changed',
+    () =>
+      Effect.gen(function* () {
+        const storeRoot = yield* Effect.promise(() =>
+          mkdtemp(path.join(tmpdir(), 'spence-pr-update-')),
+        );
+        const num = PullRequestNumber.make(10);
+        const initial = makeDetail(10, {
+          title: 'Original title',
+          body: 'Original body',
+          updatedAt: 1_000,
+          revision: { headSha: 'sha-10', updatedAt: 1_000 },
+        });
+        let remote = initial;
+        let updateCalls = 0;
+
+        const layer = makeHarness({
+          storeRoot,
+          listForRepo: () => Effect.succeed({ notModified: false, summaries: [makeSummary(10)] }),
+          getDetail: () => Effect.succeed({ notModified: false, detail: remote }),
+          update: ({ currentDetail, patch }) => {
+            updateCalls += 1;
+            const next: PullRequestDetail = {
+              ...currentDetail,
+              ...(patch.title !== undefined ? { title: patch.title } : {}),
+              ...(patch.body !== undefined ? { body: patch.body } : {}),
+              updatedAt: currentDetail.updatedAt + 100,
+              revision: {
+                headSha: currentDetail.headSha,
+                updatedAt: currentDetail.updatedAt + 100,
+              },
+            };
+            remote = next;
+            return Effect.succeed(next);
+          },
+        });
+
+        yield* Effect.gen(function* () {
+          const svc = yield* PullRequestsService;
+          const loaded = yield* svc.getDetail(projectId, num);
+          expect(loaded.title).toBe('Original title');
+
+          // Remote changes ONLY body (unrelated to user's title edit)
+          remote = {
+            ...initial,
+            body: 'Remote edited body',
+            updatedAt: 2_000,
+            revision: { headSha: 'sha-10', updatedAt: 2_000 },
+          };
+
+          const updated = yield* svc.update({
+            projectId,
+            number: num,
+            revision: loaded.revision,
+            patch: { title: 'My new title' },
+          });
+          expect(updated.title).toBe('My new title');
+          expect(updated.body).toBe('Remote edited body');
+          expect(updateCalls).toBe(1);
+
+          // Now remote changes title as well; user tries to edit title using stale revision
+          const staleRevision = updated.revision;
+          remote = {
+            ...updated,
+            title: 'Someone else title',
+            updatedAt: 3_000,
+            revision: { headSha: 'sha-10', updatedAt: 3_000 },
+          };
+
+          const err = yield* svc
+            .update({
+              projectId,
+              number: num,
+              revision: staleRevision,
+              patch: { title: 'My conflicting title' },
+            })
+            .pipe(Effect.flip);
+
+          expect(err).toBeInstanceOf(GitHostError);
+          expect(err.reason).toBe('Conflict');
+          expect(err.conflictingFields).toEqual(['title']);
+          expect(err.latestDetail?.title).toBe('Someone else title');
+          expect(updateCalls).toBe(1);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(Effect.promise(() => rm(storeRoot, { recursive: true, force: true }))),
+        );
+      }),
+  );
+
+  it.effect(
+    'delegates comment, review, and thread-resolution mutations and updates cached detail + summary counts',
+    () =>
+      Effect.gen(function* () {
+        const storeRoot = yield* Effect.promise(() =>
+          mkdtemp(path.join(tmpdir(), 'spence-pr-mut-')),
+        );
+        const num = PullRequestNumber.make(11);
+        const base = makeDetail(11, { commentCount: 0, unresolvedThreadCount: 1 });
+        const afterResolve = makeDetail(11, { commentCount: 1, unresolvedThreadCount: 0 });
+
+        const layer = makeHarness({
+          storeRoot,
+          listForRepo: () => Effect.succeed({ notModified: false, summaries: [makeSummary(11)] }),
+          getDetail: () => Effect.succeed({ notModified: false, detail: base }),
+          addComment: () => Effect.succeed(makeDetail(11, { commentCount: 1 })),
+          editComment: () => Effect.succeed(makeDetail(11, { commentCount: 1 })),
+          deleteComment: () => Effect.succeed(makeDetail(11, { commentCount: 0 })),
+          submitReview: () => Effect.succeed(makeDetail(11, { reviewDecision: 'approved' })),
+          deletePendingReview: () => Effect.succeed(base),
+          resolveThread: () => Effect.succeed(afterResolve),
+          unresolveThread: () => Effect.succeed(base),
+        });
+
+        yield* Effect.gen(function* () {
+          const svc = yield* PullRequestsService;
+          yield* svc.getProjectState(projectId);
+
+          const c1 = yield* svc.addComment({
+            projectId,
+            number: num,
+            body: 'hi',
+            target: { _tag: 'General' },
+          });
+          expect(c1.commentCount).toBe(1);
+
+          const c2 = yield* svc.editComment({
+            projectId,
+            number: num,
+            commentId: CommentId.make('c1'),
+            kind: 'issue',
+            body: 'edited',
+          });
+          expect(c2.commentCount).toBe(1);
+
+          const c3 = yield* svc.deleteComment({
+            projectId,
+            number: num,
+            commentId: CommentId.make('c1'),
+            kind: 'issue',
+          });
+          expect(c3.commentCount).toBe(0);
+
+          const r1 = yield* svc.submitReview({
+            projectId,
+            number: num,
+            event: 'approve',
+            body: 'lgtm',
+          });
+          expect(r1.reviewDecision).toBe('approved');
+
+          const r2 = yield* svc.deletePendingReview({
+            projectId,
+            number: num,
+            reviewId: ReviewId.make('rev-1'),
+          });
+          expect(r2.reviews.length).toBe(0);
+
+          const t1 = yield* svc.resolveThread({
+            projectId,
+            number: num,
+            threadId: ReviewThreadId.make('thr-1'),
+          });
+          expect(t1.unresolvedThreadCount).toBe(0);
+
+          const stateAfter = yield* svc.getProjectState(projectId);
+          if (stateAfter._tag === 'Available') {
+            expect(stateAfter.summaries[0]?.unresolvedThreadCount).toBe(0);
+          }
+
+          const t2 = yield* svc.unresolveThread({
+            projectId,
+            number: num,
+            threadId: ReviewThreadId.make('thr-1'),
+          });
+          expect(t2.unresolvedThreadCount).toBe(1);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(Effect.promise(() => rm(storeRoot, { recursive: true, force: true }))),
+        );
+      }),
   );
 });

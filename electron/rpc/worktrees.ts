@@ -1,6 +1,8 @@
 import { Effect, Layer, Stream } from 'effect';
 import { WorktreesRpcs } from '../../src/shared/worktrees/worktrees.rpc';
 import { layerProjectsLive } from '../projects/projects';
+import { layerStoreUserData } from '../store/store';
+import { layerBranchOrigins } from '../worktrees/branch-origins';
 import { layerWorktrees, Worktrees } from '../worktrees/worktrees';
 import { layerSessionsLive } from './sessions';
 
@@ -19,6 +21,14 @@ export const layerWorktreesHandlersWith = WorktreesRpcs.toLayer({
 
 export const layerWorktreesHandlers = layerWorktreesHandlersWith.pipe(
   Layer.provide(
-    layerWorktrees.pipe(Layer.provide(Layer.mergeAll(layerSessionsLive, layerProjectsLive))),
+    layerWorktrees.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          layerSessionsLive,
+          layerProjectsLive,
+          layerBranchOrigins.pipe(Layer.provide(layerStoreUserData)),
+        ),
+      ),
+    ),
   ),
 );
