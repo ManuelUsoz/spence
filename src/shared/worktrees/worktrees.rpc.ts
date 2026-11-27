@@ -1,6 +1,7 @@
 import { Schema } from 'effect';
 import { Rpc, RpcGroup } from 'effect/rpc';
 import { GitUnavailableReason } from '../source-control/source-control.rpc';
+import { PullRequestNumber } from '../pull-requests/pull-requests.rpc';
 import { SessionId } from '../sessions/sessions.rpc';
 
 /** One Git Worktree of the Session's repository. */
@@ -50,6 +51,7 @@ export const PrepareDraftResult = Schema.Union([
       'BranchExists',
       'DestinationExists',
       'UnknownBase',
+      'PullRequestRefUnavailable',
       'Busy',
       'StartFailed',
     ]),
@@ -97,6 +99,13 @@ export class WorktreesError extends Schema.TaggedError<WorktreesError>()('Worktr
 
 const BySession = { sessionId: SessionId };
 
+/** Optional Pull request head ref to fetch lazily before creating a draft Worktree. */
+export const PullRequestWorktreeRef = Schema.Struct({
+  remoteName: Schema.String,
+  number: PullRequestNumber,
+}).annotate({ identifier: 'PullRequestWorktreeRef' });
+export type PullRequestWorktreeRef = typeof PullRequestWorktreeRef.Type;
+
 export const WorktreesRpcs = RpcGroup.make(
   /** The Worktrees of the Session's repository, and which one the Session works in. */
   Rpc.make('Worktrees.list', {
@@ -109,7 +118,12 @@ export const WorktreesRpcs = RpcGroup.make(
    * Session into it. Called when the first Message is sent.
    */
   Rpc.make('Worktrees.prepareDraft', {
-    payload: { ...BySession, branch: Schema.String, base: Schema.optionalKey(Schema.String) },
+    payload: {
+      ...BySession,
+      branch: Schema.String,
+      base: Schema.optionalKey(Schema.String),
+      prRef: Schema.optionalKey(PullRequestWorktreeRef),
+    },
     success: PrepareDraftResult,
     error: WorktreesError,
   }),
@@ -122,6 +136,7 @@ export const WorktreesRpcs = RpcGroup.make(
       branch: Schema.String,
       base: Schema.optionalKey(Schema.String),
       setupCommand: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      prRef: Schema.optionalKey(PullRequestWorktreeRef),
     },
     success: WorktreePrepEvent,
     error: WorktreesError,

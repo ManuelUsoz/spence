@@ -30,13 +30,16 @@ import { HlmTooltipImports } from '@ui/tooltip';
 import { toast } from '@ui/toast';
 import { Cause, Effect, Exit, Option, Schedule, Schema, Stream } from 'effect';
 import { PermissionMode, type ProjectId } from '../../../shared/projects/projects.rpc';
+import type { PullRequestSummary } from '../../../shared/pull-requests/pull-requests.rpc';
 import { AgentId, type Agent } from '../../../shared/agents/agents.rpc';
 import type { SendMode, WorkflowKind } from '../../../shared/settings/settings.rpc';
 import {
   STOP_AGENT_INTERRUPTED_DETAIL,
+  composerPullRequestAttachmentKey,
   type ActionOwner,
   type Command,
   type ComposerDraft,
+  type ComposerPullRequestAttachment,
   type ForkLineage,
   type ForkTarget,
   type HandoffAttempt,
@@ -46,6 +49,7 @@ import {
   type MessagePart,
   type MessageId,
   type PermissionRequestId,
+  type PullRequestPart,
   WORKFLOW_INTERRUPTED_DETAIL,
   type QueuedMessage,
   type SessionId,
@@ -63,6 +67,7 @@ import { DesktopApi } from '../../core/desktop-api';
 import { DeviceScope } from '../../core/device-scope';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { isTextInputTarget, Keymap } from '../../core/keymap';
+import { PullRequestsState } from '../../core/pull-requests-state';
 import {
   SessionToolbar,
   type SessionOperation,
@@ -103,6 +108,16 @@ import {
   type ThreadRow,
 } from './thread';
 
+import {
+  addPrAttachment,
+  parseActiveAtMention,
+  parsePrNumberQuery,
+  prAttachmentLabel,
+  prAttachmentTooltip,
+  rankAndFilterPrs,
+  removePrAttachment,
+  stripAtMentionToken,
+} from './composer-pr-picker';
 import { ComposerStatus } from './composer-status';
 import { ContextRing } from './context-ring';
 import { ModelPalette } from './model-palette';
@@ -160,11 +175,13 @@ const sendPrompt = Effect.fnUntraced(function* (
   parts: ReadonlyArray<MessagePart>,
   workflow?: WorkflowKind,
   verificationOf?: TurnId,
+  pullRequests?: ReadonlyArray<ComposerPullRequestAttachment>,
 ) {
   const api = yield* DesktopApi;
   return yield* api['Session.prompt']({
     sessionId,
     parts,
+    ...(pullRequests !== undefined && pullRequests.length > 0 ? { pullRequests } : {}),
     ...(workflow === undefined ? {} : { workflow }),
     ...(verificationOf === undefined ? {} : { verificationOf }),
   });
@@ -173,17 +190,27 @@ const sendPrompt = Effect.fnUntraced(function* (
 const steerTurn = Effect.fnUntraced(function* (
   sessionId: SessionId,
   parts: ReadonlyArray<MessagePart>,
+  pullRequests?: ReadonlyArray<ComposerPullRequestAttachment>,
 ) {
   const api = yield* DesktopApi;
-  yield* api['Session.steer']({ sessionId, parts });
+  yield* api['Session.steer']({
+    sessionId,
+    parts,
+    ...(pullRequests !== undefined && pullRequests.length > 0 ? { pullRequests } : {}),
+  });
 });
 
 const enqueueMessage = Effect.fnUntraced(function* (
   sessionId: SessionId,
   parts: ReadonlyArray<MessagePart>,
+  pullRequests?: ReadonlyArray<ComposerPullRequestAttachment>,
 ) {
   const api = yield* DesktopApi;
-  yield* api['Session.enqueue']({ sessionId, parts });
+  yield* api['Session.enqueue']({
+    sessionId,
+    parts,
+    ...(pullRequests !== undefined && pullRequests.length > 0 ? { pullRequests } : {}),
+  });
 });
 
 const replaceQueue = Effect.fnUntraced(function* (
@@ -537,6 +564,21 @@ function greetingFor(hour: number): string {
                       data-testid="message-images"
                     />
                   }
+                  @if (row.message.pullRequests.length > 0) {
+                    <div class="mb-2 flex flex-wrap gap-1.5" data-testid="message-pr-pills">
+                      @for (part of row.message.pullRequests; track $index) {
+                        <button
+                          type="button"
+                          class="bg-background/80 hover:bg-background border-border/70 text-foreground inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs transition-colors"
+                          data-testid="message-pr-pill"
+                          [title]="prAttachmentTooltip(part)"
+                          (click)="openPrPart(part)"
+                        >
+                          <span class="truncate">{{ prAttachmentLabel(part) }}</span>
+                        </button>
+                      }
+                    </div>
+                  }
                   {{ row.message.text }}
                 </div>
               } @else {
@@ -847,6 +889,21 @@ function greetingFor(hour: number): string {
                 @if (queuedImages(item).length > 0) {
                   <app-image-strip [images]="queuedImages(item)" />
                 }
+                @if (queuedPullRequests(item).length > 0) {
+                  <div class="mt-1.5 flex flex-wrap gap-1.5" data-testid="queue-pr-pills">
+                    @for (part of queuedPullRequests(item); track $index) {
+                      <button
+                        type="button"
+                        class="bg-background/80 hover:bg-background border-border/70 text-foreground inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs transition-colors"
+                        data-testid="queue-pr-pill"
+                        [title]="prAttachmentTooltip(part)"
+                        (click)="openPrPart(part)"
+                      >
+                        <span class="truncate">{{ prAttachmentLabel(part) }}</span>
+                      </button>
+                    }
+                  </div>
+                }
               </div>
             }
             <div class="flex justify-end">
@@ -1037,6 +1094,29 @@ function greetingFor(hour: number): string {
                 {{ agentName() }} can't take images. Remove them to send.
               </p>
             }
+            @if (attachedPullRequests().length > 0) {
+              <div class="flex flex-wrap gap-1.5" data-testid="composer-pr-pills">
+                @for (att of attachedPullRequests(); track prAttachmentKey(att)) {
+                  <span
+                    class="bg-muted border-border/70 inline-flex max-w-full items-center gap-1 rounded-full border py-0.5 ps-2.5 pe-1 text-xs"
+                    data-testid="composer-pr-pill"
+                    [title]="prAttachmentTooltip(att)"
+                  >
+                    <span class="truncate">{{ prAttachmentLabel(att) }}</span>
+                    <button
+                      type="button"
+                      class="text-muted-foreground hover:text-foreground inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full"
+                      data-testid="composer-pr-pill-remove"
+                      (click)="removeAttachedPr(att)"
+                      aria-label="Remove Pull request attachment"
+                      i18n-aria-label
+                    >
+                      ×
+                    </button>
+                  </span>
+                }
+              </div>
+            }
             <div class="relative">
               @if (workflowArmed(); as workflow) {
                 <button
@@ -1172,6 +1252,54 @@ function greetingFor(hour: number): string {
                         data-testid="commands-status"
                       >
                         {{ status }}
+                      </p>
+                    }
+                  </div>
+                </div>
+              }
+              @if (prMentionOpen()) {
+                <div
+                  [class]="commandsListClass()"
+                  role="listbox"
+                  aria-label="Pull requests"
+                  i18n-aria-label
+                  data-testid="composer-pr-popover"
+                >
+                  <div class="max-h-60 overflow-y-auto p-1">
+                    @for (pr of prMentionResults(); track pr.ref.number; let i = $index) {
+                      <button
+                        type="button"
+                        role="option"
+                        [attr.aria-selected]="selectedPrMention() === i"
+                        [attr.data-pr-index]="i"
+                        [attr.data-testid]="'pr-mention-option-' + pr.ref.number"
+                        class="flex w-full items-center justify-between gap-2 rounded-sm px-2.5 py-1.5 text-left text-xs outline-none"
+                        [class]="
+                          selectedPrMention() === i
+                            ? 'bg-accent text-accent-foreground'
+                            : 'hover:bg-accent/50'
+                        "
+                        (mousedown)="$event.preventDefault(); pickPrMention(pr)"
+                      >
+                        <span class="flex min-w-0 items-center gap-2">
+                          <span
+                            class="text-muted-foreground shrink-0 font-mono text-xs tabular-nums"
+                          >
+                            #{{ pr.ref.number }}
+                          </span>
+                          <span class="truncate font-medium">{{ pr.title }}</span>
+                        </span>
+                        <span class="text-muted-foreground shrink-0 font-mono text-xs">
+                          {{ pr.headRef }} · @{{ pr.author.login }}
+                        </span>
+                      </button>
+                    } @empty {
+                      <p class="text-muted-foreground px-2.5 py-2 text-xs" i18n>
+                        @if (prLookupLoading()) {
+                          Looking up Pull request…
+                        } @else {
+                          No matching Pull requests.
+                        }
                       </p>
                     }
                   </div>
@@ -1611,6 +1739,45 @@ export class SessionView implements OnInit {
   );
   /** Selected index in the filtered Commands list. */
   protected readonly selectedCommand = signal(0);
+
+  private readonly prState = inject(PullRequestsState);
+  protected readonly attachedPullRequests = signal<ReadonlyArray<ComposerPullRequestAttachment>>(
+    [],
+  );
+  protected readonly prMentionOpen = signal(false);
+  protected readonly selectedPrMention = signal(0);
+  private dismissedPrMention: { readonly start: number; readonly query: string } | null = null;
+  protected readonly prLookupSummary = signal<PullRequestSummary | null>(null);
+  protected readonly prLookupLoading = signal(false);
+  private lastPrLookupKey: string | null = null;
+  protected readonly prAttachmentLabel = prAttachmentLabel;
+  protected readonly prAttachmentTooltip = prAttachmentTooltip;
+  protected readonly prAttachmentKey = composerPullRequestAttachmentKey;
+
+  protected readonly activeAtMention = computed(() => {
+    const caret = this.composerCaret();
+    if (caret.start !== caret.end) return null;
+    return parseActiveAtMention(this.draft(), caret.start);
+  });
+
+  protected readonly prMentionResults = computed((): ReadonlyArray<PullRequestSummary> => {
+    const pid = this.projectId();
+    const state = this.prState.stateForProject(pid);
+    const baseSummaries = state?._tag === 'Available' ? state.summaries : [];
+    const lookup = this.prLookupSummary();
+    const summaries =
+      lookup !== null && !baseSummaries.some((s) => s.ref.number === lookup.ref.number)
+        ? [lookup, ...baseSummaries]
+        : baseSummaries;
+    const branch = this.composerStatus()?.branch() ?? '';
+    const linked = branch ? this.prState.linkForBranch(branch, pid) : null;
+    const mention = this.activeAtMention();
+    return rankAndFilterPrs({
+      summaries,
+      linkedPrNumber: linked?.primary.ref.number ?? null,
+      query: mention?.query ?? '',
+    });
+  });
 
   protected readonly running = computed(
     () => this.thread().running !== null || this.live()?.runningTurn !== undefined,
@@ -2214,6 +2381,69 @@ export class SessionView implements OnInit {
         this.updateCommandsPlacement();
       }
     });
+
+    // Consume PR attachments and lazy PR Worktree config queued by Reference in Session / Start Session.
+    effect(() => {
+      const sid = this.sessionId();
+      const pid = this.projectId();
+      const focusSeq = this.prState.focusComposerRequested();
+      this.prState.pendingAttachmentsBySession();
+      this.prState.pendingDraftAttachmentsByProject();
+      this.prState.pendingDraftWorktreeByProject();
+
+      const direct = untracked(() => this.prState.consumeAttachmentsForSession(sid));
+      const draftAtts =
+        this.isDraft() && pid !== null
+          ? untracked(() => this.prState.consumeDraftAttachmentsForProject(pid))
+          : [];
+      for (const att of [...direct, ...draftAtts]) {
+        this.attachPrItem(att);
+      }
+
+      if (this.isDraft() && pid !== null) {
+        const start = untracked(() => this.prState.consumePendingDraftWorktreeForProject(pid));
+        if (start !== null) {
+          void this.composerStatus()?.configureForPr(start);
+        }
+      }
+
+      if (focusSeq > 0 || direct.length > 0 || draftAtts.length > 0) {
+        const composer = this.composerInput()?.nativeElement;
+        if (composer !== undefined && this.focused()) {
+          composer.focus({ preventScroll: true });
+        }
+      }
+    });
+
+    // On-demand PullRequests.lookupByNumber when typing @#<number>.
+    effect(() => {
+      const mention = this.activeAtMention();
+      const pid = this.projectId();
+      if (mention === null || pid === null || !this.prMentionOpen()) return;
+      const num = parsePrNumberQuery(mention.query);
+      if (num === null) return;
+      const state = this.prState.stateForProject(pid);
+      if (state?._tag === 'Available' && state.summaries.some((s) => s.ref.number === num)) {
+        return;
+      }
+      const key = `${pid}:${num}`;
+      if (this.lastPrLookupKey === key) return;
+      this.lastPrLookupKey = key;
+      this.prLookupLoading.set(true);
+      void this.runtime
+        .run(
+          DesktopApi.use((api) =>
+            api['PullRequests.lookupByNumber']({ projectId: pid, number: num }),
+          ),
+          { signal: this.aborts.signal },
+        )
+        .then((exit) => {
+          this.prLookupLoading.set(false);
+          if (Exit.isSuccess(exit)) {
+            this.prLookupSummary.set(exit.value);
+          }
+        });
+    });
     effect(() => {
       const id = this.sessionId();
       const limitation = this.modelsLimitation();
@@ -2378,11 +2608,22 @@ export class SessionView implements OnInit {
 
   private persistDraft(): void {
     if (!this.composerLoaded()) return;
-    const draft: ComposerDraft = { text: this.draft(), images: this.images() };
+    const prs = this.attachedPullRequests();
+    const draft: ComposerDraft = {
+      text: this.draft(),
+      images: this.images(),
+      ...(prs.length > 0 ? { pullRequests: prs } : {}),
+    };
     if (
       this.lastSaved !== null &&
       draft.text === this.lastSaved.text &&
-      draft.images === this.lastSaved.images
+      draft.images === this.lastSaved.images &&
+      (draft.pullRequests ?? []).length === (this.lastSaved.pullRequests ?? []).length &&
+      (draft.pullRequests ?? []).every(
+        (p, i) =>
+          composerPullRequestAttachmentKey(p) ===
+          composerPullRequestAttachmentKey(this.lastSaved?.pullRequests?.[i] ?? p),
+      )
     ) {
       return;
     }
@@ -2417,9 +2658,16 @@ export class SessionView implements OnInit {
     if (this.aborts.signal.aborted) return;
     if (Exit.isSuccess(exit)) {
       this.lastSaved = exit.value;
-      if (this.draft() === '' && this.images().length === 0) {
+      if (
+        this.draft() === '' &&
+        this.images().length === 0 &&
+        this.attachedPullRequests().length === 0
+      ) {
         if (exit.value.text !== '') this.draft.set(exit.value.text);
         if (exit.value.images.length > 0) this.images.set(exit.value.images);
+        if (exit.value.pullRequests !== undefined && exit.value.pullRequests.length > 0) {
+          this.attachedPullRequests.set(exit.value.pullRequests);
+        }
       }
     }
     this.composerLoaded.set(true);
@@ -2486,8 +2734,31 @@ export class SessionView implements OnInit {
             end: composer.selectionEnd ?? composer.selectionStart ?? value.length,
           }
         : { start: value.length, end: value.length };
+    const previousPrQuery = this.activeAtMention()?.query ?? null;
     this.draft.set(value);
     this.composerCaret.set(caret);
+    const atToken = this.activeAtMention();
+    if (atToken === null) {
+      this.prMentionOpen.set(false);
+      this.dismissedPrMention = null;
+    } else {
+      if (
+        this.dismissedPrMention !== null &&
+        (this.dismissedPrMention.start !== atToken.start ||
+          atToken.query === '' ||
+          (!atToken.query.startsWith(this.dismissedPrMention.query) &&
+            !this.dismissedPrMention.query.startsWith(atToken.query)))
+      ) {
+        this.dismissedPrMention = null;
+      }
+      if (atToken.query !== previousPrQuery) {
+        this.selectedPrMention.set(0);
+      }
+      if (this.dismissedPrMention === null) {
+        this.updateCommandsPlacement();
+        this.prMentionOpen.set(true);
+      }
+    }
     const token = this.activeSlash();
     if (token === null) {
       this.commandsOpen.set(false);
@@ -2535,6 +2806,10 @@ export class SessionView implements OnInit {
       this.commandsOpen.set(false);
       this.dismissedSlash = null;
     }
+    if (this.prMentionOpen() && this.activeAtMention() === null) {
+      this.prMentionOpen.set(false);
+      this.dismissedPrMention = null;
+    }
   }
 
   protected onKeyup(event: KeyboardEvent): void {
@@ -2564,7 +2839,116 @@ export class SessionView implements OnInit {
     this.dismissedSlash = token === null ? null : { start: token.start, query: token.query };
   }
 
+  private dismissPrMentions(): void {
+    this.prMentionOpen.set(false);
+    const token = this.activeAtMention();
+    this.dismissedPrMention = token === null ? null : { start: token.start, query: token.query };
+  }
+
+  protected attachPrItem(attachment: ComposerPullRequestAttachment): void {
+    const res = addPrAttachment(this.attachedPullRequests(), attachment);
+    if (res.added) {
+      this.attachedPullRequests.set(res.list);
+    } else if (res.reason === 'limit') {
+      toast.info($localize`You can attach up to 5 Pull request references per Message.`);
+    }
+  }
+
+  protected removeAttachedPr(attachment: ComposerPullRequestAttachment): void {
+    const key = composerPullRequestAttachmentKey(attachment);
+    this.attachedPullRequests.update((list) => removePrAttachment(list, key));
+  }
+
+  protected pickPrMention(pr: PullRequestSummary): void {
+    const pid = this.projectId();
+    if (pid === null) return;
+    const mention = this.activeAtMention();
+    if (mention !== null) {
+      const stripped = stripAtMentionToken(this.draft(), mention);
+      this.draft.set(stripped.text);
+      const composer = this.composerInput()?.nativeElement;
+      if (composer !== undefined) {
+        composer.value = stripped.text;
+        composer.setSelectionRange(stripped.caret, stripped.caret);
+      }
+      this.composerCaret.set({ start: stripped.caret, end: stripped.caret });
+    }
+    this.prMentionOpen.set(false);
+    this.dismissedPrMention = null;
+    this.attachPrItem({
+      kind: 'pullRequest',
+      projectId: pid,
+      ref: pr.ref,
+      title: pr.title,
+      state: pr.state,
+      headSha: pr.headSha,
+      url: pr.url,
+    });
+  }
+
+  protected openPrPart(part: PullRequestPart): void {
+    const pid = this.projectId();
+    if (pid === null) return;
+    this.prState.openPrPage(pid, part.ref.number, {
+      ...(part.threadId === undefined ? {} : { threadId: part.threadId }),
+      ...(part.checkId === undefined ? {} : { checkId: part.checkId }),
+    });
+  }
+
+  protected queuedPullRequests(item: QueuedMessage): ReadonlyArray<PullRequestPart> {
+    return item.parts.filter((part): part is PullRequestPart => part._tag === 'pullRequest');
+  }
+
   protected onKeydown(event: KeyboardEvent): void {
+    if (event.key === '@' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      this.dismissedPrMention = null;
+    }
+    if (this.prMentionOpen()) {
+      const results = this.prMentionResults();
+      switch (event.key) {
+        case 'ArrowDown': {
+          event.preventDefault();
+          this.selectedPrMention.update((index) =>
+            Math.min(index + 1, Math.max(0, results.length - 1)),
+          );
+          return;
+        }
+        case 'ArrowUp': {
+          event.preventDefault();
+          this.selectedPrMention.update((index) => Math.max(index - 1, 0));
+          return;
+        }
+        case 'Escape': {
+          event.preventDefault();
+          this.dismissPrMentions();
+          return;
+        }
+        case 'Enter': {
+          if (event.shiftKey || event.isComposing) {
+            if (event.shiftKey) this.dismissPrMentions();
+            return;
+          }
+          const selected = results[this.selectedPrMention()];
+          if (selected !== undefined) {
+            event.preventDefault();
+            this.pickPrMention(selected);
+            return;
+          }
+          this.dismissPrMentions();
+          break;
+        }
+        case 'Tab': {
+          event.preventDefault();
+          const selected = results[this.selectedPrMention()];
+          if (selected !== undefined) {
+            this.pickPrMention(selected);
+          } else {
+            this.dismissPrMentions();
+          }
+          return;
+        }
+      }
+    }
     if (event.key === '/' && !event.ctrlKey && !event.metaKey && !event.altKey) {
       this.dismissedSlash = null;
     }
@@ -3224,20 +3608,22 @@ export class SessionView implements OnInit {
       }
     }
     const workflow = this.workflowArmed();
+    const pullRequests = this.attachedPullRequests();
     this.sending.set(true);
     // A draft that chose "New worktree" gets its worktree now; if that fails the message stays in the Composer.
     if (!((await this.composerStatus()?.prepare(trimmed)) ?? true)) {
       this.sending.set(false);
       return;
     }
-    const exit = await this.runtime.run(sendPrompt(this.sessionId(), parts, workflow), {
-      signal: this.aborts.signal,
-    });
+    const exit = await this.runtime.run(
+      sendPrompt(this.sessionId(), parts, workflow, undefined, pullRequests),
+      { signal: this.aborts.signal },
+    );
     this.sending.set(false);
     if (Exit.isSuccess(exit)) {
       if (this.workflowArmed() === workflow) this.workflowArmed.set(undefined);
       this.sentTurn = exit.value;
-      this.consumeDraft(text, images);
+      this.consumeDraft(text, images, pullRequests);
       this.messageSent.emit(this.sessionId());
       if (this.thread().outcomes.get(exit.value)?._tag === 'failed') {
         this.restoreFailedTurn(exit.value);
@@ -3246,9 +3632,14 @@ export class SessionView implements OnInit {
     }
     if (!this.aborts.signal.aborted) {
       const failure = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
-      if (this.workflowArmed() !== undefined && failure?._tag === 'SessionError')
+      if (
+        failure?._tag === 'SessionError' &&
+        (this.workflowArmed() !== undefined || failure.reason === 'PullRequestUnavailable')
+      ) {
         toast.error(failure.detail);
-      else toast.error($localize`Could not send the Message.`);
+      } else {
+        toast.error($localize`Could not send the Message.`);
+      }
     }
   }
 
@@ -3268,10 +3659,19 @@ export class SessionView implements OnInit {
   }
 
   /** Clears the Composer only if the user did not change it meanwhile. */
-  private consumeDraft(text: string, images: ReadonlyArray<Attached>): void {
-    if (this.draft() === text && this.images() === images) {
+  private consumeDraft(
+    text: string,
+    images: ReadonlyArray<Attached>,
+    pullRequests?: ReadonlyArray<ComposerPullRequestAttachment>,
+  ): void {
+    if (
+      this.draft() === text &&
+      this.images() === images &&
+      (pullRequests === undefined || this.attachedPullRequests() === pullRequests)
+    ) {
       this.draft.set('');
       this.images.set([]);
+      this.attachedPullRequests.set([]);
       this.carets.clear(this.sessionId());
     }
   }
@@ -3285,31 +3685,42 @@ export class SessionView implements OnInit {
   protected async queueDraft(): Promise<void> {
     if (!this.running() || !this.composerReady()) return;
     this.commandsOpen.set(false);
+    this.prMentionOpen.set(false);
     const { text, images, parts } = this.composeParts();
+    const pullRequests = this.attachedPullRequests();
     this.sending.set(true);
-    const exit = await this.runtime.run(enqueueMessage(this.sessionId(), parts), {
+    const exit = await this.runtime.run(enqueueMessage(this.sessionId(), parts, pullRequests), {
       signal: this.aborts.signal,
     });
     this.sending.set(false);
     if (Exit.isSuccess(exit)) {
-      this.consumeDraft(text, images);
+      this.consumeDraft(text, images, pullRequests);
       return;
     }
-    if (!this.aborts.signal.aborted) toast.error($localize`Could not queue the Message.`);
+    if (!this.aborts.signal.aborted) {
+      const failure = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+      if (failure?._tag === 'SessionError' && failure.reason === 'PullRequestUnavailable') {
+        toast.error(failure.detail);
+      } else {
+        toast.error($localize`Could not queue the Message.`);
+      }
+    }
   }
 
   /** Steers the running Turn; when it settles first, the Message is sent as a normal Turn instead. */
   protected async steerDraft(): Promise<void> {
     if (!this.running() || !this.steeringSupported() || !this.composerReady()) return;
     this.commandsOpen.set(false);
+    this.prMentionOpen.set(false);
     const { text, images, parts } = this.composeParts();
+    const pullRequests = this.attachedPullRequests();
     this.sending.set(true);
-    const exit = await this.runtime.run(steerTurn(this.sessionId(), parts), {
+    const exit = await this.runtime.run(steerTurn(this.sessionId(), parts, pullRequests), {
       signal: this.aborts.signal,
     });
     if (Exit.isSuccess(exit)) {
       this.sending.set(false);
-      this.consumeDraft(text, images);
+      this.consumeDraft(text, images, pullRequests);
       return;
     }
     const failure = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
@@ -3317,11 +3728,22 @@ export class SessionView implements OnInit {
       !this.aborts.signal.aborted &&
       failure !== undefined &&
       failure._tag === 'SessionError' &&
+      failure.reason === 'PullRequestUnavailable'
+    ) {
+      this.sending.set(false);
+      toast.error(failure.detail);
+      return;
+    }
+    if (
+      !this.aborts.signal.aborted &&
+      failure !== undefined &&
+      failure._tag === 'SessionError' &&
       failure.reason === 'NotRunning'
     ) {
-      const fallback = await this.runtime.run(sendPrompt(this.sessionId(), parts), {
-        signal: this.aborts.signal,
-      });
+      const fallback = await this.runtime.run(
+        sendPrompt(this.sessionId(), parts, undefined, undefined, pullRequests),
+        { signal: this.aborts.signal },
+      );
       this.sending.set(false);
       if (Exit.isSuccess(fallback)) {
         this.sentTurn = fallback.value;

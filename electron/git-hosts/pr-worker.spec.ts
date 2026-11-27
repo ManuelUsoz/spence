@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
+import { Timestamp } from '../../src/shared/projects/projects.rpc';
 import {
+  CheckRunId,
+  CommentId,
+  PullRequestNumber,
+  ReviewThreadId,
+  type PullRequestDetail,
+  type PullRequestDiff,
+} from '../../src/shared/pull-requests/pull-requests.rpc';
+import {
+  formatPrSnapshot,
   normalizeReviewThreads,
   normalizeStatusCheckRollup,
   parseMultiFileUnifiedDiff,
@@ -212,6 +222,240 @@ describe('pr-worker', () => {
         body: 'Please rename this.',
         author: { login: 'alice', displayName: 'Alice', avatarUrl: 'https://avatars/alice' },
       });
+    });
+  });
+
+  describe('formatPrSnapshot', () => {
+    const now = Timestamp.make(1_700_000_000_000);
+    const makeDetail = (overrides: Partial<PullRequestDetail> = {}): PullRequestDetail => ({
+      ref: {
+        repo: { host: 'github', canonicalPath: 'acme/spence' },
+        number: PullRequestNumber.make(198),
+      },
+      title: 'Add Composer PR context',
+      state: 'open',
+      author: { login: 'alice', displayName: 'Alice', avatarUrl: null },
+      headRef: 'feat/pr-context',
+      headSha: 'abc1234567890',
+      headRepo: { host: 'github', canonicalPath: 'acme/spence' },
+      baseRef: 'main',
+      updatedAt: now,
+      url: 'https://github.com/acme/spence/pull/198',
+      checkRollup: 'failing',
+      reviewDecision: 'changesRequested',
+      commentCount: 20,
+      unresolvedThreadCount: 30,
+      viewerRoles: ['author'],
+      isCrossRepo: false,
+      body: 'B'.repeat(10_000),
+      mergeState: 'blocked',
+      autoMergeEnabled: false,
+      labels: [{ name: 'enhancement', color: '0e8a16', description: null }],
+      reviewers: [],
+      assignees: [],
+      milestone: null,
+      repoLabels: [],
+      repoMilestones: [],
+      collaborators: [],
+      checks: [
+        {
+          id: CheckRunId.make('chk-pass'),
+          name: 'passing-check',
+          status: 'completed',
+          conclusion: 'success',
+          url: 'https://github.com/acme/spence/runs/0',
+          summary: 'All good',
+          isRequired: true,
+        },
+        ...Array.from({ length: 22 }, (_, i) => ({
+          id: CheckRunId.make(`chk-fail-${i}`),
+          name: `failing-check-${i}`,
+          status: 'completed' as const,
+          conclusion: 'failure' as const,
+          url: `https://github.com/acme/spence/runs/${i + 1}`,
+          summary: 'S'.repeat(20_000),
+          isRequired: true,
+        })),
+      ],
+      reviews: [],
+      reviewThreads: [
+        {
+          id: ReviewThreadId.make('rt-resolved'),
+          path: 'src/done.ts',
+          line: 5,
+          startLine: null,
+          side: 'RIGHT',
+          isResolved: true,
+          isOutdated: false,
+          comments: [
+            {
+              id: CommentId.make('rc-res'),
+              author: { login: 'bob', displayName: 'Bob', avatarUrl: null },
+              body: 'Resolved comment',
+              createdAt: now,
+              updatedAt: now,
+              url: 'https://github.com/acme/spence/pull/198#r0',
+            },
+          ],
+        },
+        ...Array.from({ length: 28 }, (_, i) => ({
+          id: ReviewThreadId.make(`rt-${i}`),
+          path: `src/file-${i}.ts`,
+          line: 10 + i,
+          startLine: null,
+          side: 'RIGHT' as const,
+          isResolved: false,
+          isOutdated: false,
+          comments: [
+            {
+              id: CommentId.make(`rc-${i}`),
+              author: { login: 'bob', displayName: 'Bob', avatarUrl: null },
+              body: `Unresolved note ${i}`,
+              createdAt: now,
+              updatedAt: now,
+              url: `https://github.com/acme/spence/pull/198#r${i + 1}`,
+            },
+          ],
+        })),
+      ],
+      comments: Array.from({ length: 20 }, (_, i) => ({
+        id: CommentId.make(`gc-${i}`),
+        author: { login: 'carol', displayName: 'Carol', avatarUrl: null },
+        body: `General comment ${i}`,
+        createdAt: Timestamp.make(1_700_000_000_000 + i * 1000),
+        updatedAt: Timestamp.make(1_700_000_000_000 + i * 1000),
+        url: `https://github.com/acme/spence/pull/198#issuecomment-${i}`,
+      })),
+      actions: {
+        canUpdate: true,
+        canMerge: false,
+        canReview: true,
+        canApproveOrRequestChanges: true,
+        canResolveThreads: true,
+        allowedMergeMethods: ['squash'],
+      },
+      revision: { headSha: 'abc1234567890', updatedAt: now },
+      ...overrides,
+    });
+
+    const makeDiff = (fileCount = 3): PullRequestDiff => ({
+      ref: {
+        repo: { host: 'github', canonicalPath: 'acme/spence' },
+        number: PullRequestNumber.make(198),
+      },
+      headSha: 'abc1234567890',
+      baseSha: 'base000000000',
+      files: Array.from({ length: fileCount }, (_, i) => ({
+        path: `src/file-${i}.ts`,
+        status: 'modified' as const,
+        additions: 2,
+        deletions: 1,
+        truncated: i === fileCount - 1 && fileCount > 3,
+        hunks: [
+          {
+            header: '@@ -8,3 +8,4 @@',
+            oldStart: 8,
+            oldLines: 3,
+            newStart: 8,
+            newLines: 4,
+            lines: [
+              { kind: 'context', content: 'const a = 1;', oldLine: 8, newLine: 8 },
+              { kind: 'removed', content: 'const b = 2;', oldLine: 9, newLine: null },
+              {
+                kind: 'added',
+                content: `const b = ${i}; ${'X'.repeat(500)}`,
+                oldLine: null,
+                newLine: 9,
+              },
+            ],
+          },
+        ],
+      })),
+    });
+
+    it('bounds Whole PR snapshot (8 KB body, 20 checks, 25 unresolved threads, 15 comments, 100 files) and omits patches when Worktree HEAD === headSha cleanly', () => {
+      const detail = makeDetail();
+      const diff = makeDiff(105);
+
+      const snapshot = formatPrSnapshot({
+        kind: 'pullRequest',
+        detail,
+        diff,
+        isWorktreeAtHeadCleanly: true,
+      });
+
+      expect(snapshot).toContain('PR #198: Add Composer PR context');
+      expect(snapshot).toContain('HEAD === headSha cleanly: yes');
+      expect(snapshot).toContain('[truncated]');
+      expect(snapshot).not.toContain('passing-check');
+      expect(snapshot).toContain('failing-check-19');
+      expect(snapshot).not.toContain('failing-check-20');
+      expect(snapshot).toContain('Resolved threads: 1');
+      expect(snapshot).toContain('Unresolved note 24');
+      expect(snapshot).not.toContain('Unresolved note 25');
+      expect(snapshot).not.toContain('General comment 4');
+      expect(snapshot).toContain('General comment 19');
+      expect(snapshot).toContain('src/file-99.ts');
+      expect(snapshot).not.toContain('src/file-100.ts');
+      // Patches must be omitted when Worktree is cleanly at headSha
+      expect(snapshot).not.toContain('@@ -8,3 +8,4 @@');
+    });
+
+    it('includes bounded 24 KB patches when Worktree is NOT cleanly at headSha', () => {
+      const detail = makeDetail({
+        body: 'Short body',
+        checks: [],
+        reviewThreads: [],
+        comments: [],
+      });
+      const diff = makeDiff(80);
+
+      const snapshot = formatPrSnapshot({
+        kind: 'pullRequest',
+        detail,
+        diff,
+        isWorktreeAtHeadCleanly: false,
+      });
+
+      expect(snapshot).toContain('HEAD === headSha cleanly: no');
+      expect(snapshot).toContain('@@ -8,3 +8,4 @@');
+      expect(Buffer.byteLength(snapshot, 'utf8')).toBeLessThan(30_000);
+    });
+
+    it('formats targeted Review thread with hunk context and resolution state', () => {
+      const detail = makeDetail();
+      const diff = makeDiff(3);
+      const snapshot = formatPrSnapshot({
+        kind: 'reviewThread',
+        detail,
+        diff,
+        threadId: ReviewThreadId.make('rt-0'),
+      });
+
+      expect(snapshot).toContain('PR #198: Add Composer PR context');
+      expect(snapshot).toContain('src/file-0.ts:10');
+      expect(snapshot).toContain('Unresolved note 0');
+      expect(snapshot).toContain('unresolved');
+      expect(snapshot).toContain('@@ -8,3 +8,4 @@');
+    });
+
+    it('formats targeted failing Check run with 16 KB summary cap and cached fallback header', () => {
+      const detail = makeDetail();
+      const snapshot = formatPrSnapshot({
+        kind: 'checkRun',
+        detail,
+        checkId: CheckRunId.make('chk-fail-0'),
+        cachedFallbackFetchedAt: now,
+      });
+
+      expect(
+        snapshot.startsWith(
+          '[cached snapshot · fetched at 2023-11-14T22:13:20.000Z; offline/unreachable]',
+        ),
+      ).toBe(true);
+      expect(snapshot).toContain('failing-check-0');
+      expect(snapshot).toContain('[truncated]');
+      expect(Buffer.byteLength(snapshot, 'utf8')).toBeLessThan(18_000);
     });
   });
 });

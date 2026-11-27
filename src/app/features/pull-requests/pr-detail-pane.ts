@@ -19,6 +19,7 @@ import { isAllowedExternalUrl } from '../../../shared/links/link-policy';
 import type {
   AddCommentTarget,
   CheckRun,
+  CheckRunId,
   CommentId,
   HostCapabilities,
   LocalBaseUpdateResult,
@@ -31,6 +32,7 @@ import type {
   PullRequestUpdatePatch,
   ReviewId,
   ReviewSubmitEvent,
+  ReviewThread,
   ReviewThreadId,
 } from '../../../shared/pull-requests/pull-requests.rpc';
 import { Keymap } from '../../core/keymap';
@@ -137,7 +139,29 @@ type ConfirmPrompt =
           </div>
         </div>
 
-        <div class="flex shrink-0 items-center gap-2">
+        <div class="flex shrink-0 flex-wrap items-center gap-2">
+          <button
+            hlmBtn
+            type="button"
+            variant="default"
+            size="sm"
+            data-testid="pr-start-session"
+            (click)="startSession.emit()"
+            i18n
+          >
+            Start Session
+          </button>
+          <button
+            hlmBtn
+            type="button"
+            variant="outline"
+            size="sm"
+            data-testid="pr-reference-in-session"
+            (click)="referencePr.emit()"
+            i18n
+          >
+            Reference in Session
+          </button>
           @if (detail().actions.canUpdate && !editMode()) {
             <button
               hlmBtn
@@ -747,6 +771,17 @@ type ConfirmPrompt =
                     }
                   </div>
                   <div class="flex shrink-0 items-center gap-2">
+                    @if (isFailingCheck(check)) {
+                      <button
+                        type="button"
+                        class="text-muted-foreground hover:text-foreground text-xs underline underline-offset-2"
+                        [attr.data-testid]="'pr-check-reference-' + check.id"
+                        (click)="referenceCheck.emit(check)"
+                        i18n
+                      >
+                        Reference in Session
+                      </button>
+                    }
                     @if (check.summary) {
                       <button
                         type="button"
@@ -874,25 +909,36 @@ type ConfirmPrompt =
                       {{ thread.isResolved ? resolvedLabel : unresolvedLabel }}
                     </span>
                   </div>
-                  @if (
-                    (capabilities()?.supportsThreadResolution ?? true) &&
-                    detail().actions.canResolveThreads
-                  ) {
+                  <div class="flex items-center gap-2">
                     <button
-                      hlmBtn
                       type="button"
-                      variant="ghost"
-                      size="sm"
-                      class="h-6 px-2 text-xs"
-                      [disabled]="mutating()"
-                      [attr.data-testid]="'pr-thread-resolve-toggle-' + thread.id"
-                      (click)="
-                        resolveThread.emit({ threadId: thread.id, resolved: !thread.isResolved })
-                      "
+                      class="text-muted-foreground hover:text-foreground text-xs underline underline-offset-2"
+                      [attr.data-testid]="'pr-thread-reference-' + thread.id"
+                      (click)="referenceThread.emit(thread)"
+                      i18n
                     >
-                      {{ thread.isResolved ? unresolveLabel : resolveLabel }}
+                      Reference in Session
                     </button>
-                  }
+                    @if (
+                      (capabilities()?.supportsThreadResolution ?? true) &&
+                      detail().actions.canResolveThreads
+                    ) {
+                      <button
+                        hlmBtn
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        class="h-6 px-2 text-xs"
+                        [disabled]="mutating()"
+                        [attr.data-testid]="'pr-thread-resolve-toggle-' + thread.id"
+                        (click)="
+                          resolveThread.emit({ threadId: thread.id, resolved: !thread.isResolved })
+                        "
+                      >
+                        {{ thread.isResolved ? unresolveLabel : resolveLabel }}
+                      </button>
+                    }
+                  </div>
                 </div>
                 <div class="space-y-2">
                   @for (comment of thread.comments; track comment.id) {
@@ -1213,6 +1259,8 @@ export class PrDetailPane {
   readonly detail = input.required<PullRequestDetail>();
   readonly diffState = input.required<DiffLoadState>();
   readonly renderClient = input.required<PrRenderClient>();
+  readonly selectedThreadId = input<ReviewThreadId | null>(null);
+  readonly selectedCheckId = input<CheckRunId | null>(null);
   readonly capabilities = input<HostCapabilities | null>(null);
   readonly readOnly = input(false);
   readonly merging = input(false);
@@ -1239,6 +1287,10 @@ export class PrDetailPane {
   }>();
   readonly updateLocalBase = output<void>();
   readonly switchToBase = output<string>();
+  readonly referencePr = output<void>();
+  readonly startSession = output<void>();
+  readonly referenceThread = output<ReviewThread>();
+  readonly referenceCheck = output<CheckRun>();
   readonly saveEdit = output<{
     readonly revision: PullRequestRevision;
     readonly patch: PullRequestUpdatePatch;
@@ -1372,15 +1424,17 @@ export class PrDetailPane {
   protected readonly isNonBlockingCheck = isNonBlockingCheck;
   protected readonly isAllowedLink = isAllowedExternalUrl;
 
+  protected isFailingCheck(check: CheckRun): boolean {
+    return (
+      check.conclusion === 'failure' ||
+      check.conclusion === 'timedOut' ||
+      check.conclusion === 'startupFailure' ||
+      check.conclusion === 'actionRequired'
+    );
+  }
+
   protected readonly failingCheckCount = computed(
-    () =>
-      this.detail().checks.filter(
-        (c) =>
-          c.conclusion === 'failure' ||
-          c.conclusion === 'timedOut' ||
-          c.conclusion === 'startupFailure' ||
-          c.conclusion === 'actionRequired',
-      ).length,
+    () => this.detail().checks.filter((c) => this.isFailingCheck(c)).length,
   );
 
   protected readonly pendingCheckCount = computed(
@@ -1393,6 +1447,14 @@ export class PrDetailPane {
       if (!this.confirmMergeOpen()) return;
       const release = this.keymap.pushModal({ onEscape: () => this.closeMergeConfirm() });
       onCleanup(release);
+    });
+
+    effect(() => {
+      const checkId = this.selectedCheckId();
+      if (checkId !== null) {
+        this.checksExpanded.set(true);
+        this.expandedCheckIds.update((prev) => new Set([...prev, checkId]));
+      }
     });
 
     effect(() => {

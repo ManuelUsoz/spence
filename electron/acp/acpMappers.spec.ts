@@ -8,6 +8,7 @@ import {
   ThoughtId,
   TurnId,
 } from '../../src/shared/sessions/sessions.rpc';
+import { PullRequestNumber } from '../../src/shared/pull-requests/pull-requests.rpc';
 import { AcpError } from './acpErrors';
 import { Exit } from 'effect';
 import {
@@ -766,5 +767,34 @@ describe('toContextUsage', () => {
     ]) {
       expect(toContextUsage({ used, size: 200_000 })).toBeUndefined();
     }
+  });
+});
+
+describe('toAcpPrompt', () => {
+  it('serializes PullRequestPart into an ACP text ContentBlock wrapped in <pull_request_context>', () => {
+    const blocks = toAcpPrompt([
+      { _tag: 'text', text: 'Please review this PR.' },
+      {
+        _tag: 'pullRequest',
+        kind: 'pullRequest',
+        ref: {
+          repo: { host: 'github', canonicalPath: 'acme/spence' },
+          number: PullRequestNumber.make(198),
+        },
+        title: 'Add PR context',
+        state: 'open',
+        headSha: 'abc1234567890',
+        url: 'https://github.com/acme/spence/pull/198',
+        snapshot: 'PR #198: Add PR context\nState: open',
+      },
+    ]);
+
+    expect(blocks).toEqual([
+      { type: 'text', text: 'Please review this PR.' },
+      {
+        type: 'text',
+        text: '<pull_request_context>\nPR #198: Add PR context\nState: open\n</pull_request_context>',
+      },
+    ]);
   });
 });

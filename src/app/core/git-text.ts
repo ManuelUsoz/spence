@@ -127,6 +127,8 @@ export const prepareRejectionText = (
       return $localize`The folder for that worktree already exists.`;
     case 'UnknownBase':
       return $localize`The branch to start from no longer exists.`;
+    case 'PullRequestRefUnavailable':
+      return $localize`This Pull request's head ref is no longer fetchable.`;
     case 'Busy':
       return $localize`This Session already has messages, so it stays in its worktree.`;
     case 'StartFailed':

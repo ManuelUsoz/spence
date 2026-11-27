@@ -23,6 +23,7 @@ import type {
   PermissionRequest,
   PermissionRequestId,
   PermissionState,
+  PullRequestPart,
   StepId,
   TurnId,
   TurnOutcome,
@@ -65,6 +66,8 @@ export interface ThreadMessage {
   readonly text: string;
   /** Its Images, shown above the text. */
   readonly images: ReadonlyArray<ImagePart>;
+  /** Its Pull request snapshots, shown as clickable pills. */
+  readonly pullRequests: ReadonlyArray<PullRequestPart>;
   /** The Message was injected into its Turn with Steer. */
   readonly steer: boolean;
   /** Another Session sent it: shown as from that Session, not as the user's own Message. */
@@ -343,6 +346,9 @@ export const foldThread = (thread: Thread, streamed: SessionStreamItem): Thread 
             role: item.role,
             text: textOf(item.parts),
             images: imagesOf(item.parts),
+            pullRequests: item.parts.filter(
+              (part): part is PullRequestPart => part._tag === 'pullRequest',
+            ),
             steer: item.steer === true,
             ...(item.from === undefined ? {} : { from: item.from }),
           },

@@ -807,6 +807,11 @@ const toBlock = (part: MessagePart): ContentBlock => {
             : { uri: part.uri, ...mimeType, blob: part.contents.blob },
       };
     }
+    case 'pullRequest':
+      return {
+        type: 'text',
+        text: `<pull_request_context>\n${part.snapshot}\n</pull_request_context>`,
+      };
   }
 };
 
