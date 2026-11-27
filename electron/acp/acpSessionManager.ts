@@ -49,6 +49,9 @@ export const CLIENT_CAPABILITIES: ClientCapabilities = {
   session: { compaction: {}, notices: {} },
 };
 
+/** Tool-free capabilities for isolated summary/PR drafting (neither `fs` nor `terminal`). */
+export const TOOL_FREE_CLIENT_CAPABILITIES: ClientCapabilities = {};
+
 /** The request field that carries adapter `_meta`, when there is any. */
 const withMeta = (meta: SessionMeta | undefined) =>
   meta === undefined ? {} : { _meta: { ...meta } };
@@ -126,6 +129,7 @@ type ManagerRequirements = AgentLogs | PathSources | MergedPath;
 const makeAcpSessionManager = Effect.fn('Acp.connect')(function* (
   entry: CatalogEntry,
   exited: Effect.Effect<void>,
+  clientCapabilities: ClientCapabilities = CLIENT_CAPABILITIES,
 ) {
   const transport = yield* openStdioTransport(entry);
   const { platform, env } = yield* PathSources;
@@ -182,7 +186,7 @@ const makeAcpSessionManager = Effect.fn('Acp.connect')(function* (
       'initialize',
       {
         protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: CLIENT_CAPABILITIES,
+        clientCapabilities,
         clientInfo: CLIENT_INFO,
       },
       { cancellationSignal: signal },
@@ -329,6 +333,14 @@ export class AcpClient extends Context.Service<
     readonly connect: (
       entry: CatalogEntry,
     ) => Effect.Effect<AcpSessionManager, AcpError | AgentLaunchError>;
+    /**
+     * Spawns an isolated, non-memoized Agent connection bound to the caller's `Scope` with custom `clientCapabilities`
+     * (e.g. `TOOL_FREE_CLIENT_CAPABILITIES` for Summary handoffs or Pull request drafting).
+     */
+    readonly connectIsolated?: (
+      entry: CatalogEntry,
+      clientCapabilities?: ClientCapabilities,
+    ) => Effect.Effect<AcpSessionManager, AcpError | AgentLaunchError, Scope.Scope>;
     /**
      * Stops the Agent's process if it runs: closes the connection and stdin, then kills its tree after a short grace.
      * Completes once the process is gone.
@@ -520,8 +532,27 @@ export const layerAcpClient = Layer.effect(
       yield* manager.authenticate(method.id);
     });
 
+    const connectIsolated = Effect.fnUntraced(function* (
+      entry: CatalogEntry,
+      clientCapabilities: ClientCapabilities = TOOL_FREE_CLIENT_CAPABILITIES,
+    ) {
+      const callScope = yield* Effect.scope;
+      const stopped = yield* Deferred.make<void>();
+      yield* Scope.addFinalizer(
+        callScope,
+        Deferred.succeed(stopped, undefined).pipe(Effect.asVoid),
+      );
+      const { manager } = yield* makeAcpSessionManager(
+        entry,
+        Deferred.await(stopped),
+        clientCapabilities,
+      ).pipe(Effect.provideContext(context));
+      return manager;
+    });
+
     return {
       connect,
+      connectIsolated,
       disconnect,
       kill,
       unconfirmedExit,

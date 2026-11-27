@@ -122,6 +122,9 @@ const setup = (options?: {
       'PullRequests.unpinNumber': () => Effect.void,
       'PullRequests.getDetail': () => Effect.die('unused'),
       'PullRequests.getDiff': () => Effect.die('unused'),
+      'PullRequests.prepareCreate': () => Effect.die('unused'),
+      'PullRequests.draftCreate': () => Effect.die('unused'),
+      'PullRequests.create': () => Effect.die('unused'),
     }),
     LinksRpcs.toLayer({
       'Links.openExternal': () => Effect.void,

@@ -971,6 +971,29 @@ export const makeGitHubAdapter = Effect.gen(function* () {
     };
   });
 
+  const create: GitHost['create'] = Effect.fn('GitHubAdapter.create')(function* (input) {
+    const { owner, name } = splitRepo(input.repo);
+    const res = yield* auth.withToken('github', (token) =>
+      http.postJson<{ readonly number: number }>(
+        `${GITHUB_API_BASE}/repos/${owner}/${name}/pulls`,
+        {
+          title: input.title,
+          body: input.body,
+          head: input.head,
+          base: input.base,
+          draft: input.draft,
+        },
+        {
+          headers: { authorization: `Bearer ${token}` },
+        },
+      ),
+    );
+    return yield* getSummaryByNumber({
+      repo: input.repo,
+      number: PullRequestNumber.make(res.data.number),
+    });
+  });
+
   const clearEtags: GitHost['clearEtags'] = (repo) =>
     Effect.sync(() => {
       if (repo === undefined) {
@@ -993,6 +1016,7 @@ export const makeGitHubAdapter = Effect.gen(function* () {
     getSummaryByNumber,
     getDetail,
     getDiff,
+    create,
     clearEtags,
   };
 

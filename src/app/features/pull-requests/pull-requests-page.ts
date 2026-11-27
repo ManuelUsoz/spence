@@ -24,6 +24,7 @@ import {
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { PullRequestsState } from '../../core/pull-requests-state';
+import { PrCreateForm } from './pr-create-form';
 import { PrDetailPane, type DiffLoadState } from './pr-detail-pane';
 import { PrRenderClient } from './pr-render-client';
 import { formatCachedAge, formatResetTime, prStateLabel } from './pr-status';
@@ -44,7 +45,7 @@ type DetailLoadState =
  */
 @Component({
   selector: 'app-pull-requests-page',
-  imports: [HlmBadgeImports, HlmButtonImports, HlmInputImports, PrDetailPane],
+  imports: [HlmBadgeImports, HlmButtonImports, HlmInputImports, PrDetailPane, PrCreateForm],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
     class: 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden',
@@ -173,7 +174,7 @@ type DetailLoadState =
             size="sm"
             class="h-7 px-2.5 text-xs"
             data-testid="pr-create-button"
-            (click)="createMode.set(true)"
+            (click)="openCreate()"
             i18n
           >
             Create PR
@@ -389,24 +390,14 @@ type DetailLoadState =
 
             <div class="min-h-0 flex-1 px-8 py-6">
               @if (createMode()) {
-                <div class="space-y-3" data-testid="pr-create-placeholder">
-                  <div class="flex items-center justify-between gap-2">
-                    <h2 class="font-display text-xl font-normal" i18n>Create Pull request</h2>
-                    <button
-                      hlmBtn
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      (click)="createMode.set(false)"
-                      i18n
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                  <p class="text-muted-foreground text-sm" i18n>
-                    Select a Pull request on the left to inspect its details, checks, and diff.
-                  </p>
-                </div>
+                @if (projectId(); as pid) {
+                  <app-pr-create-form
+                    [projectId]="pid"
+                    [worktreePath]="createWorktreePath()"
+                    (cancelled)="closeCreateMode()"
+                    (created)="onPrCreated($event)"
+                  />
+                }
               } @else if (selectedNumber() === null) {
                 <div class="flex h-full items-center justify-center">
                   <p class="font-display text-muted-foreground text-xl font-normal" i18n>
@@ -479,6 +470,7 @@ export class PullRequestsPage {
   protected readonly lookingUp = signal(false);
   protected readonly lookupError = signal<string | null>(null);
   protected readonly createMode = signal(false);
+  protected readonly createWorktreePath = signal<string | null>(null);
   protected readonly narrowPane = signal<'list' | 'viewer'>('list');
   protected readonly extraSummaries = signal<ReadonlyArray<PullRequestSummary>>([]);
   protected readonly detailLoad = signal<DetailLoadState>({ status: 'idle' });
@@ -564,6 +556,15 @@ export class PullRequestsPage {
     });
 
     effect(() => {
+      const req = this.prState.createRequested();
+      if (req !== null) {
+        this.createWorktreePath.set(req.worktreePath);
+        this.createMode.set(true);
+        this.narrowPane.set('viewer');
+      }
+    });
+
+    effect(() => {
       const pid = this.projectId();
       const num = this.selectedNumber();
       if (pid === null || num === null) {
@@ -572,6 +573,29 @@ export class PullRequestsPage {
       }
       this.fetchPr(pid, num);
     });
+  }
+
+  protected openCreate(): void {
+    this.createWorktreePath.set(null);
+    this.createMode.set(true);
+    this.narrowPane.set('viewer');
+  }
+
+  protected closeCreateMode(): void {
+    this.createMode.set(false);
+    this.createWorktreePath.set(null);
+    this.prState.clearCreateRequest();
+  }
+
+  protected onPrCreated(summary: PullRequestSummary): void {
+    this.createMode.set(false);
+    this.createWorktreePath.set(null);
+    this.prState.clearCreateRequest();
+    const pid = this.projectId();
+    if (pid !== null) {
+      this.prState.refreshProject(pid);
+    }
+    this.selectPr(summary.ref.number);
   }
 
   protected selectPr(num: PullRequestNumber): void {

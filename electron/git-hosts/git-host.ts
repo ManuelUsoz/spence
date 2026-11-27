@@ -239,6 +239,14 @@ export interface GitHost {
     readonly headSha: string;
     readonly baseSha: string;
   }) => Effect.Effect<PullRequestDiff, GitHostError>;
+  readonly create: (input: {
+    readonly repo: RemoteRepoRef;
+    readonly title: string;
+    readonly body: string;
+    readonly head: string;
+    readonly base: string;
+    readonly draft: boolean;
+  }) => Effect.Effect<PullRequestSummary, GitHostError>;
   readonly clearEtags: (repo?: RemoteRepoRef) => Effect.Effect<void>;
 }
 

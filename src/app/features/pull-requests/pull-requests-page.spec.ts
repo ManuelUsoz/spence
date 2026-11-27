@@ -234,6 +234,9 @@ const setupPage = (
           overrides.getDiff
             ? overrides.getDiff(number)
             : Effect.fail(new GitHostError({ reason: 'NotFound', detail: 'Not found' })),
+        'PullRequests.prepareCreate': () => Effect.die('unused'),
+        'PullRequests.draftCreate': () => Effect.die('unused'),
+        'PullRequests.create': () => Effect.die('unused'),
       }),
       LinksRpcs.toLayer({
         'Links.openExternal': ({ url }) =>

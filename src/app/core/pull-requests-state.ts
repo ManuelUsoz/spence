@@ -30,6 +30,7 @@ export class PullRequestsState {
   readonly activeProjectId = signal<ProjectId | null>(null);
   readonly prPageOpen = signal(false);
   readonly selectedPrNumber = signal<PullRequestNumber | null>(null);
+  readonly createRequested = signal<{ readonly worktreePath: string | null } | null>(null);
   readonly openSettingsRequested = signal(0);
 
   constructor() {
@@ -137,12 +138,27 @@ export class PullRequestsState {
   }
 
   openPrPage(projectId: ProjectId | null, prNumber: PullRequestNumber | null = null): void {
+    this.createRequested.set(null);
     this.selectedPrNumber.set(prNumber);
     this.prPageOpen.set(true);
     if (projectId !== null) {
       this.loadProject(projectId);
       this.setActiveView({ projectId, prPageOpen: true, activePrNumber: prNumber });
     }
+  }
+
+  openCreatePr(projectId: ProjectId | null, worktreePath: string | null = null): void {
+    this.selectedPrNumber.set(null);
+    this.createRequested.set({ worktreePath });
+    this.prPageOpen.set(true);
+    if (projectId !== null) {
+      this.loadProject(projectId);
+      this.setActiveView({ projectId, prPageOpen: true, activePrNumber: null });
+    }
+  }
+
+  clearCreateRequest(): void {
+    this.createRequested.set(null);
   }
 
   closePrPage(projectId: ProjectId | null): void {

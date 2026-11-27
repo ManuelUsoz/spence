@@ -460,6 +460,51 @@ export const ProjectPullRequestsState = Schema.Union([
 ]).annotate({ identifier: 'ProjectPullRequestsState' });
 export type ProjectPullRequestsState = typeof ProjectPullRequestsState.Type;
 
+/** Hard blocker preventing Pull request creation until resolved. */
+export const CreatePrBlockerReason = Schema.Literals([
+  'DetachedHead',
+  'ZeroCommitsAhead',
+  'OpenPrExists',
+  'NotAuthenticated',
+  'NoRemote',
+]).annotate({ identifier: 'CreatePrBlockerReason' });
+export type CreatePrBlockerReason = typeof CreatePrBlockerReason.Type;
+
+/** One explicit blocker for Pull request creation. */
+export const CreatePrBlocker = Schema.Struct({
+  reason: CreatePrBlockerReason,
+  detail: Schema.String,
+}).annotate({ identifier: 'CreatePrBlocker' });
+export type CreatePrBlocker = typeof CreatePrBlocker.Type;
+
+/** Inspected local + remote state for creating a Pull request from a Worktree. */
+export const CreatePrPreparation = Schema.Struct({
+  worktreePath: Schema.String,
+  headRef: Schema.NullOr(Schema.String),
+  headSha: Schema.NullOr(Schema.String),
+  defaultBaseRef: Schema.String,
+  baseRef: Schema.String,
+  availableBaseRefs: Schema.Array(Schema.String),
+  aheadCount: Schema.Int,
+  behindCount: Schema.Int,
+  needsPush: Schema.Boolean,
+  headRemoteName: Schema.String,
+  isFork: Schema.Boolean,
+  isDirty: Schema.Boolean,
+  templateBody: Schema.NullOr(Schema.String),
+  supportsDraft: Schema.Boolean,
+  blockers: Schema.Array(CreatePrBlocker),
+  existingOpenPr: Schema.NullOr(PullRequestSummary),
+}).annotate({ identifier: 'CreatePrPreparation' });
+export type CreatePrPreparation = typeof CreatePrPreparation.Type;
+
+/** AI-drafted title and body for a new Pull request. */
+export const DraftPullRequestResult = Schema.Struct({
+  title: Schema.String,
+  body: Schema.String,
+}).annotate({ identifier: 'DraftPullRequestResult' });
+export type DraftPullRequestResult = typeof DraftPullRequestResult.Type;
+
 /**
  * Local-only RPC group for Git host authentication and Pull requests.
  * Merged into `DesktopRpcs` only; never exposed in `DeviceScopedRpcs` or `RemoteRpcs`.
@@ -551,6 +596,38 @@ export const PullRequestsRpcs = RpcGroup.make(
   Rpc.make('PullRequests.getDiff', {
     payload: { projectId: ProjectId, number: PullRequestNumber },
     success: PullRequestDiff,
+    error: GitHostError,
+  }),
+  Rpc.make('PullRequests.prepareCreate', {
+    payload: {
+      projectId: ProjectId,
+      worktreePath: Schema.optionalKey(Schema.String),
+      baseRef: Schema.optionalKey(Schema.String),
+    },
+    success: CreatePrPreparation,
+    error: GitHostError,
+  }),
+  Rpc.make('PullRequests.draftCreate', {
+    payload: {
+      projectId: ProjectId,
+      worktreePath: Schema.optionalKey(Schema.String),
+      baseRef: Schema.String,
+    },
+    success: DraftPullRequestResult,
+    error: GitHostError,
+  }),
+  Rpc.make('PullRequests.create', {
+    payload: {
+      projectId: ProjectId,
+      worktreePath: Schema.optionalKey(Schema.String),
+      title: Schema.String,
+      body: Schema.String,
+      baseRef: Schema.String,
+      headRef: Schema.String,
+      draft: Schema.Boolean,
+      pushFirst: Schema.Boolean,
+    },
+    success: PullRequestSummary,
     error: GitHostError,
   }),
 );

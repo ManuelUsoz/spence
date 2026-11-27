@@ -32,7 +32,11 @@ export type CreateWorktreeRejection =
 
 export type CreateWorktreeResult =
   | WorkerCapabilityFailure
-  | { readonly _tag: 'Created'; readonly entry: WorktreeEntry }
+  | {
+      readonly _tag: 'Created';
+      readonly entry: WorktreeEntry;
+      readonly createdFromBranch: string | null;
+    }
   | {
       readonly _tag: 'Rejected';
       readonly reason: CreateWorktreeRejection;
@@ -199,6 +203,19 @@ export const createWorktree = async (
     return reject('DestinationExists', `The folder ${destination} already exists.`);
   }
 
+  let createdFromBranch: string | null = base ?? null;
+  if (createdFromBranch === null) {
+    const headBranch = await runGit(
+      ctx.executable,
+      ['symbolic-ref', '--quiet', '--short', 'HEAD'],
+      folder,
+      pathEnv,
+    );
+    if (headBranch.ok && headBranch.stdout.trim().length > 0) {
+      createdFromBranch = headBranch.stdout.trim();
+    }
+  }
+
   const added = await runGit(
     ctx.executable,
     ['worktree', 'add', '-b', branch, destination, ...(base === undefined ? [] : [base])],
@@ -217,5 +234,5 @@ export const createWorktree = async (
   );
   return entry === undefined
     ? { _tag: 'GitFailed', path: folder, detail: 'The new Worktree was not listed by Git.' }
-    : { _tag: 'Created', entry };
+    : { _tag: 'Created', entry, createdFromBranch };
 };

@@ -3,19 +3,25 @@ import {
   Context,
   Duration,
   Effect,
+  Exit,
   Fiber,
   Layer,
+  Option,
   PubSub,
   Scope,
   Semaphore,
   Stream,
 } from 'effect';
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { promisify } from 'node:util';
 import type { Project, ProjectId } from '../../src/shared/projects/projects.rpc';
 import {
   GitHostError,
+  type CreatePrBlocker,
+  type CreatePrPreparation,
+  type DraftPullRequestResult,
   type GitHostKind,
   type ProjectPullRequestsState,
   type PullRequestDetail,
@@ -25,8 +31,16 @@ import {
   type SyncStatus,
   type WorktreePullRequestLink,
 } from '../../src/shared/pull-requests/pull-requests.rpc';
+import { TurnId } from '../../src/shared/sessions/sessions.rpc';
+import { DEFAULT_PULL_REQUEST_SETTINGS } from '../../src/shared/settings/settings.rpc';
+import { AcpClient } from '../acp/acpSessionManager';
+import { runIsolatedToolFreePrompt } from '../acp/tool-free-prompt';
+import { catalog } from '../agents/catalog';
 import { Projects } from '../projects/projects';
 import { WindowFocus } from '../sessions/window-focus';
+import { Settings } from '../settings/settings';
+import { pushBranch } from '../source-control/git-actions';
+import { BranchOrigins } from '../worktrees/branch-origins';
 import {
   GitHostRegistry,
   matchWorktreeToPullRequest,
@@ -34,6 +48,13 @@ import {
   type ResolvedProjectRemote,
 } from './git-host';
 import { HostAuth } from './host-auth';
+import {
+  buildDraftCreatePrompt,
+  gatherDraftCreateInput,
+  inspectCreateContext,
+  parseDraftAgentReply,
+} from './pr-create-git';
+import { detectPrTemplate } from './pr-template';
 import { PrStore } from './pr-store';
 
 const execFileAsync = promisify(execFile);
@@ -180,6 +201,26 @@ export interface PullRequestsServiceShape {
     projectId: ProjectId,
     number: PullRequestNumber,
   ) => Effect.Effect<PullRequestDiff, GitHostError>;
+  readonly prepareCreate: (input: {
+    readonly projectId: ProjectId;
+    readonly worktreePath?: string;
+    readonly baseRef?: string;
+  }) => Effect.Effect<CreatePrPreparation, GitHostError>;
+  readonly draftCreate: (input: {
+    readonly projectId: ProjectId;
+    readonly worktreePath?: string;
+    readonly baseRef: string;
+  }) => Effect.Effect<DraftPullRequestResult, GitHostError>;
+  readonly create: (input: {
+    readonly projectId: ProjectId;
+    readonly worktreePath?: string;
+    readonly title: string;
+    readonly body: string;
+    readonly baseRef: string;
+    readonly headRef: string;
+    readonly draft: boolean;
+    readonly pushFirst: boolean;
+  }) => Effect.Effect<PullRequestSummary, GitHostError>;
   readonly notifyTurnEnded: (projectId: ProjectId) => Effect.Effect<void>;
   readonly evictProject: (projectId: ProjectId) => Effect.Effect<void>;
   readonly evictAll: () => Effect.Effect<void>;
@@ -238,6 +279,9 @@ export const layerPullRequestsService = Layer.effect(
     const auth = yield* HostAuth;
     const prStore = yield* PrStore;
     const focus = yield* WindowFocus;
+    const branchOrigins = Option.getOrUndefined(yield* Effect.serviceOption(BranchOrigins));
+    const settingsService = Option.getOrUndefined(yield* Effect.serviceOption(Settings));
+    const acpClient = Option.getOrUndefined(yield* Effect.serviceOption(AcpClient));
 
     const pubsub = yield* PubSub.unbounded<ProjectPullRequestsState>();
     const syncLock = yield* Semaphore.make(1);
@@ -248,6 +292,7 @@ export const layerPullRequestsService = Layer.effect(
     const lastSyncedAtByProject = new Map<ProjectId, number>();
     const rateLimitResetByHost = new Map<GitHostKind, number>();
     const resolvedByProject = new Map<ProjectId, ResolvedProjectRemote>();
+    const pushedHeadShas = new Set<string>();
 
     let activeView: ActivePrView = {
       projectId: null,
@@ -722,6 +767,271 @@ export const layerPullRequestsService = Layer.effect(
       },
     );
 
+    const resolveProjectAndRemote = Effect.fnUntraced(function* (projectId: ProjectId) {
+      const allProjects = yield* projects.list;
+      const project = allProjects.find((p) => p.id === projectId);
+      if (project === undefined) {
+        return yield* new GitHostError({
+          reason: 'NotFound',
+          detail: `Project '${projectId}' was not found.`,
+        });
+      }
+      const r = yield* resolveRemoteForProject(projectId);
+      if (r._tag === 'Unavailable') {
+        return yield* new GitHostError({ reason: 'NotFound', detail: r.state.detail });
+      }
+      return { project, resolved: r.resolved };
+    });
+
+    const prepareCreate: PullRequestsServiceShape['prepareCreate'] = Effect.fnUntraced(
+      function* (input) {
+        const { project, resolved } = yield* resolveProjectAndRemote(input.projectId);
+        const worktreePath = input.worktreePath ?? project.path;
+        const headBranchOut = yield* Effect.tryPromise(() =>
+          runGit(worktreePath, ['symbolic-ref', '--quiet', '--short', 'HEAD']),
+        ).pipe(Effect.catch(() => Effect.succeed('')));
+        const currentHeadBranch = headBranchOut.trim().length > 0 ? headBranchOut.trim() : null;
+        const createdFromBranch =
+          branchOrigins !== undefined && currentHeadBranch !== null
+            ? yield* branchOrigins.get({ worktreePath, branch: currentHeadBranch })
+            : null;
+
+        const ctx = yield* Effect.tryPromise(() =>
+          inspectCreateContext({
+            worktreePath,
+            targetRemoteName: resolved.targetRemoteName,
+            headRemoteName: resolved.headRemoteName,
+            ...(input.baseRef !== undefined ? { baseRefOverride: input.baseRef } : {}),
+            createdFromBranch,
+          }),
+        ).pipe(
+          Effect.mapError(
+            (err) =>
+              new GitHostError({
+                reason: 'HostError',
+                detail: err instanceof Error ? err.message : 'Failed to inspect Git branch state.',
+              }),
+          ),
+        );
+
+        const accountsState = yield* auth.getAccounts;
+        const connected = accountsState.accounts.some(
+          (a) => a.host === resolved.repo.host && a.status === 'connected',
+        );
+        const host = yield* registry.get(resolved.repo.host);
+
+        const currentState = states.get(input.projectId);
+        let existingOpenPr: PullRequestSummary | null = null;
+        if (currentState?._tag === 'Available' && ctx.headRef !== null) {
+          const link = matchWorktreeToPullRequest({
+            worktreeBranch: ctx.headRef,
+            worktreeHeadSha: ctx.headSha,
+            isDetached: false,
+            headRepo: resolved.headRepo,
+            isFork: resolved.isFork,
+            summaries: currentState.summaries,
+          });
+          if (link !== null && (link.primary.state === 'open' || link.primary.state === 'draft')) {
+            existingOpenPr = link.primary;
+          }
+        }
+
+        const blockers: CreatePrBlocker[] = [];
+        if (!connected) {
+          blockers.push({
+            reason: 'NotAuthenticated',
+            detail: 'Connect a GitHub account in Settings → Git hosts to create a Pull request.',
+          });
+        }
+        if (ctx.headRef === null) {
+          blockers.push({
+            reason: 'DetachedHead',
+            detail: 'Checkout a branch before creating a Pull request.',
+          });
+        } else if (ctx.aheadCount === 0) {
+          blockers.push({
+            reason: 'ZeroCommitsAhead',
+            detail: `No commits ahead of ${ctx.baseRef}.`,
+          });
+        }
+        if (existingOpenPr !== null) {
+          blockers.push({
+            reason: 'OpenPrExists',
+            detail: `Pull request #${existingOpenPr.ref.number} is already open for ${ctx.headRef}.`,
+          });
+        }
+
+        return {
+          worktreePath,
+          headRef: ctx.headRef,
+          headSha: ctx.headSha,
+          defaultBaseRef: ctx.defaultBaseRef,
+          baseRef: ctx.baseRef,
+          availableBaseRefs: [...ctx.availableBaseRefs],
+          aheadCount: ctx.aheadCount,
+          behindCount: ctx.behindCount,
+          needsPush: ctx.needsPush,
+          headRemoteName: resolved.headRemoteName,
+          isFork: resolved.isFork,
+          isDirty: ctx.isDirty,
+          templateBody: ctx.templateBody,
+          supportsDraft: host.capabilities.supportsDraft,
+          blockers,
+          existingOpenPr,
+        };
+      },
+    );
+
+    const draftCreate: PullRequestsServiceShape['draftCreate'] = Effect.fn(
+      'PullRequests.draftCreate',
+    )(function* (input): Effect.fn.Return<DraftPullRequestResult, GitHostError> {
+      const { project, resolved } = yield* resolveProjectAndRemote(input.projectId);
+      const worktreePath = input.worktreePath ?? project.path;
+      const settings =
+        settingsService !== undefined
+          ? yield* settingsService.get
+          : { pullRequests: DEFAULT_PULL_REQUEST_SETTINGS };
+      const prSettings = settings.pullRequests ?? DEFAULT_PULL_REQUEST_SETTINGS;
+      if (!prSettings.draftingEnabled) {
+        return yield* new GitHostError({
+          reason: 'ValidationFailed',
+          detail: 'Pull request drafting is disabled in Settings.',
+        });
+      }
+      if (acpClient === undefined) {
+        return yield* new GitHostError({
+          reason: 'UnsupportedCapability',
+          detail: 'Agent runtime is unavailable for Pull request drafting.',
+        });
+      }
+
+      const headBranchOut = yield* Effect.tryPromise(() =>
+        runGit(worktreePath, ['symbolic-ref', '--quiet', '--short', 'HEAD']),
+      ).pipe(Effect.catch(() => Effect.succeed('')));
+      const headRef = headBranchOut.trim();
+      if (headRef.length === 0) {
+        return yield* new GitHostError({
+          reason: 'ValidationFailed',
+          detail: 'Cannot draft a Pull request from a detached HEAD.',
+        });
+      }
+
+      const entry = catalog.find((c) => c.id === prSettings.draftingAgent) ?? catalog[0];
+      if (entry === undefined) {
+        return yield* new GitHostError({
+          reason: 'UnsupportedCapability',
+          detail: 'No drafting Agent is configured.',
+        });
+      }
+
+      const templateBody = yield* Effect.promise(() => detectPrTemplate(worktreePath));
+      const draftInput = yield* Effect.tryPromise(() =>
+        gatherDraftCreateInput({
+          worktreePath,
+          baseRef: input.baseRef,
+          targetRemoteName: resolved.targetRemoteName,
+          templateBody,
+        }),
+      ).pipe(
+        Effect.mapError(
+          (err) =>
+            new GitHostError({
+              reason: 'HostError',
+              detail: err instanceof Error ? err.message : 'Failed to gather diff for drafting.',
+            }),
+        ),
+      );
+
+      const promptText = buildDraftCreatePrompt({
+        headRef,
+        baseRef: input.baseRef,
+        context: draftInput,
+      });
+      const turnId = TurnId.make(`pr-draft-${randomUUID()}`);
+      const result = yield* runIsolatedToolFreePrompt(
+        entry,
+        turnId,
+        worktreePath,
+        [{ _tag: 'text', text: promptText }],
+        { model: prSettings.draftingModel },
+      ).pipe(
+        Effect.provideService(AcpClient, acpClient),
+        Effect.mapError(
+          (err) =>
+            new GitHostError({
+              reason: 'HostError',
+              detail: err instanceof Error ? err.message : "Couldn't draft Pull request.",
+            }),
+        ),
+      );
+
+      if (
+        result.unexpectedAction ||
+        Exit.isFailure(result.promptExit) ||
+        result.replyText.length === 0
+      ) {
+        return yield* new GitHostError({
+          reason: 'HostError',
+          detail: "Couldn't draft Pull request.",
+        });
+      }
+
+      return parseDraftAgentReply(result.replyText, headRef);
+    });
+
+    const create: PullRequestsServiceShape['create'] = Effect.fn('PullRequests.create')(
+      function* (input) {
+        const { project, resolved } = yield* resolveProjectAndRemote(input.projectId);
+        const worktreePath = input.worktreePath ?? project.path;
+        const pathEnv = process.env['PATH'] ?? process.env['Path'] ?? '';
+
+        if (input.pushFirst) {
+          const headSha = yield* Effect.tryPromise(() =>
+            runGit(worktreePath, ['rev-parse', '--verify', 'HEAD']),
+          ).pipe(Effect.catch(() => Effect.succeed('')));
+          const pushKey = `${resolved.headRemoteName}\0${input.headRef}\0${headSha}`;
+          if (!pushedHeadShas.has(pushKey)) {
+            const pushed = yield* Effect.tryPromise(() =>
+              pushBranch(worktreePath, resolved.headRemoteName, 'git', pathEnv),
+            ).pipe(
+              Effect.mapError(
+                (err) =>
+                  new GitHostError({
+                    reason: 'HostError',
+                    detail: err instanceof Error ? err.message : 'Git push failed.',
+                  }),
+              ),
+            );
+            if (pushed._tag !== 'Done') {
+              return yield* new GitHostError({
+                reason: 'HostError',
+                detail: 'detail' in pushed ? pushed.detail : 'Git push failed.',
+              });
+            }
+            pushedHeadShas.add(pushKey);
+          }
+        }
+
+        const host = yield* registry.get(resolved.repo.host);
+        const headOwner = resolved.headRepo.canonicalPath.split('/')[0];
+        const headParam =
+          resolved.isFork && headOwner !== undefined
+            ? `${headOwner}:${input.headRef}`
+            : input.headRef;
+        const created = yield* host.create({
+          repo: resolved.repo,
+          title: input.title,
+          body: input.body,
+          head: headParam,
+          base: input.baseRef,
+          draft: input.draft,
+        });
+
+        yield* syncProject(input.projectId, { bypassEtag: true }).pipe(Effect.ignore);
+        return created;
+      },
+    );
+
     const notifyTurnEnded: PullRequestsServiceShape['notifyTurnEnded'] = Effect.fnUntraced(
       function* (projectId) {
         if (turnDebounceFiber !== null) {
@@ -772,6 +1082,9 @@ export const layerPullRequestsService = Layer.effect(
       unpinNumber,
       getDetail,
       getDiff,
+      prepareCreate,
+      draftCreate,
+      create,
       notifyTurnEnded,
       evictProject,
       evictAll,
