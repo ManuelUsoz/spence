@@ -210,6 +210,10 @@
         <source>The branch to start from no longer exists.</source>
         <target state="translated">La rama de partida ya no existe.</target>
       </trans-unit>
+      <trans-unit id="1865065955295535963" datatype="html">
+        <source>This Pull request&apos;s head ref is no longer fetchable.</source>
+        <target state="translated">La referencia head de este Pull request ya no se puede obtener.</target>
+      </trans-unit>
       <trans-unit id="1415504715971334545" datatype="html">
         <source>This Session already has messages, so it stays in its worktree.</source>
         <target state="translated">Esta sesión ya tiene mensajes, así que se queda en su worktree.</target>
@@ -949,6 +953,730 @@
         <source><x id="PH" equiv-text="branch"/> · <x id="PH_1" equiv-text="entry.folderName"/> (missing)</source>
         <target state="translated"><x id="PH" equiv-text="branch"/> · <x id="PH_1" equiv-text="entry.folderName"/> (falta)</target>
       </trans-unit>
+      <trans-unit id="5574768840758186891" datatype="html">
+        <source>Create Pull request</source>
+        <target state="translated">Crear Pull request</target>
+      </trans-unit>
+      <trans-unit id="5038555491699799353" datatype="html">
+        <source> Inspecting branch and repository… </source>
+        <target state="translated"> Inspeccionando la rama y el repositorio… </target>
+      </trans-unit>
+      <trans-unit id="3192753641165405448" datatype="html">
+        <source>Base</source>
+        <target state="translated">Base</target>
+      </trans-unit>
+      <trans-unit id="2572999724448976084" datatype="html">
+        <source>Compare</source>
+        <target state="translated">Comparar</target>
+      </trans-unit>
+      <trans-unit id="4052006402535164952" datatype="html">
+        <source>1 commit ahead</source>
+        <target state="translated">1 commit adelante</target>
+      </trans-unit>
+      <trans-unit id="1884770473820389763" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ prep.aheadCount }}"/> commits ahead</source>
+        <target state="translated"><x id="INTERPOLATION" equiv-text="{{ prep.aheadCount }}"/> commits adelante</target>
+      </trans-unit>
+      <trans-unit id="4029853311235186578" datatype="html">
+        <source> This Worktree has uncommitted changes. Only committed changes on <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;font-mono&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ prep.headRef ?? &apos;HEAD&apos; }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/> will be included. </source>
+        <target state="translated"> Este Worktree tiene cambios sin confirmar. Solo se incluirán los cambios confirmados en <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;font-mono&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ prep.headRef ?? &apos;HEAD&apos; }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>. </target>
+      </trans-unit>
+      <trans-unit id="3588237785053828437" datatype="html">
+        <source>An Agent draft is ready. Apply it over your current edits?</source>
+        <target state="translated">Hay un borrador del Agente listo. ¿Aplicarlo sobre tus ediciones actuales?</target>
+      </trans-unit>
+      <trans-unit id="1767113364662806309" datatype="html">
+        <source> Apply draft </source>
+        <target state="translated"> Aplicar borrador </target>
+      </trans-unit>
+      <trans-unit id="4128937884409277931" datatype="html">
+        <source> Dismiss </source>
+        <target state="translated"> Descartar </target>
+      </trans-unit>
+      <trans-unit id="5701618810648052610" datatype="html">
+        <source>Title</source>
+        <target state="translated">Título</target>
+      </trans-unit>
+      <trans-unit id="1865804606362701850" datatype="html">
+        <source> Drafting… </source>
+        <target state="translated"> Redactando… </target>
+      </trans-unit>
+      <trans-unit id="2762564343814333618" datatype="html">
+        <source> Couldn&apos;t draft </source>
+        <target state="translated"> No se pudo redactar </target>
+      </trans-unit>
+      <trans-unit id="5055839848328237034" datatype="html">
+        <source> Redraft </source>
+        <target state="translated"> Volver a redactar </target>
+      </trans-unit>
+      <trans-unit id="9099992574205567741" datatype="html">
+        <source>Pull request title</source>
+        <target state="translated">Título del Pull request</target>
+      </trans-unit>
+      <trans-unit id="4902817035128594900" datatype="html">
+        <source>Description</source>
+        <target state="translated">Descripción</target>
+      </trans-unit>
+      <trans-unit id="1013758269729949165" datatype="html">
+        <source>Describe your changes…</source>
+        <target state="translated">Describe tus cambios…</target>
+      </trans-unit>
+      <trans-unit id="8598935899014838898" datatype="html">
+        <source>Create as draft</source>
+        <target state="translated">Crear como borrador</target>
+      </trans-unit>
+      <trans-unit id="6107705167812898552" datatype="html">
+        <source>Pushing &amp; creating…</source>
+        <target state="translated">Enviando y creando…</target>
+      </trans-unit>
+      <trans-unit id="5554949022015540852" datatype="html">
+        <source>Creating…</source>
+        <target state="translated">Creando…</target>
+      </trans-unit>
+      <trans-unit id="5895314037334040" datatype="html">
+        <source>Push &amp; create</source>
+        <target state="translated">Enviar y crear</target>
+      </trans-unit>
+      <trans-unit id="705141540857833584" datatype="html">
+        <source>Create pull request</source>
+        <target state="translated">Crear pull request</target>
+      </trans-unit>
+      <trans-unit id="3918206930972174258" datatype="html">
+        <source> Replace edits with a fresh draft? </source>
+        <target state="translated"> ¿Reemplazar tus cambios con un borrador nuevo? </target>
+      </trans-unit>
+      <trans-unit id="2525561597731605187" datatype="html">
+        <source> Your current title and description edits will be replaced by a new Agent draft. </source>
+        <target state="translated"> Tus cambios actuales en el título y la descripción serán reemplazados por un nuevo borrador del Agente. </target>
+      </trans-unit>
+      <trans-unit id="5900134737402427405" datatype="html">
+        <source>Could not inspect branch for Pull request creation.</source>
+        <target state="translated">No se pudo inspeccionar la rama para crear el Pull request.</target>
+      </trans-unit>
+      <trans-unit id="5401888598385867722" datatype="html">
+        <source>Could not create Pull request.</source>
+        <target state="translated">No se pudo crear el Pull request.</target>
+      </trans-unit>
+      <trans-unit id="5743757503664322992" datatype="html">
+        <source>Pinned</source>
+        <target state="translated">Fijado</target>
+      </trans-unit>
+      <trans-unit id="8126276746536312359" datatype="html">
+        <source> Start Session </source>
+        <target state="translated"> Iniciar sesión </target>
+      </trans-unit>
+      <trans-unit id="7580563219204704953" datatype="html">
+        <source> Reference in Session </source>
+        <target state="translated"> Referenciar en sesión </target>
+      </trans-unit>
+      <trans-unit id="5377078063439833222" datatype="html">
+        <source> Edit </source>
+        <target state="translated"> Editar </target>
+      </trans-unit>
+      <trans-unit id="6498416869507452450" datatype="html">
+        <source> Open in GitHub </source>
+        <target state="translated"> Abrir en GitHub </target>
+      </trans-unit>
+      <trans-unit id="1152705163072141759" datatype="html">
+        <source>Changed on GitHub</source>
+        <target state="translated">Cambiado en GitHub</target>
+      </trans-unit>
+      <trans-unit id="550068835569486874" datatype="html">
+        <source> Keep mine </source>
+        <target state="translated"> Conservar el mío </target>
+      </trans-unit>
+      <trans-unit id="3961745271360817448" datatype="html">
+        <source> Use theirs </source>
+        <target state="translated"> Usar el suyo </target>
+      </trans-unit>
+      <trans-unit id="4720198438622999613" datatype="html">
+        <source>Base branch</source>
+        <target state="translated">Rama base</target>
+      </trans-unit>
+      <trans-unit id="2015619356149054836" datatype="html">
+        <source>Draft Pull request</source>
+        <target state="translated">Pull request en borrador</target>
+      </trans-unit>
+      <trans-unit id="1377677897256374766" datatype="html">
+        <source>Reviewers</source>
+        <target state="translated">Revisores</target>
+      </trans-unit>
+      <trans-unit id="4580853214337140621" datatype="html">
+        <source>Assignees</source>
+        <target state="translated">Asignados</target>
+      </trans-unit>
+      <trans-unit id="546766753072101168" datatype="html">
+        <source>Labels</source>
+        <target state="translated">Etiquetas</target>
+      </trans-unit>
+      <trans-unit id="3193542763969043102" datatype="html">
+        <source>Milestone</source>
+        <target state="translated">Hito</target>
+      </trans-unit>
+      <trans-unit id="7577072957512523093" datatype="html">
+        <source>No milestone</source>
+        <target state="translated">Sin hito</target>
+      </trans-unit>
+      <trans-unit id="3620188369327429839" datatype="html">
+        <source> Save </source>
+        <target state="translated"> Guardar </target>
+      </trans-unit>
+      <trans-unit id="1833493149202598338" datatype="html">
+        <source>Mergeability:</source>
+        <target state="translated">Estado de fusión:</target>
+      </trans-unit>
+      <trans-unit id="4741841025123212683" datatype="html">
+        <source>(Auto-merge on)</source>
+        <target state="translated">(Fusión automática activada)</target>
+      </trans-unit>
+      <trans-unit id="4774532862963995163" datatype="html">
+        <source>Review:</source>
+        <target state="translated">Revisión:</target>
+      </trans-unit>
+      <trans-unit id="6387906381220184323" datatype="html">
+        <source>Milestone:</source>
+        <target state="translated">Hito:</target>
+      </trans-unit>
+      <trans-unit id="6246108925327845527" datatype="html">
+        <source>Reviewers:</source>
+        <target state="translated">Revisores:</target>
+      </trans-unit>
+      <trans-unit id="3671351615118683003" datatype="html">
+        <source>Assignees:</source>
+        <target state="translated">Asignados:</target>
+      </trans-unit>
+      <trans-unit id="5998992150032590257" datatype="html">
+        <source>Labels:</source>
+        <target state="translated">Etiquetas:</target>
+      </trans-unit>
+      <trans-unit id="3834115380655810571" datatype="html">
+        <source>Merge method</source>
+        <target state="translated">Método de fusión</target>
+      </trans-unit>
+      <trans-unit id="4141715523504909341" datatype="html">
+        <source> Cancel auto-merge </source>
+        <target state="translated"> Cancelar fusión automática </target>
+      </trans-unit>
+      <trans-unit id="3629069444945012326" datatype="html">
+        <source> Merge when ready </source>
+        <target state="translated"> Fusionar cuando esté listo </target>
+      </trans-unit>
+      <trans-unit id="2606613809220503712" datatype="html">
+        <source>Pull request merged</source>
+        <target state="translated">Pull request fusionado</target>
+      </trans-unit>
+      <trans-unit id="1970754277370472778" datatype="html">
+        <source> <x id="INTERPOLATION" equiv-text="{{ mergeMethodLabel(selectedMethod()) }}"/> #<x id="INTERPOLATION_1" equiv-text="{{ detail().ref.number }}"/>? </source>
+        <target state="translated"> ¿<x id="INTERPOLATION" equiv-text="{{ mergeMethodLabel(selectedMethod()) }}"/> #<x id="INTERPOLATION_1" equiv-text="{{ detail().ref.number }}"/>? </target>
+      </trans-unit>
+      <trans-unit id="1840285892631693079" datatype="html">
+        <source>Target base branch:</source>
+        <target state="translated">Rama base destino:</target>
+      </trans-unit>
+      <trans-unit id="3303497251096144339" datatype="html">
+        <source>Head commit:</source>
+        <target state="translated">Commit head:</target>
+      </trans-unit>
+      <trans-unit id="1420928739336935112" datatype="html">
+        <source>Commit title (optional)</source>
+        <target state="translated">Título del commit (opcional)</target>
+      </trans-unit>
+      <trans-unit id="7877453511526549258" datatype="html">
+        <source>Commit message (optional)</source>
+        <target state="translated">Mensaje del commit (opcional)</target>
+      </trans-unit>
+      <trans-unit id="6470676630806138346" datatype="html">
+        <source> No check runs reported for this commit. </source>
+        <target state="translated"> No se informaron comprobaciones para este commit. </target>
+      </trans-unit>
+      <trans-unit id="7045123878111147511" datatype="html">
+        <source>Required</source>
+        <target state="translated">Obligatoria</target>
+      </trans-unit>
+      <trans-unit id="8505188084815320293" datatype="html">
+        <source>Non-blocking</source>
+        <target state="translated">No bloqueante</target>
+      </trans-unit>
+      <trans-unit id="4423253549935469768" datatype="html">
+        <source> Details </source>
+        <target state="translated"> Detalles </target>
+      </trans-unit>
+      <trans-unit id="3696759734324421631" datatype="html">
+        <source>No description provided.</source>
+        <target state="translated">No se proporcionó descripción.</target>
+      </trans-unit>
+      <trans-unit id="7242155934751141295" datatype="html">
+        <source> Conversation <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;text-muted-foreground ml-1 font-normal tabular-nums&quot;&gt;"/> (<x id="INTERPOLATION" equiv-text="{{ detail().reviews.length + detail().comments.length + detail().reviewThreads.length }}"/>) <x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></source>
+        <target state="translated"> Conversación <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;text-muted-foreground ml-1 font-normal tabular-nums&quot;&gt;"/> (<x id="INTERPOLATION" equiv-text="{{ detail().reviews.length + detail().comments.length + detail().reviewThreads.length }}"/>) <x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></target>
+      </trans-unit>
+      <trans-unit id="8380672513139416393" datatype="html">
+        <source>No reviews or comments yet.</source>
+        <target state="translated">Aún no hay revisiones ni comentarios.</target>
+      </trans-unit>
+      <trans-unit id="1809722061470607737" datatype="html">
+        <source> Review threads (<x id="INTERPOLATION" equiv-text="{{ detail().reviewThreads.length }}"/>) </source>
+        <target state="translated"> Hilos de revisión (<x id="INTERPOLATION" equiv-text="{{ detail().reviewThreads.length }}"/>) </target>
+      </trans-unit>
+      <trans-unit id="7586623166721265395" datatype="html">
+        <source>Outdated</source>
+        <target state="translated">Desactualizado</target>
+      </trans-unit>
+      <trans-unit id="6660925946511264619" datatype="html">
+        <source> Delete </source>
+        <target state="translated"> Eliminar </target>
+      </trans-unit>
+      <trans-unit id="8838382386866179988" datatype="html">
+        <source>Leave a comment…</source>
+        <target state="translated">Deja un comentario…</target>
+      </trans-unit>
+      <trans-unit id="3073555100582825289" datatype="html">
+        <source> Comment </source>
+        <target state="translated"> Comentar </target>
+      </trans-unit>
+      <trans-unit id="6933917130302920891" datatype="html">
+        <source>Finish review</source>
+        <target state="translated">Finalizar revisión</target>
+      </trans-unit>
+      <trans-unit id="649519154635069825" datatype="html">
+        <source> Pending (<x id="INTERPOLATION" equiv-text="{{ pendingInlineCommentCount() }}"/> inline) </source>
+        <target state="translated"> Pendiente (<x id="INTERPOLATION" equiv-text="{{ pendingInlineCommentCount() }}"/> en línea) </target>
+      </trans-unit>
+      <trans-unit id="3868050491419665961" datatype="html">
+        <source> Discard review </source>
+        <target state="translated"> Descartar revisión </target>
+      </trans-unit>
+      <trans-unit id="8067145178979524756" datatype="html">
+        <source>Leave a review summary (optional for Comment / Approve)…</source>
+        <target state="translated">Deja un resumen de la revisión (opcional para Comentar / Aprobar)…</target>
+      </trans-unit>
+      <trans-unit id="2607565416406926368" datatype="html">
+        <source> Approve </source>
+        <target state="translated"> Aprobar </target>
+      </trans-unit>
+      <trans-unit id="9130434323505013089" datatype="html">
+        <source> Request changes </source>
+        <target state="translated"> Solicitar cambios </target>
+      </trans-unit>
+      <trans-unit id="4990629939000136195" datatype="html">
+        <source>Loading changed files…</source>
+        <target state="translated">Cargando archivos modificados…</target>
+      </trans-unit>
+      <trans-unit id="7207542995464755991" datatype="html">
+        <source>Could not load diff.</source>
+        <target state="translated">No se pudo cargar el diff.</target>
+      </trans-unit>
+      <trans-unit id="3059724265088373894" datatype="html">
+        <source>Merging…</source>
+        <target state="translated">Fusionando…</target>
+      </trans-unit>
+      <trans-unit id="2706312198973609080" datatype="html">
+        <source>Updating…</source>
+        <target state="translated">Actualizando…</target>
+      </trans-unit>
+      <trans-unit id="571951659775507951" datatype="html">
+        <source>Switching…</source>
+        <target state="translated">Cambiando…</target>
+      </trans-unit>
+      <trans-unit id="5537741395993155396" datatype="html">
+        <source>Show output</source>
+        <target state="translated">Mostrar salida</target>
+      </trans-unit>
+      <trans-unit id="3030435233717909018" datatype="html">
+        <source>Hide output</source>
+        <target state="translated">Ocultar salida</target>
+      </trans-unit>
+      <trans-unit id="5370838177584249385" datatype="html">
+        <source>Resolved</source>
+        <target state="translated">Resuelto</target>
+      </trans-unit>
+      <trans-unit id="2974118934038476769" datatype="html">
+        <source>Unresolved</source>
+        <target state="translated">Sin resolver</target>
+      </trans-unit>
+      <trans-unit id="6065889536348764958" datatype="html">
+        <source>Resolve conversation</source>
+        <target state="translated">Resolver conversación</target>
+      </trans-unit>
+      <trans-unit id="5412706730060297723" datatype="html">
+        <source>Unresolve conversation</source>
+        <target state="translated">Reabrir conversación</target>
+      </trans-unit>
+      <trans-unit id="383181061702648553" datatype="html">
+        <source>Queued</source>
+        <target state="translated">En cola</target>
+      </trans-unit>
+      <trans-unit id="2956098160626271284" datatype="html">
+        <source>Running</source>
+        <target>Ejecutando</target>
+      </trans-unit>
+      <trans-unit id="1161299114153631702" datatype="html">
+        <source>Completed</source>
+        <target state="translated">Completado</target>
+      </trans-unit>
+      <trans-unit id="3206542606001340679" datatype="html">
+        <source>Merge</source>
+        <target state="translated">Fusionar</target>
+      </trans-unit>
+      <trans-unit id="5069308846936943992" datatype="html">
+        <source>Squash and merge</source>
+        <target state="translated">Squash y fusionar</target>
+      </trans-unit>
+      <trans-unit id="7131044248309274493" datatype="html">
+        <source>Rebase and merge</source>
+        <target state="translated">Rebase y fusionar</target>
+      </trans-unit>
+      <trans-unit id="851463805767142629" datatype="html">
+        <source>Auto-merge enabled</source>
+        <target state="translated">Fusión automática habilitada</target>
+      </trans-unit>
+      <trans-unit id="258499032258631392" datatype="html">
+        <source>Ready to merge</source>
+        <target state="translated">Listo para fusionar</target>
+      </trans-unit>
+      <trans-unit id="869316869752218926" datatype="html">
+        <source>You do not have permission to merge this Pull request.</source>
+        <target state="translated">No tienes permiso para fusionar este Pull request.</target>
+      </trans-unit>
+      <trans-unit id="3928701164371116934" datatype="html">
+        <source>All checks and merge requirements are satisfied.</source>
+        <target state="translated">Se cumplen todas las comprobaciones y requisitos de fusión.</target>
+      </trans-unit>
+      <trans-unit id="6697109866731379499" datatype="html">
+        <source>Update <x id="PH" equiv-text="this.detail().baseRef"/></source>
+        <target state="translated">Actualizar <x id="PH" equiv-text="this.detail().baseRef"/></target>
+      </trans-unit>
+      <trans-unit id="873498658750153318" datatype="html">
+        <source>Switch to <x id="PH" equiv-text="this.detail().baseRef"/></source>
+        <target state="translated">Cambiar a <x id="PH" equiv-text="this.detail().baseRef"/></target>
+      </trans-unit>
+      <trans-unit id="7686597560149898163" datatype="html">
+        <source>Cannot update local base branch.</source>
+        <target state="translated">No se puede actualizar la rama base local.</target>
+      </trans-unit>
+      <trans-unit id="3447057006302780995" datatype="html">
+        <source>Updated <x id="PH" equiv-text="last.baseRef"/> locally (git pull --ff-only).</source>
+        <target state="translated">Se actualizó <x id="PH" equiv-text="last.baseRef"/> localmente (git pull --ff-only).</target>
+      </trans-unit>
+      <trans-unit id="4879215955397992932" datatype="html">
+        <source>Updated <x id="PH" equiv-text="last.baseRef"/> ref locally (git fetch).</source>
+        <target state="translated">Se actualizó la referencia <x id="PH" equiv-text="last.baseRef"/> localmente (git fetch).</target>
+      </trans-unit>
+      <trans-unit id="4921417678631898927" datatype="html">
+        <source>Delete comment?</source>
+        <target state="translated">¿Eliminar comentario?</target>
+      </trans-unit>
+      <trans-unit id="3682949179179846602" datatype="html">
+        <source>This will permanently delete &quot;<x id="PH" equiv-text="trimmed"/>&quot;.</source>
+        <target state="translated">Esto eliminará permanentemente &quot;<x id="PH" equiv-text="trimmed"/>&quot;.</target>
+      </trans-unit>
+      <trans-unit id="1582065382043376662" datatype="html">
+        <source>This will permanently delete your comment.</source>
+        <target state="translated">Esto eliminará permanentemente tu comentario.</target>
+      </trans-unit>
+      <trans-unit id="7022070615528435141" datatype="html">
+        <source>Delete</source>
+        <target>Eliminar</target>
+      </trans-unit>
+      <trans-unit id="3048407797263954907" datatype="html">
+        <source>Discard pending review?</source>
+        <target state="translated">¿Descartar revisión pendiente?</target>
+      </trans-unit>
+      <trans-unit id="9014758517367757308" datatype="html">
+        <source>This will delete your pending review and its unsubmitted inline comments.</source>
+        <target state="translated">Esto eliminará tu revisión pendiente y sus comentarios en línea sin enviar.</target>
+      </trans-unit>
+      <trans-unit id="3823219296477075982" datatype="html">
+        <source>Discard</source>
+        <target state="translated">Descartar</target>
+      </trans-unit>
+      <trans-unit id="5242351490836263910" datatype="html">
+        <source> Changed files <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;text-muted-foreground ml-1 font-normal tabular-nums&quot;
+            &gt;"/>(<x id="INTERPOLATION" equiv-text="{{ files().length }}"/>)<x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
+          &gt;"/></source>
+        <target state="translated"> Archivos modificados <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;text-muted-foreground ml-1 font-normal tabular-nums&quot;
+            &gt;"/>(<x id="INTERPOLATION" equiv-text="{{ files().length }}"/>)<x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
+          &gt;"/></target>
+      </trans-unit>
+      <trans-unit id="150945872538772291" datatype="html">
+        <source>No changed files in this diff.</source>
+        <target state="translated">No hay archivos modificados en este diff.</target>
+      </trans-unit>
+      <trans-unit id="7379194047762795462" datatype="html">
+        <source> Outdated or file-level review threads </source>
+        <target state="translated"> Hilos de revisión desactualizados o a nivel de archivo </target>
+      </trans-unit>
+      <trans-unit id="4865346468755261965" datatype="html">
+        <source>Comment on line (Shift+click for range)</source>
+        <target state="translated">Comentar en línea (Mayús+clic para rango)</target>
+      </trans-unit>
+      <trans-unit id="5121480097585560359" datatype="html">
+        <source>Write an inline comment…</source>
+        <target state="translated">Escribe un comentario en línea…</target>
+      </trans-unit>
+      <trans-unit id="4068515886040277348" datatype="html">
+        <source> Comment now </source>
+        <target state="translated"> Comentar ahora </target>
+      </trans-unit>
+      <trans-unit id="4416413576346763682" datatype="html">
+        <source>Pending</source>
+        <target state="translated">Pendiente</target>
+      </trans-unit>
+      <trans-unit id="8545750265571150022" datatype="html">
+        <source>Reply to thread…</source>
+        <target state="translated">Responder al hilo…</target>
+      </trans-unit>
+      <trans-unit id="226104558902258178" datatype="html">
+        <source> Reply </source>
+        <target state="translated"> Responder </target>
+      </trans-unit>
+      <trans-unit id="7674699140488680835" datatype="html">
+        <source> This file diff is large and has been truncated. </source>
+        <target state="translated"> Este diff de archivo es grande y se ha truncado. </target>
+      </trans-unit>
+      <trans-unit id="1704991989448099469" datatype="html">
+        <source>Rendering diff…</source>
+        <target state="translated">Renderizando diff…</target>
+      </trans-unit>
+      <trans-unit id="6649157735639798997" datatype="html">
+        <source>Add to review</source>
+        <target state="translated">Añadir a la revisión</target>
+      </trans-unit>
+      <trans-unit id="7571454467065323807" datatype="html">
+        <source>Start review</source>
+        <target state="translated">Iniciar revisión</target>
+      </trans-unit>
+      <trans-unit id="4797214229335185452" datatype="html">
+        <source>cached</source>
+        <target state="translated">en caché</target>
+      </trans-unit>
+      <trans-unit id="4733690367258997247" datatype="html">
+        <source>just now</source>
+        <target state="translated">justo ahora</target>
+      </trans-unit>
+      <trans-unit id="904495321169432083" datatype="html">
+        <source><x id="PH" equiv-text="minutes"/>m ago</source>
+        <target state="translated">hace <x id="PH" equiv-text="minutes"/>m</target>
+      </trans-unit>
+      <trans-unit id="1937318758717606227" datatype="html">
+        <source><x id="PH" equiv-text="hours"/>h ago</source>
+        <target state="translated">hace <x id="PH" equiv-text="hours"/>h</target>
+      </trans-unit>
+      <trans-unit id="1398510920250838994" datatype="html">
+        <source><x id="PH" equiv-text="days"/>d ago</source>
+        <target state="translated">hace <x id="PH" equiv-text="days"/>d</target>
+      </trans-unit>
+      <trans-unit id="4643694467213620482" datatype="html">
+        <source>soon</source>
+        <target state="translated">pronto</target>
+      </trans-unit>
+      <trans-unit id="7593555694782789615" datatype="html">
+        <source>Open</source>
+        <target>Abrir</target>
+      </trans-unit>
+      <trans-unit id="4808589666930368915" datatype="html">
+        <source>Draft</source>
+        <target state="translated">Borrador</target>
+      </trans-unit>
+      <trans-unit id="1554838717931748985" datatype="html">
+        <source>Merged</source>
+        <target state="translated">Fusionado</target>
+      </trans-unit>
+      <trans-unit id="7860418101283165917" datatype="html">
+        <source>Closed</source>
+        <target state="translated">Cerrado</target>
+      </trans-unit>
+      <trans-unit id="6685731233695739947" datatype="html">
+        <source>Checks passing</source>
+        <target state="translated">Comprobaciones correctas</target>
+      </trans-unit>
+      <trans-unit id="1610141267417982024" datatype="html">
+        <source>Checks failing</source>
+        <target state="translated">Comprobaciones fallidas</target>
+      </trans-unit>
+      <trans-unit id="6585734831596343996" datatype="html">
+        <source>Checks pending</source>
+        <target state="translated">Comprobaciones pendientes</target>
+      </trans-unit>
+      <trans-unit id="4369251043924996853" datatype="html">
+        <source>No checks</source>
+        <target state="translated">Sin comprobaciones</target>
+      </trans-unit>
+      <trans-unit id="4847064546132149947" datatype="html">
+        <source>Merge blocked</source>
+        <target state="translated">Fusión bloqueada</target>
+      </trans-unit>
+      <trans-unit id="3656773869438783523" datatype="html">
+        <source>Behind base branch</source>
+        <target state="translated">Detrás de la rama base</target>
+      </trans-unit>
+      <trans-unit id="3311250839780063354" datatype="html">
+        <source>Merge conflicts</source>
+        <target state="translated">Conflictos de fusión</target>
+      </trans-unit>
+      <trans-unit id="1199945928184408985" datatype="html">
+        <source>Draft PR</source>
+        <target state="translated">PR en borrador</target>
+      </trans-unit>
+      <trans-unit id="848300644470047045" datatype="html">
+        <source>Merge status unknown</source>
+        <target state="translated">Estado de fusión desconocido</target>
+      </trans-unit>
+      <trans-unit id="5906272961955453157" datatype="html">
+        <source>Approved</source>
+        <target state="translated">Aprobado</target>
+      </trans-unit>
+      <trans-unit id="774257107131928340" datatype="html">
+        <source>Changes requested</source>
+        <target state="translated">Cambios solicitados</target>
+      </trans-unit>
+      <trans-unit id="7944857390781137619" datatype="html">
+        <source>Review required</source>
+        <target state="translated">Revisión requerida</target>
+      </trans-unit>
+      <trans-unit id="5254272690606544410" datatype="html">
+        <source>No reviews</source>
+        <target state="translated">Sin revisiones</target>
+      </trans-unit>
+      <trans-unit id="5540157366640140607" datatype="html">
+        <source>Commented</source>
+        <target state="translated">Comentado</target>
+      </trans-unit>
+      <trans-unit id="1632949913064020849" datatype="html">
+        <source>Dismissed</source>
+        <target state="translated">Descartado</target>
+      </trans-unit>
+      <trans-unit id="1504643220325756927" datatype="html">
+        <source>Pull request filters</source>
+        <target state="translated">Filtros de Pull requests</target>
+      </trans-unit>
+      <trans-unit id="8386976308507652568" datatype="html">
+        <source> All </source>
+        <target state="translated"> Todos </target>
+      </trans-unit>
+      <trans-unit id="7107112349685470158" datatype="html">
+        <source> Mine </source>
+        <target state="translated"> Míos </target>
+      </trans-unit>
+      <trans-unit id="7891820536597573003" datatype="html">
+        <source> Review requested </source>
+        <target state="translated"> Revisión solicitada </target>
+      </trans-unit>
+      <trans-unit id="190986326497977911" datatype="html">
+        <source>Filter Pull requests…</source>
+        <target state="translated">Filtrar Pull requests…</target>
+      </trans-unit>
+      <trans-unit id="216448594409046454" datatype="html">
+        <source>Look up Pull request by number</source>
+        <target state="translated">Buscar Pull request por número</target>
+      </trans-unit>
+      <trans-unit id="1368056720085185654" datatype="html">
+        <source> Pin </source>
+        <target state="translated"> Fijar </target>
+      </trans-unit>
+      <trans-unit id="2172902003676402663" datatype="html">
+        <source> Refresh </source>
+        <target state="translated"> Actualizar </target>
+      </trans-unit>
+      <trans-unit id="381630524456842375" datatype="html">
+        <source> Create PR </source>
+        <target state="translated"> Crear PR </target>
+      </trans-unit>
+      <trans-unit id="3533564343860030179" datatype="html">
+        <source> Reconnect </source>
+        <target state="translated"> Reconectar </target>
+      </trans-unit>
+      <trans-unit id="6492421042208643881" datatype="html">
+        <source> Select a Project to view Pull requests. </source>
+        <target state="translated"> Selecciona un Proyecto para ver los Pull requests. </target>
+      </trans-unit>
+      <trans-unit id="2578981551411709309" datatype="html">
+        <source> Connect GitHub to view Pull requests. </source>
+        <target state="translated"> Conecta GitHub para ver los Pull requests. </target>
+      </trans-unit>
+      <trans-unit id="3675864691174117531" datatype="html">
+        <source> Connect GitHub </source>
+        <target state="translated"> Conectar GitHub </target>
+      </trans-unit>
+      <trans-unit id="1340802010314295669" datatype="html">
+        <source> No Pull requests in <x id="INTERPOLATION" equiv-text="{{ projectName() }}"/> yet. </source>
+        <target state="translated"> Todavía no hay Pull requests en <x id="INTERPOLATION" equiv-text="{{ project.name }}"/>. </target>
+      </trans-unit>
+      <trans-unit id="3372020843772441151" datatype="html">
+        <source> No matching Pull requests. </source>
+        <target state="translated"> No hay Pull requests que coincidan. </target>
+      </trans-unit>
+      <trans-unit id="8073638984473933978" datatype="html">
+        <source>Unpin Pull request</source>
+        <target state="translated">Desfijar Pull request</target>
+      </trans-unit>
+      <trans-unit id="4313359842375603765" datatype="html">
+        <source> ← Back to Pull requests </source>
+        <target state="translated"> ← Volver a Pull requests </target>
+      </trans-unit>
+      <trans-unit id="7291767646559161996" datatype="html">
+        <source> Select a Pull request to inspect. </source>
+        <target state="translated"> Selecciona un Pull request para inspeccionar. </target>
+      </trans-unit>
+      <trans-unit id="3836497018043151420" datatype="html">
+        <source> Loading Pull request… </source>
+        <target state="translated"> Cargando Pull request… </target>
+      </trans-unit>
+      <trans-unit id="1841541108325449829" datatype="html">
+        <source>Loading Pull requests…</source>
+        <target state="translated">Cargando Pull requests…</target>
+      </trans-unit>
+      <trans-unit id="3870104278217847947" datatype="html">
+        <source>Reconnect GitHub in Settings · cached</source>
+        <target state="translated">Reconecta GitHub en Ajustes · en caché</target>
+      </trans-unit>
+      <trans-unit id="8764162462013083078" datatype="html">
+        <source>Offline · cached <x id="PH" equiv-text="age"/></source>
+        <target state="translated">Sin conexión · en caché <x id="PH" equiv-text="age"/></target>
+      </trans-unit>
+      <trans-unit id="6901351350701984332" datatype="html">
+        <source>GitHub rate limit reached · resets at <x id="PH" equiv-text="time"/> · cached</source>
+        <target state="translated">Límite de GitHub alcanzado · se restablece a las <x id="PH" equiv-text="time"/> · en caché</target>
+      </trans-unit>
+      <trans-unit id="1296243294491113691" datatype="html">
+        <source>Could not load Pull request details.</source>
+        <target state="translated">No se pudieron cargar los detalles del Pull request.</target>
+      </trans-unit>
+      <trans-unit id="3473296624970723754" datatype="html">
+        <source>Enter a valid Pull request number (e.g. #123).</source>
+        <target state="translated">Introduce un número de Pull request válido (p. ej. #123).</target>
+      </trans-unit>
+      <trans-unit id="4903640661686754480" datatype="html">
+        <source>Pull request #<x id="PH" equiv-text="parsed"/> was not found.</source>
+        <target state="translated">No se encontró el Pull request #<x id="PH" equiv-text="parsed"/>.</target>
+      </trans-unit>
+      <trans-unit id="5382881520074200085" datatype="html">
+        <source>Head commit changed on GitHub. Refreshed Pull request.</source>
+        <target state="translated">El commit head cambió en GitHub. Se actualizó el Pull request.</target>
+      </trans-unit>
+      <trans-unit id="5336029302783496250" datatype="html">
+        <source>Could not merge Pull request.</source>
+        <target state="translated">No se pudo fusionar el Pull request.</target>
+      </trans-unit>
+      <trans-unit id="497333208520628445" datatype="html">
+        <source>Could not update auto-merge.</source>
+        <target state="translated">No se pudo actualizar la fusión automática.</target>
+      </trans-unit>
+      <trans-unit id="1397293953960581138" datatype="html">
+        <source>Pull request action failed.</source>
+        <target state="translated">Falló la acción del Pull request.</target>
+      </trans-unit>
+      <trans-unit id="8685173063581969521" datatype="html">
+        <source>Could not update local base branch.</source>
+        <target state="translated">No se pudo actualizar la rama base local.</target>
+      </trans-unit>
+      <trans-unit id="3333196252392884754" datatype="html">
+        <source>Switched Worktree to <x id="PH" equiv-text="baseRef"/>.</source>
+        <target state="translated">Se cambió el Worktree a <x id="PH" equiv-text="baseRef"/>.</target>
+      </trans-unit>
+      <trans-unit id="8244547621025933919" datatype="html">
+        <source>Could not switch to base branch.</source>
+        <target state="translated">No se pudo cambiar a la rama base.</target>
+      </trans-unit>
       <trans-unit id="762864044091656147" datatype="html">
         <source>Folder not found</source>
         <target>No se encontró la carpeta</target>
@@ -1030,6 +1758,10 @@
         <source>No changes</source>
         <target state="translated">Sin cambios</target>
       </trans-unit>
+      <trans-unit id="5066973974846952912" datatype="html">
+        <source>Create PR</source>
+        <target state="translated">Crear PR</target>
+      </trans-unit>
       <trans-unit id="5203279511751768967" datatype="html">
         <source>From</source>
         <target state="translated">Desde</target>
@@ -1077,10 +1809,6 @@
       <trans-unit id="5457748259872928541" datatype="html">
         <source>Changes: <x id="PH" equiv-text="files"/> files, <x id="PH_1" equiv-text="added"/> added, <x id="PH_2" equiv-text="removed"/> removed</source>
         <target state="translated">Cambios: <x id="PH" equiv-text="files"/> archivos, <x id="PH_1" equiv-text="added"/> añadidas, <x id="PH_2" equiv-text="removed"/> eliminadas</target>
-      </trans-unit>
-      <trans-unit id="4416413576346763682" datatype="html">
-        <source>Pending</source>
-        <target state="translated">Pendiente</target>
       </trans-unit>
       <trans-unit id="2003333127264395537" datatype="html">
         <source>Running…</source>
@@ -1814,6 +2542,10 @@
         <source> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> can&apos;t take images. Remove them to send. </source>
         <target> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no acepta imágenes. Quítalas para enviar. </target>
       </trans-unit>
+      <trans-unit id="7353779109036348090" datatype="html">
+        <source>Remove Pull request attachment</source>
+        <target state="translated">Quitar adjunto de Pull request</target>
+      </trans-unit>
       <trans-unit id="8703062781631307974" datatype="html">
         <source>Coordinator for next Turn. Remove</source>
         <target state="translated">Coordinador para el siguiente Turno. Quitar</target>
@@ -1833,6 +2565,14 @@
       <trans-unit id="6438104683709175776" datatype="html">
         <source>No commands match.</source>
         <target>Ningún comando coincide.</target>
+      </trans-unit>
+      <trans-unit id="1019897759924590321" datatype="html">
+        <source>Pull requests</source>
+        <target state="translated">Pull requests</target>
+      </trans-unit>
+      <trans-unit id="6944624327744535984" datatype="html">
+        <source><x id="START_BLOCK_IF" equiv-text="@if (prLookupLoading()) {"/> Looking up Pull request… <x id="CLOSE_BLOCK_IF" equiv-text="}"/><x id="START_BLOCK_ELSE" equiv-text="@else {"/> No matching Pull requests. <x id="CLOSE_BLOCK_ELSE" equiv-text="}"/></source>
+        <target state="translated"><x id="START_BLOCK_IF" equiv-text="@if (prLookupLoading()) {"/> Buscando Pull request… <x id="CLOSE_BLOCK_IF" equiv-text="}"/><x id="START_BLOCK_ELSE" equiv-text="@else {"/> No hay Pull requests que coincidan. <x id="CLOSE_BLOCK_ELSE" equiv-text="}"/></target>
       </trans-unit>
       <trans-unit id="2851884518340083917" datatype="html">
         <source>Attach image</source>
@@ -1889,10 +2629,6 @@
       <trans-unit id="6663303198931877329" datatype="html">
         <source>Reconnecting</source>
         <target>Reconectando</target>
-      </trans-unit>
-      <trans-unit id="2956098160626271284" datatype="html">
-        <source>Running</source>
-        <target>Ejecutando</target>
       </trans-unit>
       <trans-unit id="3133539296286953705" datatype="html">
         <source>Stop</source>
@@ -1973,6 +2709,10 @@
       <trans-unit id="5135659169158832318" datatype="html">
         <source>Hint</source>
         <target>Sugerencia</target>
+      </trans-unit>
+      <trans-unit id="6483675625701187931" datatype="html">
+        <source>You can attach up to 5 Pull request references per Message.</source>
+        <target state="translated">Puedes adjuntar hasta 5 referencias de Pull request por Mensaje.</target>
       </trans-unit>
       <trans-unit id="255244378910474380" datatype="html">
         <source>Finish or cancel the active Turn before changing Model.</source>
@@ -2732,10 +3472,6 @@
           &gt;"/>… </source>
         <target> Eliminar <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>… </target>
       </trans-unit>
-      <trans-unit id="7593555694782789615" datatype="html">
-        <source>Open</source>
-        <target>Abrir</target>
-      </trans-unit>
       <trans-unit id="9198364352931934404" datatype="html">
         <source> Open in new Tab </source>
         <target> Abrir en nueva Pestaña </target>
@@ -2887,10 +3623,6 @@
       <trans-unit id="5456363408229538339" datatype="html">
         <source> Its <x id="count" equiv-text="workers"/> Workers and their Transcripts will be deleted too. To keep information from a Session, make a Fork first.</source>
         <target> Sus <x id="count" equiv-text="workers"/> Workers y sus Transcripts también se eliminarán. Para conservar información de una Session, crea un Fork antes.</target>
-      </trans-unit>
-      <trans-unit id="7022070615528435141" datatype="html">
-        <source>Delete</source>
-        <target>Eliminar</target>
       </trans-unit>
       <trans-unit id="1823672809237476345" datatype="html">
         <source>Delete <x id="count" equiv-text="targets.length"/></source>
@@ -3232,6 +3964,158 @@
         <source>Custom</source>
         <target state="translated">Personalizado</target>
       </trans-unit>
+      <trans-unit id="1464134678151157152" datatype="html">
+        <source>OAuth Device Flow</source>
+        <target state="translated">Flujo de dispositivo OAuth</target>
+      </trans-unit>
+      <trans-unit id="1412749119171733013" datatype="html">
+        <source>Personal Access Token</source>
+        <target state="translated">Token de acceso personal</target>
+      </trans-unit>
+      <trans-unit id="849471663998358335" datatype="html">
+        <source>GitHub CLI</source>
+        <target state="translated">GitHub CLI</target>
+      </trans-unit>
+      <trans-unit id="4172155654923865125" datatype="html">
+        <source>Git hosts</source>
+        <target state="translated">Hosts de Git</target>
+      </trans-unit>
+      <trans-unit id="5964055238036643365" datatype="html">
+        <source> Could not load Git hosts. </source>
+        <target state="translated"> No se pudieron cargar los hosts de Git. </target>
+      </trans-unit>
+      <trans-unit id="329021733446822754" datatype="html">
+        <source>OS secure storage is unavailable</source>
+        <target state="translated">El almacenamiento seguro del sistema no está disponible</target>
+      </trans-unit>
+      <trans-unit id="8507269527692900707" datatype="html">
+        <source> No OS keyring was detected (Linux basic_text fallback). Spence will not save tokens to disk. Connecting uses session-only in-memory storage until you quit Spence. </source>
+        <target state="translated"> No se detectó ningún llavero del sistema (respaldo basic_text de Linux). Spence no guardará tokens en disco. Al conectar se usará almacenamiento en memoria solo para esta sesión hasta que cierres Spence. </target>
+      </trans-unit>
+      <trans-unit id="1131510698831463667" datatype="html">
+        <source>Session-only</source>
+        <target state="translated">Solo sesión</target>
+      </trans-unit>
+      <trans-unit id="1853474645590476992" datatype="html">
+        <source> Connected </source>
+        <target state="translated"> Conectado </target>
+      </trans-unit>
+      <trans-unit id="7706788635752176184" datatype="html">
+        <source> Needs reconnect </source>
+        <target state="translated"> Necesita reconexión </target>
+      </trans-unit>
+      <trans-unit id="1812429098722823159" datatype="html">
+        <source> Verify </source>
+        <target state="translated"> Verificar </target>
+      </trans-unit>
+      <trans-unit id="7485995976269020304" datatype="html">
+        <source> Disconnect </source>
+        <target state="translated"> Desconectar </target>
+      </trans-unit>
+      <trans-unit id="3658050885783066573" datatype="html">
+        <source>Reconnect your GitHub account</source>
+        <target state="translated">Reconecta tu cuenta de GitHub</target>
+      </trans-unit>
+      <trans-unit id="9141752656406613056" datatype="html">
+        <source>Enter this code on GitHub</source>
+        <target state="translated">Introduce este código en GitHub</target>
+      </trans-unit>
+      <trans-unit id="457783086904641183" datatype="html">
+        <source> Copy code </source>
+        <target state="translated"> Copiar código </target>
+      </trans-unit>
+      <trans-unit id="1631313345549014098" datatype="html">
+        <source> Open GitHub </source>
+        <target state="translated"> Abrir GitHub </target>
+      </trans-unit>
+      <trans-unit id="7223244762811292403" datatype="html">
+        <source>Waiting for GitHub authorization…</source>
+        <target state="translated">Esperando autorización de GitHub…</target>
+      </trans-unit>
+      <trans-unit id="59171013126527673" datatype="html">
+        <source>GitHub OAuth</source>
+        <target state="translated">GitHub OAuth</target>
+      </trans-unit>
+      <trans-unit id="3296240187645156855" datatype="html">
+        <source>Sign in via your browser with repo and read:org access.</source>
+        <target state="translated">Inicia sesión en tu navegador con acceso repo y read:org.</target>
+      </trans-unit>
+      <trans-unit id="7152709565822773816" datatype="html">
+        <source> Sign in with GitHub </source>
+        <target state="translated"> Iniciar sesión con GitHub </target>
+      </trans-unit>
+      <trans-unit id="6319862504074456118" datatype="html">
+        <source>Personal access token</source>
+        <target state="translated">Token de acceso personal</target>
+      </trans-unit>
+      <trans-unit id="480760977881173939" datatype="html">
+        <source>Classic PAT with repo and read:org scopes.</source>
+        <target state="translated">PAT clásico con alcances repo y read:org.</target>
+      </trans-unit>
+      <trans-unit id="1545005867911976778" datatype="html">
+        <source> Connect </source>
+        <target state="translated"> Conectar </target>
+      </trans-unit>
+      <trans-unit id="5662317177151217278" datatype="html">
+        <source> Import from gh CLI </source>
+        <target state="translated"> Importar desde gh CLI </target>
+      </trans-unit>
+      <trans-unit id="4866062696851192441" datatype="html">
+        <source>Disconnect GitHub account?</source>
+        <target state="translated">¿Desconectar cuenta de GitHub?</target>
+      </trans-unit>
+      <trans-unit id="4492621289333105725" datatype="html">
+        <source> This removes <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;font-mono text-xs&quot;&gt;"/>@<x id="INTERPOLATION" equiv-text="{{ account.handle }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/> and clears cached Pull requests from this Device. </source>
+        <target state="translated"> Esto elimina <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;font-mono text-xs&quot;&gt;"/>@<x id="INTERPOLATION" equiv-text="{{ account.handle }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/> y borra los Pull requests en caché de este Dispositivo. </target>
+      </trans-unit>
+      <trans-unit id="1619503028303150156" datatype="html">
+        <source>gh CLI not found on Merged PATH.</source>
+        <target state="translated">No se encontró gh CLI en Merged PATH.</target>
+      </trans-unit>
+      <trans-unit id="7590350972432240206" datatype="html">
+        <source>gh CLI found, but not signed in to github.com.</source>
+        <target state="translated">Se encontró gh CLI, pero no ha iniciado sesión en github.com.</target>
+      </trans-unit>
+      <trans-unit id="7581585852420227803" datatype="html">
+        <source>One-time import for @<x id="handle" equiv-text="cli.handle"/> via gh auth token.</source>
+        <target state="translated">Importación única para @<x id="handle" equiv-text="cli.handle"/> mediante gh auth token.</target>
+      </trans-unit>
+      <trans-unit id="4084805053722470274" datatype="html">
+        <source>One-time import via gh auth token.</source>
+        <target state="translated">Importación única mediante gh auth token.</target>
+      </trans-unit>
+      <trans-unit id="5636746108814264916" datatype="html">
+        <source>Connected GitHub as @<x id="handle" equiv-text="exit.value.handle"/>.</source>
+        <target state="translated">GitHub conectado como @<x id="handle" equiv-text="exit.value.handle"/>.</target>
+      </trans-unit>
+      <trans-unit id="3285092439283035864" datatype="html">
+        <source>Imported GitHub account @<x id="handle" equiv-text="exit.value.handle"/>.</source>
+        <target state="translated">Cuenta de GitHub importada @<x id="handle" equiv-text="exit.value.handle"/>.</target>
+      </trans-unit>
+      <trans-unit id="3516052818074393125" datatype="html">
+        <source>Copied code to clipboard.</source>
+        <target state="translated">Código copiado al portapapeles.</target>
+      </trans-unit>
+      <trans-unit id="2119481508900462945" datatype="html">
+        <source>Could not copy code.</source>
+        <target state="translated">No se pudo copiar el código.</target>
+      </trans-unit>
+      <trans-unit id="4000435185388636624" datatype="html">
+        <source>GitHub connection verified.</source>
+        <target state="translated">Conexión con GitHub verificada.</target>
+      </trans-unit>
+      <trans-unit id="7776171653230769095" datatype="html">
+        <source>GitHub account needs reconnect.</source>
+        <target state="translated">La cuenta de GitHub necesita reconexión.</target>
+      </trans-unit>
+      <trans-unit id="7369313760004031171" datatype="html">
+        <source>Disconnected GitHub account.</source>
+        <target state="translated">Cuenta de GitHub desconectada.</target>
+      </trans-unit>
+      <trans-unit id="2791145711254308885" datatype="html">
+        <source>GitHub authentication failed.</source>
+        <target state="translated">Falló la autenticación con GitHub.</target>
+      </trans-unit>
       <trans-unit id="1762579199463627317" datatype="html">
         <source>Open Settings</source>
         <target>Abrir Ajustes</target>
@@ -3508,6 +4392,14 @@
         <source>Auto-detect (e.g. npm ci, mvn test-compile)</source>
         <target state="translated">Detectar automáticamente (p. ej., npm ci, mvn test-compile)</target>
       </trans-unit>
+      <trans-unit id="8089516367159666560" datatype="html">
+        <source> Pull request target remote </source>
+        <target state="translated"> Remoto de destino para Pull requests </target>
+      </trans-unit>
+      <trans-unit id="8024676081961870113" datatype="html">
+        <source>Auto (upstream → origin)</source>
+        <target state="translated">Automático (upstream → origin)</target>
+      </trans-unit>
       <trans-unit id="8810139481158892708" datatype="html">
         <source>Could not load Projects.</source>
         <target state="translated">No se pudieron cargar los Proyectos.</target>
@@ -3527,6 +4419,54 @@
       <trans-unit id="1672348802630090844" datatype="html">
         <source>Could not change the Project settings.</source>
         <target>No se pudieron cambiar los ajustes del Proyecto.</target>
+      </trans-unit>
+      <trans-unit id="1408560181507658828" datatype="html">
+        <source> Configure ephemeral AI drafting when opening the Create Pull request form. </source>
+        <target state="translated"> Configura la redacción efímera con IA al abrir el formulario de crear Pull request. </target>
+      </trans-unit>
+      <trans-unit id="8324369504905959757" datatype="html">
+        <source>Draft title &amp; description automatically</source>
+        <target state="translated">Redactar título y descripción automáticamente</target>
+      </trans-unit>
+      <trans-unit id="3275754223184025881" datatype="html">
+        <source>Runs an isolated, tool-free Agent prompt on the branch diff when creating a Pull request.</source>
+        <target state="translated">Ejecuta una consulta aislada sin herramientas del Agente sobre el diff de la rama al crear un Pull request.</target>
+      </trans-unit>
+      <trans-unit id="7544950521231818564" datatype="html">
+        <source>Drafting Agent</source>
+        <target state="translated">Agente de redacción</target>
+      </trans-unit>
+      <trans-unit id="6423210280939340786" datatype="html">
+        <source>Ready</source>
+        <target state="translated">Listo</target>
+      </trans-unit>
+      <trans-unit id="5440136668917934427" datatype="html">
+        <source>Drafting Model</source>
+        <target state="translated">Modelo de redacción</target>
+      </trans-unit>
+      <trans-unit id="8317452073044533705" datatype="html">
+        <source>Update local base branch after merge</source>
+        <target state="translated">Actualizar la rama base local tras fusionar</target>
+      </trans-unit>
+      <trans-unit id="1109403635624407653" datatype="html">
+        <source>Automatically fast-forward the local base branch when a Pull request is merged.</source>
+        <target state="translated">Avanzar automáticamente en fast-forward la rama base local cuando se fusiona un Pull request.</target>
+      </trans-unit>
+      <trans-unit id="8546113143996434038" datatype="html">
+        <source>PR worktree branch pattern</source>
+        <target state="translated">Patrón de rama de worktree de PR</target>
+      </trans-unit>
+      <trans-unit id="329034809436946533" datatype="html">
+        <source>Used for fork or colliding PR branches when starting a Session. Supports {number}, {headRef}, and {author}.</source>
+        <target state="translated">Se usa para ramas de PR de forks o en colisión al iniciar una Sesión. Admite {number}, {headRef} y {author}.</target>
+      </trans-unit>
+      <trans-unit id="2411953965595266064" datatype="html">
+        <source>Agent is installed and ready.</source>
+        <target state="translated">El Agente está instalado y listo.</target>
+      </trans-unit>
+      <trans-unit id="1035993033735212935" datatype="html">
+        <source>Agent is not installed.</source>
+        <target state="translated">El Agente no está instalado.</target>
       </trans-unit>
       <trans-unit id="7292902857194439444" datatype="html">
         <source>Device</source>
@@ -3587,10 +4527,6 @@
       <trans-unit id="8528940254923623619" datatype="html">
         <source>Connected now</source>
         <target state="translated">Conectados ahora</target>
-      </trans-unit>
-      <trans-unit id="7485995976269020304" datatype="html">
-        <source> Disconnect </source>
-        <target state="translated"> Desconectar </target>
       </trans-unit>
       <trans-unit id="2595779289609119263" datatype="html">
         <source> No Remote device is connected. </source>

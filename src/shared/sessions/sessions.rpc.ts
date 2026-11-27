@@ -12,7 +12,12 @@ import {
 import { AssetRef } from '../assets/assets.rpc';
 import { DeviceId } from '../devices/devices.rpc';
 import { PermissionMode, ProjectId, Timestamp } from '../projects/projects.rpc';
-
+import {
+  CheckRunId,
+  PullRequestRef,
+  PullRequestState,
+  ReviewThreadId,
+} from '../pull-requests/pull-requests.rpc';
 import { WorkflowKind } from '../settings/settings.rpc';
 
 // Ids. Every id in the contract is Spence's own; ACP ids stay in main.
@@ -107,12 +112,40 @@ export const ResourcePart = Schema.TaggedStruct('resource', {
 }).annotate({ identifier: 'ResourcePart' });
 export type ResourcePart = typeof ResourcePart.Type;
 
+/** Target kind for a Pull request context attachment or snapshot. */
+export const PullRequestAttachmentKind = Schema.Literals([
+  'pullRequest',
+  'reviewThread',
+  'checkRun',
+]).annotate({ identifier: 'PullRequestAttachmentKind' });
+export type PullRequestAttachmentKind = typeof PullRequestAttachmentKind.Type;
+
+/** Immutable send-time snapshot of a Pull request, Review thread, or Check run on a Transcript Message. */
+export const PullRequestPart = Schema.TaggedStruct('pullRequest', {
+  kind: PullRequestAttachmentKind,
+  ref: PullRequestRef,
+  title: Schema.String,
+  state: PullRequestState,
+  headSha: Schema.String,
+  url: Schema.String,
+  threadId: Schema.optionalKey(ReviewThreadId),
+  path: Schema.optionalKey(Schema.String),
+  line: Schema.optionalKey(Schema.NullOr(Schema.Int)),
+  checkId: Schema.optionalKey(CheckRunId),
+  checkName: Schema.optionalKey(Schema.String),
+  snapshot: Schema.String,
+  isCachedFallback: Schema.optionalKey(Schema.Boolean),
+  fetchedAt: Schema.optionalKey(Timestamp),
+}).annotate({ identifier: 'PullRequestPart' });
+export type PullRequestPart = typeof PullRequestPart.Type;
+
 export const MessagePart = Schema.Union([
   TextPart,
   LinkPart,
   ImagePart,
   AudioPart,
   ResourcePart,
+  PullRequestPart,
 ]).annotate({ identifier: 'MessagePart' });
 export type MessagePart = typeof MessagePart.Type;
 
@@ -827,6 +860,7 @@ export class SessionError extends Schema.TaggedError<SessionError>()('SessionErr
     'AgentNeedsLogin',
     'AgentCantStart',
     'ExitUnconfirmed',
+    'PullRequestUnavailable',
   ]),
   detail: Schema.String,
 }) {}
@@ -850,10 +884,47 @@ export const ComposerImage = Schema.Struct({
 }).annotate({ identifier: 'ComposerImage' });
 export type ComposerImage = typeof ComposerImage.Type;
 
-/** Unsent Composer text and attached images for one open Session. */
+/** Maximum number of Pull request attachments per Message in the Composer. */
+export const MAX_COMPOSER_PULL_REQUESTS = 5;
+
+/** A Pull request, Review thread, or Check run attached to an unsent Composer draft. */
+export const ComposerPullRequestAttachment = Schema.Struct({
+  kind: PullRequestAttachmentKind,
+  projectId: ProjectId,
+  ref: PullRequestRef,
+  title: Schema.String,
+  state: PullRequestState,
+  headSha: Schema.String,
+  url: Schema.String,
+  threadId: Schema.optionalKey(ReviewThreadId),
+  path: Schema.optionalKey(Schema.String),
+  line: Schema.optionalKey(Schema.NullOr(Schema.Int)),
+  checkId: Schema.optionalKey(CheckRunId),
+  checkName: Schema.optionalKey(Schema.String),
+  checkUrl: Schema.optionalKey(Schema.NullOr(Schema.String)),
+}).annotate({ identifier: 'ComposerPullRequestAttachment' });
+export type ComposerPullRequestAttachment = typeof ComposerPullRequestAttachment.Type;
+
+/** Stable deduplication key for a `ComposerPullRequestAttachment`. */
+export const composerPullRequestAttachmentKey = (
+  attachment: ComposerPullRequestAttachment,
+): string => {
+  const base = `${attachment.ref.repo.host}:${attachment.ref.repo.canonicalPath}#${attachment.ref.number}`;
+  switch (attachment.kind) {
+    case 'pullRequest':
+      return `${base}:pr`;
+    case 'reviewThread':
+      return `${base}:thread:${attachment.threadId ?? ''}`;
+    case 'checkRun':
+      return `${base}:check:${attachment.checkId ?? ''}`;
+  }
+};
+
+/** Unsent Composer text, attached images, and attached Pull request targets for one open Session. */
 export const ComposerDraft = Schema.Struct({
   text: Schema.String,
   images: Schema.Array(ComposerImage),
+  pullRequests: Schema.optionalKey(Schema.Array(ComposerPullRequestAttachment)),
 }).annotate({ identifier: 'ComposerDraft' });
 export type ComposerDraft = typeof ComposerDraft.Type;
 
@@ -1005,6 +1076,7 @@ export const SessionsRpcs = RpcGroup.make(
     payload: {
       sessionId: SessionId,
       parts: Schema.Array(MessagePart),
+      pullRequests: Schema.optionalKey(Schema.Array(ComposerPullRequestAttachment)),
       workflow: Schema.optional(WorkflowKind),
       verificationOf: Schema.optional(TurnId),
     },
@@ -1013,12 +1085,20 @@ export const SessionsRpcs = RpcGroup.make(
   }),
   /** Injects a Message into the running Turn without cancelling it; `NotRunning`/`Unsupported` otherwise. */
   Rpc.make('Session.steer', {
-    payload: { sessionId: SessionId, parts: Schema.Array(MessagePart) },
+    payload: {
+      sessionId: SessionId,
+      parts: Schema.Array(MessagePart),
+      pullRequests: Schema.optionalKey(Schema.Array(ComposerPullRequestAttachment)),
+    },
     error: SessionError,
   }),
   /** Lines a Message up in the Queue; with no Turn running it starts one at once. */
   Rpc.make('Session.enqueue', {
-    payload: { sessionId: SessionId, parts: Schema.Array(MessagePart) },
+    payload: {
+      sessionId: SessionId,
+      parts: Schema.Array(MessagePart),
+      pullRequests: Schema.optionalKey(Schema.Array(ComposerPullRequestAttachment)),
+    },
     error: SessionError,
   }),
   /** Replaces the Queue whole (reorder, edit, remove). */

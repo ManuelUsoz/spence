@@ -59,6 +59,7 @@ export interface SpenceOptions {
   spenceLocale: SpenceLocale;
   spenceSettings: Record<string, unknown>;
   spenceSidebarOpen: boolean;
+  spenceEnv: Record<string, string>;
 }
 
 /** Helpers shared by every spec. */
@@ -127,6 +128,7 @@ interface LaunchOptions {
   readonly settings: Record<string, unknown>;
   readonly installedAgents: string[];
   readonly sidebarOpen: boolean;
+  readonly extraEnv: Record<string, string>;
 }
 
 interface Launched {
@@ -185,6 +187,7 @@ const launch = async (options: LaunchOptions, peer: () => Promise<Spence>): Prom
       SPENCE_E2E_HOME: path.dirname(pickFolder),
       SPENCE_E2E_AGENT_BIN: agentBin,
       ...(installedBin === undefined ? {} : { SPENCE_E2E_INSTALLED_BIN: installedBin }),
+      ...options.extraEnv,
     },
   });
   const page = await app.firstWindow();
@@ -219,6 +222,7 @@ export const test = base.extend<{
   spenceSettings: Record<string, unknown>;
   spenceInstalledAgents: string[];
   spenceSidebarOpen: boolean;
+  spenceEnv: Record<string, string>;
 }>({
   /**
    * Catalog binaries (e.g. `claude-agent-acp`) that must count as installed. They are appended to PATH, so a real
@@ -236,8 +240,10 @@ export const test = base.extend<{
    * directly; specs testing the collapsed-by-default launch state set `spenceSidebarOpen: false`.
    */
   spenceSidebarOpen: [true, { option: true }],
+  /** Extra environment variables passed to the launched Electron main process. */
+  spenceEnv: [{}, { option: true }],
   spence: async (
-    { spenceLocale, spenceSettings, spenceInstalledAgents, spenceSidebarOpen },
+    { spenceLocale, spenceSettings, spenceInstalledAgents, spenceSidebarOpen, spenceEnv },
     use,
   ) => {
     const options: LaunchOptions = {
@@ -245,6 +251,7 @@ export const test = base.extend<{
       settings: spenceSettings,
       installedAgents: spenceInstalledAgents,
       sidebarOpen: spenceSidebarOpen,
+      extraEnv: spenceEnv,
     };
     const closers: Array<() => Promise<void>> = [];
     const peer = async (): Promise<Spence> => {

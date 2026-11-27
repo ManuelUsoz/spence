@@ -131,6 +131,7 @@ export const buildStructuredTranscriptExtract = (
   const outstandingWork: string[] = [];
   const verifications: string[] = [];
   const imageNotes: string[] = [];
+  const pullRequests = new Map<string, string>();
   const outcomes = new Map<TurnId, TurnEnded['outcome']>();
   const latestTurnMessages = new Map<TurnId, string[]>();
 
@@ -157,6 +158,16 @@ export const buildStructuredTranscriptExtract = (
         imageNotes.push(
           `${imageCount} ${item.role} image(s) attached in Turn ${item.turnId} (available for separate selection)`,
         );
+      }
+      for (const part of item.parts) {
+        if (part._tag !== 'pullRequest') continue;
+        const key = `${part.ref.repo.host}:${part.ref.repo.canonicalPath}#${part.ref.number}`;
+        if (!pullRequests.has(key)) {
+          pullRequests.set(
+            key,
+            `PR #${part.ref.number} (${part.title}, ${part.headSha.slice(0, 7)})`,
+          );
+        }
       }
       if (joined.length === 0) continue;
       if (item.role === 'user') {
@@ -212,6 +223,7 @@ export const buildStructuredTranscriptExtract = (
     `Outstanding / interrupted work: ${outstandingWork.length > 0 ? outstandingWork.slice(-4).join('; ') : 'None.'}`,
     `Verification results: ${verifications.length > 0 ? verifications.slice(-4).join('; ') : 'No verification runs recorded.'}`,
     `Images referenced: ${imageNotes.length > 0 ? imageNotes.join('; ') : 'None.'}`,
+    `Pull requests referenced: ${pullRequests.size > 0 ? [...pullRequests.values()].join('; ') : 'None.'}`,
     'Missing information: Review and add any local context or uncommitted notes before confirming.',
   ];
   return lines.join('\n');

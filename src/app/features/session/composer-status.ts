@@ -19,10 +19,21 @@ import { HlmTraceImports } from '@ui/trace';
 import { toast } from '@ui/toast';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { ChangesResult } from '../../../shared/source-control/source-control.rpc';
-import type { PrepareDraftResult, WorktreePrepStep } from '../../../shared/worktrees/worktrees.rpc';
+import type {
+  PrepareDraftResult,
+  PullRequestWorktreeRef,
+  WorktreePrepStep,
+} from '../../../shared/worktrees/worktrees.rpc';
+import { computePrWorktreeBranch } from '../../../shared/pull-requests/pr-worktree-branch';
+import { DEFAULT_PULL_REQUEST_SETTINGS } from '../../../shared/settings/settings.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { prepareRejectionText, unavailableText } from '../../core/git-text';
+import {
+  type PendingPrWorktreeStart,
+  PullRequestsState,
+  checkRollupDotClass,
+} from '../../core/pull-requests-state';
 
 const loadChanges = Effect.fnUntraced(function* (sessionId: SessionId) {
   const api = yield* DesktopApi;
@@ -44,6 +55,7 @@ const prepareDraftStream = Effect.fnUntraced(function* (
   branch: string,
   base: string | undefined,
   setupCommand: string | null,
+  prRef: PullRequestWorktreeRef | undefined,
   onStep: (step: WorktreePrepStep) => void,
 ) {
   const api = yield* DesktopApi;
@@ -53,6 +65,7 @@ const prepareDraftStream = Effect.fnUntraced(function* (
     branch,
     ...(base === undefined ? {} : { base }),
     setupCommand,
+    ...(prRef === undefined ? {} : { prRef }),
   }).pipe(
     Stream.runForEach((event) =>
       Effect.sync(() => {
@@ -160,6 +173,25 @@ type Mode = 'current' | 'new';
             >
           }
         </button>
+        @if (showPrPill()) {
+          <button
+            type="button"
+            class="hover:bg-accent hover:text-foreground focus-visible:ring-ring flex h-6.5 items-center gap-1.5 rounded-lg px-2 text-xs outline-none focus-visible:ring-2"
+            data-testid="composer-status-pr"
+            (click)="openPr()"
+          >
+            @if (linkedPr(); as pr) {
+              <span
+                class="size-1.5 shrink-0 rounded-full"
+                [class]="prCheckDotClass(pr.checkRollup)"
+                aria-hidden="true"
+              ></span>
+              <span class="font-mono tabular-nums">#{{ pr.ref.number }}</span>
+            } @else {
+              <span i18n>Create PR</span>
+            }
+          </button>
+        }
       </div>
       @if (canSelect() && mode() === 'new') {
         <div
@@ -317,6 +349,7 @@ type Mode = 'current' | 'new';
           hlmDropdownMenuItem
           class="h-auto items-start justify-start gap-2 py-2 text-start"
           data-testid="mode-new"
+          [disabled]="prWorktreeDisabledReason() !== null"
           (triggered)="choose('new')"
         >
           <span class="w-3 shrink-0 text-center" aria-hidden="true">{{
@@ -324,7 +357,9 @@ type Mode = 'current' | 'new';
           }}</span>
           <span class="flex min-w-0 flex-1 flex-col items-start text-start">
             <span i18n>New worktree</span>
-            <span class="text-muted-foreground text-xs" i18n>Its own branch and files</span>
+            <span class="text-muted-foreground text-xs">
+              {{ prWorktreeDisabledReason() ?? newWorktreeSubtitle }}
+            </span>
           </span>
         </button>
       </hlm-dropdown-menu>
@@ -341,12 +376,17 @@ export class ComposerStatus {
 
   private readonly runtime = inject(EffectRuntime);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly prState = inject(PullRequestsState);
+  protected readonly newWorktreeSubtitle = $localize`Its own branch and files`;
+  protected readonly prWorktreeDisabledReason = signal<string | null>(null);
+  private pendingPrRef: PullRequestWorktreeRef | undefined;
   /** Counts reads; an answer for another Session or an older read is dropped. */
   private seq = 0;
   private readonly result = signal<ChangesResult | null>(null);
 
   /** The Session has not run a Turn yet, so it can still start in a new worktree. */
   protected readonly canSelect = signal(false);
+  private readonly currentWorktreePath = signal<string | null>(null);
   protected readonly mode = signal<Mode>('current');
   private readonly branches = signal<ReadonlyArray<string>>([]);
   /** The branch the new worktree starts from. */
@@ -367,11 +407,33 @@ export class ComposerStatus {
     const result = this.result();
     return result?._tag === 'Available' ? result : null;
   });
-  protected readonly branch = computed(() => {
+  readonly branch = computed(() => {
     const head = this.repo()?.head;
     if (head === undefined) return '';
     return head._tag === 'Detached' ? head.commit.slice(0, 7) : head.branch;
   });
+  protected readonly linkedPrLink = computed(() => {
+    const head = this.repo()?.head;
+    if (head === undefined || head._tag === 'Detached') return null;
+    return this.prState.linkForBranch(head.branch);
+  });
+  protected readonly linkedPr = computed(() => this.linkedPrLink()?.primary ?? null);
+  protected readonly showPrPill = computed(() => {
+    const activeId = this.prState.activeProjectId();
+    const state = this.prState.stateForProject(activeId);
+    return state?._tag === 'Available';
+  });
+
+  protected readonly prCheckDotClass = checkRollupDotClass;
+
+  protected openPr(): void {
+    const linked = this.linkedPr();
+    if (linked !== null) {
+      this.prState.openPrPage(this.prState.activeProjectId(), linked.ref.number);
+      return;
+    }
+    this.prState.openCreatePr(this.prState.activeProjectId(), this.currentWorktreePath());
+  }
   protected readonly added = computed(() =>
     (this.repo()?.files ?? []).reduce((sum, file) => sum + (file.additions ?? 0), 0),
   );
@@ -440,6 +502,9 @@ export class ComposerStatus {
       if (seq !== this.seq) return;
       if (Exit.isSuccess(exit) && exit.value._tag === 'Available') {
         this.canSelect.set(exit.value.canSelect);
+        this.currentWorktreePath.set(
+          exit.value.entries.find((entry) => entry.isCurrent)?.path ?? null,
+        );
         const cmd = exit.value.setupCommand ?? null;
         this.detectedSetupCommand.set(cmd);
         if (!this.setupCommandEdited()) {
@@ -510,6 +575,45 @@ export class ComposerStatus {
     });
   }
 
+  /** Configures this draft Session for a Pull request: reuses matching checkout or pre-sets lazy PR Worktree. */
+  async configureForPr(start: PendingPrWorktreeStart): Promise<void> {
+    if (!this.canSelect()) return;
+    const sessionId = this.sessionId();
+    const [branchesExit, settingsExit] = await Promise.all([
+      this.runtime.run(loadBranches(sessionId)),
+      this.runtime.run(DesktopApi.use((api) => api['Settings.get']())),
+    ]);
+    if (sessionId !== this.sessionId()) return;
+    const existingNames =
+      Exit.isSuccess(branchesExit) && branchesExit.value._tag === 'Available'
+        ? new Set(branchesExit.value.branches.map((b) => b.name))
+        : new Set<string>();
+    const pattern =
+      Exit.isSuccess(settingsExit) && settingsExit.value.pullRequests !== undefined
+        ? settingsExit.value.pullRequests.worktreeBranchPattern
+        : DEFAULT_PULL_REQUEST_SETTINGS.worktreeBranchPattern;
+
+    if (!start.pr.isCrossRepo && this.branch() === start.pr.headRef) {
+      this.pendingPrRef = undefined;
+      this.mode.set('current');
+      return;
+    }
+
+    const computedBranch = computePrWorktreeBranch({
+      number: start.pr.ref.number,
+      headRef: start.pr.headRef,
+      author: start.pr.author.login,
+      isCrossRepo: start.pr.isCrossRepo,
+      pattern,
+      existingBranches: existingNames,
+    });
+    this.pendingPrRef = { remoteName: start.targetRemoteName, number: start.pr.ref.number };
+    this.prWorktreeDisabledReason.set(null);
+    this.nameInput.set(computedBranch);
+    this.mode.set('new');
+    this.loadBases();
+  }
+
   /**
    * Called when the first message is sent. In "New worktree" mode it creates the worktree, runs any project
    * setup command, and moves the draft Session into it first; false means the message must not be sent.
@@ -539,15 +643,22 @@ export class ComposerStatus {
     ]);
     const sessionId = this.sessionId();
     const exit = await this.runtime.run(
-      prepareDraftStream(sessionId, branch, this.base() ?? undefined, setupCommand, (step) => {
-        if (sessionId !== this.sessionId()) return;
-        this.prepSteps.update((steps) => {
-          const exists = steps.some((existing) => existing.id === step.id);
-          return exists
-            ? steps.map((existing) => (existing.id === step.id ? step : existing))
-            : [...steps, step];
-        });
-      }),
+      prepareDraftStream(
+        sessionId,
+        branch,
+        this.base() ?? undefined,
+        setupCommand,
+        this.pendingPrRef,
+        (step) => {
+          if (sessionId !== this.sessionId()) return;
+          this.prepSteps.update((steps) => {
+            const exists = steps.some((existing) => existing.id === step.id);
+            return exists
+              ? steps.map((existing) => (existing.id === step.id ? step : existing))
+              : [...steps, step];
+          });
+        },
+      ),
     );
     this.preparing.set(false);
     if (sessionId !== this.sessionId()) return false;
@@ -564,10 +675,18 @@ export class ComposerStatus {
     }
     if (result._tag === 'Prepared') {
       this.mode.set('current');
+      this.pendingPrRef = undefined;
       this.nameInput.set('');
       if (!setupFailed) this.prepSteps.set([]);
       this.read();
       return true;
+    }
+    if (result._tag === 'Rejected' && result.reason === 'PullRequestRefUnavailable') {
+      this.prWorktreeDisabledReason.set(result.detail);
+      this.pendingPrRef = undefined;
+      this.mode.set('current');
+      this.nameInput.set('');
+      this.prepSteps.set([]);
     }
     this.message.set(
       result._tag === 'Unavailable'

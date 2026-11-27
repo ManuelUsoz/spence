@@ -28,11 +28,19 @@ export type WorktreesListResult =
   | { readonly _tag: 'Available'; readonly entries: ReadonlyArray<WorktreeEntry> };
 
 export type CreateWorktreeRejection =
-  'InvalidBranch' | 'BranchExists' | 'DestinationExists' | 'UnknownBase';
+  | 'InvalidBranch'
+  | 'BranchExists'
+  | 'DestinationExists'
+  | 'UnknownBase'
+  | 'PullRequestRefUnavailable';
 
 export type CreateWorktreeResult =
   | WorkerCapabilityFailure
-  | { readonly _tag: 'Created'; readonly entry: WorktreeEntry }
+  | {
+      readonly _tag: 'Created';
+      readonly entry: WorktreeEntry;
+      readonly createdFromBranch: string | null;
+    }
   | {
       readonly _tag: 'Rejected';
       readonly reason: CreateWorktreeRejection;
@@ -199,6 +207,19 @@ export const createWorktree = async (
     return reject('DestinationExists', `The folder ${destination} already exists.`);
   }
 
+  let createdFromBranch: string | null = base ?? null;
+  if (createdFromBranch === null) {
+    const headBranch = await runGit(
+      ctx.executable,
+      ['symbolic-ref', '--quiet', '--short', 'HEAD'],
+      folder,
+      pathEnv,
+    );
+    if (headBranch.ok && headBranch.stdout.trim().length > 0) {
+      createdFromBranch = headBranch.stdout.trim();
+    }
+  }
+
   const added = await runGit(
     ctx.executable,
     ['worktree', 'add', '-b', branch, destination, ...(base === undefined ? [] : [base])],
@@ -217,5 +238,90 @@ export const createWorktree = async (
   );
   return entry === undefined
     ? { _tag: 'GitFailed', path: folder, detail: 'The new Worktree was not listed by Git.' }
-    : { _tag: 'Created', entry };
+    : { _tag: 'Created', entry, createdFromBranch };
+};
+
+/**
+ * Fetches `refs/pull/<prNumber>/head` from `remoteName` and creates a Worktree on `branch` at `FETCH_HEAD`.
+ * Returns `PullRequestRefUnavailable` if the remote ref cannot be fetched (e.g. closed/deleted PR head).
+ */
+export const createWorktreeFromPullRequest = async (
+  folder: string,
+  branch: string,
+  remoteName: string,
+  prNumber: number,
+  gitExecutable: string | null,
+  pathEnv: string,
+): Promise<CreateWorktreeResult> => {
+  const ctx = await resolveWorktreeContext(folder, gitExecutable, pathEnv);
+  if (ctx._tag !== 'Available') return ctx;
+  const reject = (reason: CreateWorktreeRejection, detail: string) =>
+    ({ _tag: 'Rejected', reason, detail }) as const;
+
+  const slug = slugOf(branch);
+  const formatCheck =
+    branch.length === 0 || slug.length === 0 || branch.startsWith('-')
+      ? undefined
+      : await runGit(
+          ctx.executable,
+          ['check-ref-format', '--branch', branch],
+          ctx.toplevelRealPath,
+          pathEnv,
+        );
+  if (formatCheck === undefined || !formatCheck.ok) {
+    return reject('InvalidBranch', `${branch || '(empty)'} is not a valid branch name.`);
+  }
+  const taken = await runGit(
+    ctx.executable,
+    ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`],
+    ctx.toplevelRealPath,
+    pathEnv,
+  );
+  if (taken.ok) return reject('BranchExists', `The branch ${branch} already exists.`);
+
+  const existing = await list(ctx, folder, pathEnv);
+  if ('failure' in existing) return existing.failure;
+  const primary = existing.entries[0];
+  if (primary === undefined) return reject('InvalidBranch', 'No primary Worktree found.');
+  const destination = path.join(
+    path.dirname(primary.path),
+    `${path.basename(primary.path)}.worktrees`,
+    slug,
+  );
+  if (await exists(destination)) {
+    return reject('DestinationExists', `The folder ${destination} already exists.`);
+  }
+
+  const fetched = await runGit(
+    ctx.executable,
+    ['fetch', remoteName, `refs/pull/${prNumber}/head`],
+    ctx.toplevelRealPath,
+    pathEnv,
+  );
+  if (!fetched.ok) {
+    return reject(
+      'PullRequestRefUnavailable',
+      `Could not fetch refs/pull/${prNumber}/head from ${remoteName}: ${fetched.stderr.trim() || 'ref unavailable'}.`,
+    );
+  }
+
+  const added = await runGit(
+    ctx.executable,
+    ['worktree', 'add', '-b', branch, destination, 'FETCH_HEAD'],
+    ctx.toplevelRealPath,
+    pathEnv,
+  );
+  if (!added.ok) return gitFailure(folder, added, 'Failed to create the Worktree.');
+
+  const after = await list(ctx, folder, pathEnv);
+  if ('failure' in after) return after.failure;
+  const real = await realPathOrNull(destination);
+  const entry = after.entries.find(
+    (candidate) =>
+      sameFolder(path.normalize(candidate.path), path.normalize(destination)) ||
+      (real !== null && sameFolder(path.normalize(candidate.path), real)),
+  );
+  return entry === undefined
+    ? { _tag: 'GitFailed', path: folder, detail: 'The new Worktree was not listed by Git.' }
+    : { _tag: 'Created', entry, createdFromBranch: null };
 };

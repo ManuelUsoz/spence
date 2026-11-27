@@ -14,6 +14,7 @@ import { layerLinksHandlers } from './links';
 import { layerInboxHandlers, layerMessagingHandlers } from './messaging';
 import { layerNotificationsHandlers } from './notifications';
 import { layerProjectPickerHandlers, layerProjectsHandlers } from './projects';
+import { layerPullRequestsHandlers } from './pull-requests';
 import { layerRemoteInfoHandlers } from './remote';
 import { layerSessionsHandlers } from './sessions';
 import { layerExecutionSettingsHandlers, layerSettingsHandlers } from './settings';
@@ -51,6 +52,7 @@ export const layerDesktopHandlers = Layer.mergeAll(
   layerNotificationsHandlers,
   layerProjectPickerHandlers,
   layerSourceControlEditorHandlers,
+  layerPullRequestsHandlers,
   relayRemoteAssets(routeToDevices(DeviceScopedRpcs)(layerDeviceScopedHandlers)),
 );
 

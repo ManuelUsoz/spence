@@ -66,6 +66,7 @@ const swapPart = (assets: ConnectionAssets, part: MessagePart): MessagePart => {
         : part;
     case 'text':
     case 'link':
+    case 'pullRequest':
       return part;
   }
 };
@@ -93,6 +94,7 @@ export const assetRefsOf = (parts: ReadonlyArray<MessagePart>): ReadonlyArray<As
           : [];
       case 'text':
       case 'link':
+      case 'pullRequest':
         return [];
     }
   });

@@ -11,6 +11,7 @@ import { RemoteInfoRpcs } from '../../shared/remote/remote.rpc';
 import { LinksRpcs } from '../../shared/links/links.rpc';
 import { NotificationsRpcs } from '../../shared/notifications/notifications.rpc';
 import { ProjectsRpcs } from '../../shared/projects/projects.rpc';
+import { PullRequestsRpcs } from '../../shared/pull-requests/pull-requests.rpc';
 import { DesktopRpcs } from '../../shared/rpc/desktop-rpcs';
 import { SessionsRpcs } from '../../shared/sessions/sessions.rpc';
 import { ExecutionSettingsRpcs, SettingsRpcs } from '../../shared/settings/settings.rpc';
@@ -264,6 +265,60 @@ export const layerNotificationsUnused = NotificationsRpcs.toLayer({
   'Notifications.events': () => Stream.empty,
 });
 
+/** Pull requests & HostAuth handlers that die: lets tests of other domains build `DesktopRpcs`. */
+export const layerPullRequestsUnused = PullRequestsRpcs.toLayer({
+  'HostAuth.getAccounts': () => Effect.die('HostAuth.getAccounts is not served in this test'),
+  'HostAuth.startDeviceFlow': () =>
+    Effect.die('HostAuth.startDeviceFlow is not served in this test'),
+  'HostAuth.pollDeviceFlow': () => Effect.die('HostAuth.pollDeviceFlow is not served in this test'),
+  'HostAuth.cancelDeviceFlow': () =>
+    Effect.die('HostAuth.cancelDeviceFlow is not served in this test'),
+  'HostAuth.connectPat': () => Effect.die('HostAuth.connectPat is not served in this test'),
+  'HostAuth.checkGhCli': () => Effect.die('HostAuth.checkGhCli is not served in this test'),
+  'HostAuth.importGhCli': () => Effect.die('HostAuth.importGhCli is not served in this test'),
+  'HostAuth.verify': () => Effect.die('HostAuth.verify is not served in this test'),
+  'HostAuth.disconnect': () => Effect.die('HostAuth.disconnect is not served in this test'),
+  'PullRequests.changes': () => Stream.empty,
+  'PullRequests.setActiveView': () => Effect.void,
+  'PullRequests.getProjectState': () =>
+    Effect.die('PullRequests.getProjectState is not served in this test'),
+  'PullRequests.refreshProject': () =>
+    Effect.die('PullRequests.refreshProject is not served in this test'),
+  'PullRequests.lookupByNumber': () =>
+    Effect.die('PullRequests.lookupByNumber is not served in this test'),
+  'PullRequests.unpinNumber': () => Effect.void,
+  'PullRequests.getDetail': () => Effect.die('PullRequests.getDetail is not served in this test'),
+  'PullRequests.getDiff': () => Effect.die('PullRequests.getDiff is not served in this test'),
+  'PullRequests.prepareCreate': () =>
+    Effect.die('PullRequests.prepareCreate is not served in this test'),
+  'PullRequests.draftCreate': () =>
+    Effect.die('PullRequests.draftCreate is not served in this test'),
+  'PullRequests.create': () => Effect.die('PullRequests.create is not served in this test'),
+  'PullRequests.merge': () => Effect.die('PullRequests.merge is not served in this test'),
+  'PullRequests.setAutoMerge': () =>
+    Effect.die('PullRequests.setAutoMerge is not served in this test'),
+  'PullRequests.updateLocalBaseBranch': () =>
+    Effect.die('PullRequests.updateLocalBaseBranch is not served in this test'),
+  'PullRequests.switchToBaseBranch': () =>
+    Effect.die('PullRequests.switchToBaseBranch is not served in this test'),
+  'PullRequests.getPostMergeStatus': () =>
+    Effect.die('PullRequests.getPostMergeStatus is not served in this test'),
+  'PullRequests.update': () => Effect.die('PullRequests.update is not served in this test'),
+  'PullRequests.addComment': () => Effect.die('PullRequests.addComment is not served in this test'),
+  'PullRequests.editComment': () =>
+    Effect.die('PullRequests.editComment is not served in this test'),
+  'PullRequests.deleteComment': () =>
+    Effect.die('PullRequests.deleteComment is not served in this test'),
+  'PullRequests.submitReview': () =>
+    Effect.die('PullRequests.submitReview is not served in this test'),
+  'PullRequests.deletePendingReview': () =>
+    Effect.die('PullRequests.deletePendingReview is not served in this test'),
+  'PullRequests.resolveThread': () =>
+    Effect.die('PullRequests.resolveThread is not served in this test'),
+  'PullRequests.unresolveThread': () =>
+    Effect.die('PullRequests.unresolveThread is not served in this test'),
+});
+
 /** Every domain's `layerXUnused`; the handlers a test passes replace the ones it exercises. */
 const layerUnusedHandlers = Layer.mergeAll(
   layerAppInfoUnused,
@@ -289,6 +344,7 @@ const layerUnusedHandlers = Layer.mergeAll(
   layerAssetsUnused,
   layerMessagingUnused,
   layerNotificationsUnused,
+  layerPullRequestsUnused,
 );
 
 type DesktopHandler = Rpc.ToHandler<RpcGroup.Rpcs<typeof DesktopRpcs>>;

@@ -1320,12 +1320,12 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
     const sessionsBtn = rail.querySelector<HTMLButtonElement>('[data-testid="rail-nav-sessions"]')!;
     const settingsBtn = rail.querySelector<HTMLButtonElement>('[data-testid="open-settings"]')!;
 
-    // Only Sessions is in the extensible nav list today (no stubbed PR/Issues buttons or mock badges).
+    // Sessions and Pull requests are in the workspace rail nav list.
     expect(
       Array.from(rail.querySelectorAll('[data-testid^="rail-nav-"]')).map((el) =>
         el.getAttribute('data-testid'),
       ),
-    ).toEqual(['rail-nav-sessions']);
+    ).toEqual(['rail-nav-sessions', 'rail-nav-pull-requests']);
     expect(sessionsBtn.getAttribute('aria-current')).toBe('page');
     expect(settingsBtn.getAttribute('aria-current')).toBeNull();
 

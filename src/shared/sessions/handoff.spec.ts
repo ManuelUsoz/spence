@@ -7,6 +7,7 @@ import {
   estimateSummaryTokens,
   extractHandoffImages,
 } from './handoff';
+import { PullRequestNumber } from '../pull-requests/pull-requests.rpc';
 import { MessageId, StepId, ThoughtId, type TranscriptEvent, TurnId } from './sessions.rpc';
 
 const turn1 = TurnId.make('turn-1');
@@ -287,5 +288,54 @@ describe('handoff helpers', () => {
     expect(blocked.map((entry) => entry.imageId)).toEqual(['wide-png', 'tall-jpeg']);
     expect(blocked[0]?.reason).toContain('100');
     expect(blocked[1]?.reason).toContain('100');
+  });
+
+  it('appends Pull requests referenced summary line in buildStructuredTranscriptExtract', () => {
+    const events: ReadonlyArray<TranscriptEvent> = [
+      {
+        seq: 1,
+        at,
+        item: {
+          _tag: 'Message',
+          id: msg1,
+          turnId: turn1,
+          role: 'user',
+          parts: [
+            { _tag: 'text', text: 'Check PR #198' },
+            {
+              _tag: 'pullRequest',
+              kind: 'pullRequest',
+              ref: {
+                repo: { host: 'github', canonicalPath: 'acme/spence' },
+                number: PullRequestNumber.make(198),
+              },
+              title: 'Add PR context',
+              state: 'open',
+              headSha: 'abc1234567890',
+              url: 'https://github.com/acme/spence/pull/198',
+              snapshot: 'PR #198 snapshot',
+            },
+            {
+              _tag: 'pullRequest',
+              kind: 'reviewThread',
+              ref: {
+                repo: { host: 'github', canonicalPath: 'acme/spence' },
+                number: PullRequestNumber.make(198),
+              },
+              title: 'Add PR context',
+              state: 'open',
+              headSha: 'abc1234567890',
+              url: 'https://github.com/acme/spence/pull/198',
+              path: 'src/app.ts',
+              line: 42,
+              snapshot: 'Thread snapshot',
+            },
+          ],
+        },
+      },
+    ];
+
+    const extract = buildStructuredTranscriptExtract(events);
+    expect(extract).toContain('Pull requests referenced: PR #198 (Add PR context, abc1234)');
   });
 });

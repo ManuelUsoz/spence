@@ -317,7 +317,9 @@ const rangeAt = (
   `,
 })
 export class MarkdownView {
-  readonly text = input.required<string>();
+  readonly text = input('');
+  /** Pre-parsed AST blocks (e.g. from a Web Worker) to skip synchronous UI-thread parsing. */
+  readonly precomputedBlocks = input<ReadonlyArray<MarkdownBlock> | null>(null);
   /** A settled reply is parsed once and cached; a streaming one is reparsed as its accumulated text arrives. */
   readonly settled = input(true);
   readonly openLink = output<string>();
@@ -334,9 +336,11 @@ export class MarkdownView {
   private lastSelection: SelectionSnapshot | null = null;
   private readonly observer: MutationObserver;
 
-  protected readonly blocks = computed<ReadonlyArray<MarkdownBlock>>(() =>
-    markdownBlocks(this.settled() ? this.text() : this.shownText(), this.settled()),
-  );
+  protected readonly blocks = computed<ReadonlyArray<MarkdownBlock>>(() => {
+    const precomputed = this.precomputedBlocks();
+    if (precomputed !== null) return precomputed;
+    return markdownBlocks(this.settled() ? this.text() : this.shownText(), this.settled());
+  });
 
   constructor() {
     // Streamed deltas arrive in bursts: parse the latest accumulated text once per microtask, never each delta.

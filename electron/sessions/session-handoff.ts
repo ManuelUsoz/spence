@@ -1,4 +1,4 @@
-import { Deferred, Effect, Exit, Fiber, type Scope, Stream } from 'effect';
+import { Effect, Exit, type Scope } from 'effect';
 import { randomUUID } from 'node:crypto';
 import type { AgentCapabilities, Effort, Model } from '../../src/shared/agents/agents.rpc';
 import { type Locale } from '../i18n/locale';
@@ -20,15 +20,10 @@ import {
   TurnId,
 } from '../../src/shared/sessions/sessions.rpc';
 import type { PermissionMode } from '../../src/shared/projects/projects.rpc';
-import {
-  cancelledOutcome,
-  foldUpdate,
-  openTurn,
-  promptOutcome,
-  toAcpPrompt,
-} from '../acp/acpMappers';
-import { type AcpSession } from '../acp/acpSession';
-import { AcpClient, type AcpSessionManager } from '../acp/acpSessionManager';
+import { promptOutcome } from '../acp/acpMappers';
+import type { AcpSession } from '../acp/acpSession';
+import type { AcpSessionManager } from '../acp/acpSessionManager';
+import { runIsolatedToolFreePrompt, runToolFreePrompt } from '../acp/tool-free-prompt';
 import type { CatalogEntry } from '../agents/catalog';
 import type { AgentMemory } from '../settings/remembered';
 import { foldOptions } from './session-options';
@@ -42,75 +37,10 @@ export interface IsolatedSummaryResult {
   readonly fallbackReason?: string;
 }
 
-/** Runs one tool-free ACP prompt and collects text replies while cancelling on any tool call or permission request. */
-const runToolFreePrompt = Effect.fnUntraced(function* (
-  acp: AcpSession,
-  turnId: TurnId,
-  cwd: string,
-  parts: ReadonlyArray<MessagePart>,
-  scope: Scope.Scope,
-) {
-  let fold = openTurn(turnId, cwd);
-  let unexpectedAction = false;
-  let unexpectedPermission = false;
-  const replyChunks: string[] = [];
-
-  const reader = yield* acp.events.pipe(
-    Stream.takeUntil((event) => event._tag === 'PromptEnded'),
-    Stream.runForEach(
-      Effect.fnUntraced(function* (event) {
-        if (event._tag === 'PermissionRequest') {
-          unexpectedPermission = true;
-          unexpectedAction = true;
-          yield* Deferred.succeed(event.answer, cancelledOutcome);
-          yield* acp.cancel.pipe(Effect.ignore);
-          return;
-        }
-        if (event._tag === 'Update') {
-          if (
-            event.update.sessionUpdate === 'tool_call' ||
-            event.update.sessionUpdate === 'tool_call_update'
-          ) {
-            unexpectedAction = true;
-            const [nextFold] = foldUpdate(fold, event.update, randomUUID);
-            fold = nextFold;
-            yield* acp.cancel.pipe(Effect.ignore);
-            return;
-          }
-          const [nextFold, items] = foldUpdate(fold, event.update, randomUUID);
-          fold = nextFold;
-          for (const item of items) {
-            if (item._tag === 'Message' && item.role === 'agent') {
-              for (const part of item.parts) {
-                if (part._tag === 'text') replyChunks.push(part.text);
-              }
-            } else if (item._tag === 'MessageDelta') {
-              replyChunks.push(item.text);
-            }
-          }
-        }
-      }),
-    ),
-    Effect.ignore,
-    Effect.forkIn(scope),
-  );
-
-  const promptExit = yield* Effect.exit(acp.prompt(toAcpPrompt(parts)));
-  yield* Fiber.await(reader);
-
-  return {
-    promptExit,
-    replyText: replyChunks.join('').trim(),
-    steps: [...fold.steps.values()],
-    unexpectedAction,
-    unexpectedPermission,
-  };
-});
-
 /**
- * Drafts a summary in an isolated tool-free ACP session (`fs` off in `CLIENT_CAPABILITIES`, and any unexpected
- * `tool_call` / `PermissionRequest` cancels immediately) when `supportsIsolatedSummary` is true and the outgoing
- * Agent can run; otherwise falls back to `fallbackSummary`.
+ * Drafts a summary in an isolated tool-free ACP session (`fs` and `terminal` off in `TOOL_FREE_CLIENT_CAPABILITIES`,
+ * and any unexpected `tool_call` / `PermissionRequest` cancels immediately) when `supportsIsolatedSummary` is true
+ * and the outgoing Agent can run; otherwise falls back to `fallbackSummary`.
  */
 export const draftSummaryWithFallback = Effect.fn('Sessions.draftSummaryWithFallback')(function* (
   outgoing: CatalogEntry,
@@ -135,56 +65,41 @@ export const draftSummaryWithFallback = Effect.fn('Sessions.draftSummaryWithFall
     } satisfies IsolatedSummaryResult;
   }
 
-  const acpClient = yield* AcpClient;
+  return yield* Effect.gen(function* () {
+    const turnId = TurnId.make(`isolated-${randomUUID()}`);
+    const result = yield* runIsolatedToolFreePrompt(outgoing, turnId, cwd, [
+      { _tag: 'text', text: buildIsolatedSummaryPrompt(fallbackSummary) },
+    ]);
 
-  return yield* Effect.scoped(
-    Effect.gen(function* () {
-      const scope = yield* Effect.scope;
-      const manager = yield* acpClient.connect(outgoing);
-      const session = yield* manager.newSession(cwd);
-      const turnId = TurnId.make(`isolated-${randomUUID()}`);
-
-      const result = yield* Effect.ensuring(
-        runToolFreePrompt(
-          session,
-          turnId,
-          cwd,
-          [{ _tag: 'text', text: buildIsolatedSummaryPrompt(fallbackSummary) }],
-          scope,
-        ),
-        session.close.pipe(Effect.ignore),
-      );
-
-      if (result.unexpectedAction) {
-        return {
-          summary: fallbackSummary,
-          draftSource: 'transcriptExtract',
-          fallbackReason: copy.isolatedToolCall(outgoing.name),
-        } satisfies IsolatedSummaryResult;
-      }
-
-      if (Exit.isFailure(result.promptExit)) {
-        return {
-          summary: fallbackSummary,
-          draftSource: 'transcriptExtract',
-          fallbackReason: copy.isolatedFailed(outgoing.name),
-        } satisfies IsolatedSummaryResult;
-      }
-
-      if (result.replyText.length === 0) {
-        return {
-          summary: fallbackSummary,
-          draftSource: 'transcriptExtract',
-          fallbackReason: copy.isolatedEmpty(outgoing.name),
-        } satisfies IsolatedSummaryResult;
-      }
-
+    if (result.unexpectedAction) {
       return {
-        summary: result.replyText,
-        draftSource: 'isolatedSummary',
+        summary: fallbackSummary,
+        draftSource: 'transcriptExtract',
+        fallbackReason: copy.isolatedToolCall(outgoing.name),
       } satisfies IsolatedSummaryResult;
-    }),
-  ).pipe(
+    }
+
+    if (Exit.isFailure(result.promptExit)) {
+      return {
+        summary: fallbackSummary,
+        draftSource: 'transcriptExtract',
+        fallbackReason: copy.isolatedFailed(outgoing.name),
+      } satisfies IsolatedSummaryResult;
+    }
+
+    if (result.replyText.length === 0) {
+      return {
+        summary: fallbackSummary,
+        draftSource: 'transcriptExtract',
+        fallbackReason: copy.isolatedEmpty(outgoing.name),
+      } satisfies IsolatedSummaryResult;
+    }
+
+    return {
+      summary: result.replyText,
+      draftSource: 'isolatedSummary',
+    } satisfies IsolatedSummaryResult;
+  }).pipe(
     Effect.catch(() =>
       Effect.succeed({
         summary: fallbackSummary,

@@ -13,6 +13,7 @@ import {
 import { PaneId, PanelId, TabId, type WorkspaceState } from '../../src/shared/tabs/tabs.rpc';
 import { EMPTY_WORKSPACE, openSessionTab } from '../../src/shared/tabs/workspace-layout';
 import type { AcpSessionEvent } from '../acp/acpClientDispatcher';
+import type { PullRequestsService } from '../git-hosts/pull-requests-service';
 import type { AcpSession } from '../acp/acpSession';
 import { layerAgentLogs } from '../acp/acpAgentLog';
 import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from '../acp/acpFakes';
@@ -79,6 +80,7 @@ export const withSessionsCustom = <A, E>(
     readonly catalog?: ReadonlyArray<CatalogEntry>;
     readonly fallbackAgentId?: AgentId;
     readonly picker?: Effect.Effect<Option.Option<string>>;
+    readonly pullRequests?: Layer.Layer<PullRequestsService>;
   },
   body: (
     project: ProjectId,
@@ -164,7 +166,7 @@ export const withSessionsCustom = <A, E>(
     const deleteQueue = layerDeleteQueue.pipe(Layer.provide(Layer.mergeAll(store, acpClient)));
     const entries = options.catalog ?? [fakeEntry(options.agentArgs)];
     const fallbackId = options.fallbackAgentId ?? entries[0]?.id ?? fakeEntry().id;
-    const layer = layerSessions.pipe(
+    const baseLayer = layerSessions.pipe(
       Layer.provideMerge(projects),
       Layer.provideMerge(sessionStore),
       Layer.provideMerge(remembered),
@@ -181,6 +183,10 @@ export const withSessionsCustom = <A, E>(
       ),
       Layer.provide(Layer.succeed(AgentCatalog, makeAgentCatalog(entries, fallbackId))),
     );
+    const layer =
+      options.pullRequests === undefined
+        ? baseLayer
+        : baseLayer.pipe(Layer.provide(options.pullRequests));
     return yield* Effect.gen(function* () {
       const existing =
         options.storeRoot === undefined ? undefined : (yield* Projects.use((p) => p.list))[0];

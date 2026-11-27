@@ -20,14 +20,21 @@ import {
   BROWSER_MIN_WIDTH,
   clampBrowserWidth,
 } from '../../../shared/browser/browser.rpc';
+import type { ProjectId } from '../../../shared/projects/projects.rpc';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
-import { PanelId, type WorkspacePanel } from '../../../shared/tabs/tabs.rpc';
-import { MAX_PANES_PER_TAB } from '../../../shared/tabs/workspace-layout';
+import {
+  allTabPanels,
+  findPanel,
+  findProject,
+  MAX_PANES_PER_TAB,
+} from '../../../shared/tabs/workspace-layout';
+import { PanelId, type WorkspacePanel, type WorkspaceTab } from '../../../shared/tabs/tabs.rpc';
 import { BROWSER_PANE_VIEW, BrowserPaneState } from '../../core/browser-pane';
 import { DeviceScopeDirective } from '../../core/device-scope.directive';
 import { FontPresets } from '../../core/font-presets';
 import { Keymap } from '../../core/keymap';
 import { PanelRegistry, type PanelRenderContext } from '../../core/panel-registry';
+import { PULL_REQUESTS_PAGE_VIEW, PullRequestsState } from '../../core/pull-requests-state';
 import { RemoteDevices } from '../../core/remote-devices';
 import { Tabs } from '../../core/tabs';
 import { AppSidebar } from './app-sidebar';
@@ -123,6 +130,19 @@ const clampPaneWidth = (container: HTMLElement, width: number): number => {
           <div class="min-h-0 flex-1 overflow-y-auto p-6">
             <app-settings-page />
           </div>
+        } @else if (prState.prPageOpen()) {
+          @let project = activeProject();
+          @if (prPageView !== null) {
+            <ng-container
+              *ngComponentOutlet="
+                prPageView;
+                inputs: {
+                  projectId: project?.id ?? null,
+                  projectName: project?.name ?? '',
+                }
+              "
+            />
+          }
         } @else if (activeProject(); as project) {
           <app-tab-strip />
           @if (tabs.activeTab(); as activeTab) {
@@ -273,6 +293,8 @@ export class Shell {
   private readonly browser = inject(BrowserPaneState);
   private readonly document = inject(DOCUMENT);
   protected readonly settings = inject(SettingsState);
+  protected readonly prState = inject(PullRequestsState);
+  protected readonly prPageView = inject(PULL_REQUESTS_PAGE_VIEW);
   private readonly destroyRef = inject(DestroyRef);
   private stopActiveDrag: (() => void) | undefined;
 
@@ -373,6 +395,17 @@ export class Shell {
       const id = this.activeBrowserSession();
       untracked(() => this.browser.syncContext(id));
     });
+    effect(() => {
+      const projectId = this.activeProject()?.id ?? null;
+      const prPageOpen = this.prState.prPageOpen();
+      const activePrNumber = this.prState.selectedPrNumber();
+      untracked(() => {
+        if (projectId !== null) {
+          this.prState.loadProject(projectId);
+        }
+        this.prState.setActiveView({ projectId, prPageOpen, activePrNumber });
+      });
+    });
     // Asking for a Tab (a Session row, a new Session, a shortcut) leaves the Settings page.
     effect(() => {
       this.tabs.activations();
@@ -382,6 +415,11 @@ export class Shell {
     });
     effect(() => {
       this.tabs.setSettingsOpen(this.settings.open());
+    });
+    effect(() => {
+      if (this.prState.openSettingsRequested() > 0) {
+        untracked(() => this.settings.show());
+      }
     });
     effect(() => {
       const state = this.projects.state();
@@ -403,6 +441,106 @@ export class Shell {
         this.tabs.closeProject(activeId);
       }
     });
+
+    effect(() => {
+      const action = this.prState.pendingSessionAction();
+      if (action === null) return;
+      this.prState.consumeSessionAction();
+      this.settings.set(false);
+      if (action._tag === 'referenceInSession') {
+        const target = this.findEditableSessionTab(action.attachment.projectId);
+        if (target !== null) {
+          this.tabs.activateTab(target.tab.id);
+          if (target.panelId !== null) {
+            this.tabs.focusPanel(target.panelId);
+          }
+          if (target.sessionId !== undefined) {
+            this.prState.queueAttachmentForSession(target.sessionId, action.attachment);
+          } else {
+            this.prState.queueDraftAttachmentForProject(
+              action.attachment.projectId,
+              action.attachment,
+            );
+          }
+        } else {
+          this.tabs.newTab(action.attachment.projectId);
+          this.prState.queueDraftAttachmentForProject(
+            action.attachment.projectId,
+            action.attachment,
+          );
+        }
+      } else {
+        this.tabs.newTab(action.projectId);
+        this.prState.setPendingDraftWorktreeForProject(action.projectId, {
+          pr: action.pr,
+          targetRemoteName: action.targetRemoteName,
+        });
+        this.prState.queueDraftAttachmentForProject(action.projectId, {
+          kind: 'pullRequest',
+          projectId: action.projectId,
+          ref: action.pr.ref,
+          title: action.pr.title,
+          state: action.pr.state,
+          headSha: action.pr.headSha,
+          url: action.pr.url,
+        });
+      }
+    });
+  }
+
+  private isEditableSession(sessionId: SessionId | undefined, projectId: ProjectId): boolean {
+    if (sessionId === undefined) return true; // Draft session is editable
+    const summaries = this.sessionsState.sessionsFor(projectId) ?? [];
+    for (const summary of summaries) {
+      if (summary.workers?.some((w) => w.sessionId === sessionId) === true) {
+        return false;
+      }
+      if (summary.id === sessionId && summary.archivedAt !== undefined) return false;
+    }
+    return true;
+  }
+
+  private findEditableSessionTab(projectId: ProjectId): {
+    readonly tab: WorkspaceTab;
+    readonly panelId: PanelId | null;
+    readonly sessionId: SessionId | undefined;
+  } | null {
+    const workspace = this.tabs.workspace();
+    const project = findProject(workspace, projectId);
+    if (project === undefined) return null;
+
+    const inspectTab = (tab: WorkspaceTab) => {
+      const focused = findPanel(workspace, tab.focusedPanelId);
+      if (
+        focused?.panel.spec._tag === 'Session' &&
+        this.isEditableSession(focused.panel.spec.sessionId, projectId)
+      ) {
+        return { tab, panelId: focused.panel.id, sessionId: focused.panel.spec.sessionId };
+      }
+      for (const panel of allTabPanels(tab)) {
+        if (
+          panel.spec._tag === 'Session' &&
+          this.isEditableSession(panel.spec.sessionId, projectId)
+        ) {
+          return { tab, panelId: panel.id, sessionId: panel.spec.sessionId };
+        }
+      }
+      return null;
+    };
+
+    const active = this.tabs.activeTab();
+    if (active !== null && this.tabs.activeProjectId() === projectId) {
+      const match = inspectTab(active);
+      if (match !== null) return match;
+    }
+
+    for (let i = project.tabs.length - 1; i >= 0; i -= 1) {
+      const tab = project.tabs[i];
+      if (tab === undefined) continue;
+      const match = inspectTab(tab);
+      if (match !== null) return match;
+    }
+    return null;
   }
 
   protected overlaySessionTitle(sessionId: SessionId): string {

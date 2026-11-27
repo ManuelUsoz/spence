@@ -3,6 +3,7 @@ import { HlmKbdImports } from '@ui/kbd';
 import { HlmTooltipImports } from '@ui/tooltip';
 import type { DeviceProject } from './projects-state';
 import { Keymap } from '../../core/keymap';
+import { PullRequestsState } from '../../core/pull-requests-state';
 import { RemoteDevices } from '../../core/remote-devices';
 import { Tabs } from '../../core/tabs';
 import { ProjectsState } from './projects-state';
@@ -12,6 +13,7 @@ export interface RailNavItem {
   readonly id: string;
   readonly label: string;
   readonly active: boolean;
+  readonly badge?: number;
   readonly select: () => void;
 }
 
@@ -60,7 +62,7 @@ export interface RailNavItem {
           [attr.data-active]="item.active ? 'true' : null"
           [hlmTooltip]="item.label"
           position="right"
-          class="focus-visible:ring-ring flex size-[34px] shrink-0 items-center justify-center rounded-lg transition-colors outline-none focus-visible:ring-2"
+          class="focus-visible:ring-ring relative flex size-[34px] shrink-0 items-center justify-center rounded-lg transition-colors outline-none focus-visible:ring-2"
           [class]="item.active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'"
           (click)="item.select()"
         >
@@ -78,6 +80,31 @@ export interface RailNavItem {
               >
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
               </svg>
+            }
+            @case ('pull-requests') {
+              <svg
+                class="size-4 shrink-0"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <circle cx="18" cy="18" r="3" />
+                <circle cx="6" cy="6" r="3" />
+                <path d="M13 6h3a2 2 0 0 1 2 2v7" />
+                <line x1="6" x2="6" y1="9" y2="21" />
+              </svg>
+              @if (item.badge !== undefined && item.badge > 0) {
+                <span
+                  data-testid="rail-nav-pull-requests-badge"
+                  class="bg-muted text-foreground absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-1 text-[9px] font-medium tabular-nums"
+                >
+                  {{ item.badge }}
+                </span>
+              }
             }
           }
         </button>
@@ -132,6 +159,7 @@ export class WorkspaceRail {
   private readonly projects = inject(ProjectsState);
   private readonly tabs = inject(Tabs);
   private readonly devices = inject(RemoteDevices);
+  private readonly prState = inject(PullRequestsState);
 
   protected readonly activeProject = computed((): DeviceProject | null => {
     const ordered = this.projects.ordered();
@@ -150,19 +178,39 @@ export class WorkspaceRail {
       : $localize`${project.name}:project: (${device}:device:) — Sessions`;
   });
 
+  protected readonly openPrCount = computed(() =>
+    this.prState.openCountForProject(this.activeProject()?.id ?? null),
+  );
+
   protected openSessions(): void {
+    this.settings.set(false);
+    this.prState.closePrPage(this.activeProject()?.id ?? null);
+    if (this.tabs.activeTabOverlay() !== null) {
+      this.tabs.closeTabOverlay();
+    }
+  }
+
+  protected openPullRequests(): void {
     this.settings.set(false);
     if (this.tabs.activeTabOverlay() !== null) {
       this.tabs.closeTabOverlay();
     }
+    this.prState.openPrPage(this.activeProject()?.id ?? null);
   }
 
   protected readonly navItems = computed<ReadonlyArray<RailNavItem>>(() => [
     {
       id: 'sessions',
       label: $localize`Sessions`,
-      active: !this.settings.open(),
+      active: !this.settings.open() && !this.prState.prPageOpen(),
       select: () => this.openSessions(),
+    },
+    {
+      id: 'pull-requests',
+      label: $localize`Pull requests`,
+      active: !this.settings.open() && this.prState.prPageOpen(),
+      ...(this.openPrCount() > 0 ? { badge: this.openPrCount() } : {}),
+      select: () => this.openPullRequests(),
     },
   ]);
 }
