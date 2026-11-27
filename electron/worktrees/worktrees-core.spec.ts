@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { createWorktree, listWorktrees } from './worktrees-core';
+import { createWorktree, createWorktreeFromPullRequest, listWorktrees } from './worktrees-core';
 
 // Each test runs real git commands; the 5 s default is too tight while the whole suite runs.
 vi.setConfig({ testTimeout: 60_000 });
@@ -171,5 +171,51 @@ describe('createWorktree', () => {
     const result = await createWorktree(dir, 'busy', 'git', pathEnv);
 
     expect(result).toMatchObject({ _tag: 'Rejected', reason: 'DestinationExists' });
+  });
+
+  it('fetches refs/pull/<n>/head from remote and creates a Worktree on the target branch', async () => {
+    const dir = await makeRepo();
+    const remoteDir = await realpath(await mkdtemp(path.join(tmpdir(), 'spence-pr-remote-')));
+    tempDirs.push(remoteDir);
+    await git(remoteDir, 'init', '--bare');
+    await git(dir, 'remote', 'add', 'origin', remoteDir);
+    await git(dir, 'push', 'origin', 'main');
+
+    // Create a PR commit in a temporary clone and push it to refs/pull/42/head on the bare remote
+    const prClone = await realpath(await mkdtemp(path.join(tmpdir(), 'spence-pr-clone-')));
+    tempDirs.push(prClone);
+    await git(prClone, 'clone', remoteDir, '.');
+    await git(prClone, 'config', 'user.email', 'pr@spence.local');
+    await git(prClone, 'config', 'user.name', 'PR Author');
+    await git(prClone, 'checkout', '-b', 'pr-feature');
+    await writeFile(path.join(prClone, 'pr-file.txt'), 'from pr 42\n');
+    await git(prClone, 'add', '.');
+    await git(prClone, 'commit', '-m', 'PR #42 commit');
+    await git(prClone, 'push', 'origin', 'HEAD:refs/pull/42/head');
+
+    const result = await createWorktreeFromPullRequest(dir, 'pr/42', 'origin', 42, 'git', pathEnv);
+    expect(result._tag).toBe('Created');
+    if (result._tag !== 'Created') return;
+    expect(result.entry.branch).toBe('pr/42');
+    const log = await git(result.entry.path, 'log', '-1', '--pretty=%s');
+    expect(log.trim()).toBe('PR #42 commit');
+  });
+
+  it('rejects with PullRequestRefUnavailable when refs/pull/<n>/head cannot be fetched', async () => {
+    const dir = await makeRepo();
+    const remoteDir = await realpath(await mkdtemp(path.join(tmpdir(), 'spence-pr-remote-')));
+    tempDirs.push(remoteDir);
+    await git(remoteDir, 'init', '--bare');
+    await git(dir, 'remote', 'add', 'origin', remoteDir);
+
+    const result = await createWorktreeFromPullRequest(
+      dir,
+      'pr/999',
+      'origin',
+      999,
+      'git',
+      pathEnv,
+    );
+    expect(result).toMatchObject({ _tag: 'Rejected', reason: 'PullRequestRefUnavailable' });
   });
 });

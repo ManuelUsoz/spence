@@ -4,6 +4,7 @@ import { toWireDefect } from '../../src/shared/rpc/wire-error';
 import {
   WorktreesError,
   type PrepareDraftResult,
+  type PullRequestWorktreeRef,
   type WorktreePrepEvent,
   type WorktreePrepStep,
   type WorktreesResult,
@@ -13,7 +14,7 @@ import { Projects } from '../projects/projects';
 import { Sessions } from '../sessions/sessions';
 import type { WorkerCapabilityFailure } from '../source-control/worker-protocol';
 import { detectProjectSetupCommand, runWorktreeSetupCommand } from './worktree-setup';
-import { createWorktree, listWorktrees } from './worktrees-core';
+import { createWorktree, createWorktreeFromPullRequest, listWorktrees } from './worktrees-core';
 
 export interface WorktreesShape {
   readonly list: (id: SessionId) => Effect.Effect<WorktreesResult, WorktreesError>;
@@ -21,12 +22,14 @@ export interface WorktreesShape {
     id: SessionId,
     branch: string,
     base: string | undefined,
+    prRef?: PullRequestWorktreeRef,
   ) => Effect.Effect<PrepareDraftResult, WorktreesError>;
   readonly prepareDraftStream: (
     id: SessionId,
     branch: string,
     base: string | undefined,
     setupCommand?: string | null,
+    prRef?: PullRequestWorktreeRef,
   ) => Stream.Stream<WorktreePrepEvent, WorktreesError>;
 }
 
@@ -101,7 +104,7 @@ export const layerWorktrees = Layer.effect(
         ),
       );
 
-    const prepareDraft: WorktreesShape['prepareDraft'] = (id, branch, base) =>
+    const prepareDraft: WorktreesShape['prepareDraft'] = (id, branch, base, prRef) =>
       sessions.isDraft(id).pipe(
         Effect.mapError(() => notFound(id)),
         Effect.flatMap((draft): Effect.Effect<PrepareDraftResult, WorktreesError> =>
@@ -113,7 +116,18 @@ export const layerWorktrees = Layer.effect(
               })
             : folderOf(id).pipe(
                 Effect.flatMap((folder) =>
-                  run(() => createWorktree(folder, branch, GIT, pathEnv(), base)),
+                  run(() =>
+                    prRef !== undefined
+                      ? createWorktreeFromPullRequest(
+                          folder,
+                          branch,
+                          prRef.remoteName,
+                          prRef.number,
+                          GIT,
+                          pathEnv(),
+                        )
+                      : createWorktree(folder, branch, GIT, pathEnv(), base),
+                  ),
                 ),
                 Effect.flatMap((created): Effect.Effect<PrepareDraftResult, WorktreesError> => {
                   if (created._tag === 'Rejected') return Effect.succeed(created);
@@ -139,6 +153,7 @@ export const layerWorktrees = Layer.effect(
       branch,
       base,
       setupCommandOverride,
+      prRef,
     ) =>
       Stream.callback<WorktreePrepEvent, WorktreesError>(
         Effect.fnUntraced(function* (queue) {
@@ -167,7 +182,18 @@ export const layerWorktrees = Layer.effect(
               status: 'running',
             });
 
-            const created = yield* run(() => createWorktree(folder, branch, GIT, pathEnv(), base));
+            const created = yield* run(() =>
+              prRef !== undefined
+                ? createWorktreeFromPullRequest(
+                    folder,
+                    branch,
+                    prRef.remoteName,
+                    prRef.number,
+                    GIT,
+                    pathEnv(),
+                  )
+                : createWorktree(folder, branch, GIT, pathEnv(), base),
+            );
             if (created._tag === 'Rejected') {
               yield* emitStep({
                 id: 'createWorktree',

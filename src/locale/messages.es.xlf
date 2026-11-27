@@ -210,6 +210,10 @@
         <source>The branch to start from no longer exists.</source>
         <target state="translated">La rama de partida ya no existe.</target>
       </trans-unit>
+      <trans-unit id="1865065955295535963" datatype="html">
+        <source>This Pull request&apos;s head ref is no longer fetchable.</source>
+        <target state="translated">La referencia head de este Pull request ya no se puede obtener.</target>
+      </trans-unit>
       <trans-unit id="1415504715971334545" datatype="html">
         <source>This Session already has messages, so it stays in its worktree.</source>
         <target state="translated">Esta sesión ya tiene mensajes, así que se queda en su worktree.</target>
@@ -952,6 +956,14 @@
       <trans-unit id="5743757503664322992" datatype="html">
         <source>Pinned</source>
         <target state="translated">Fijado</target>
+      </trans-unit>
+      <trans-unit id="8126276746536312359" datatype="html">
+        <source> Start Session </source>
+        <target state="translated"> Iniciar sesión </target>
+      </trans-unit>
+      <trans-unit id="7580563219204704953" datatype="html">
+        <source> Reference in Session </source>
+        <target state="translated"> Referenciar en sesión </target>
       </trans-unit>
       <trans-unit id="6498416869507452450" datatype="html">
         <source> Open in GitHub </source>
@@ -2174,6 +2186,10 @@
         <source> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> can&apos;t take images. Remove them to send. </source>
         <target> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no acepta imágenes. Quítalas para enviar. </target>
       </trans-unit>
+      <trans-unit id="7353779109036348090" datatype="html">
+        <source>Remove Pull request attachment</source>
+        <target state="translated">Quitar adjunto de Pull request</target>
+      </trans-unit>
       <trans-unit id="8703062781631307974" datatype="html">
         <source>Coordinator for next Turn. Remove</source>
         <target state="translated">Coordinador para el siguiente Turno. Quitar</target>
@@ -2193,6 +2209,14 @@
       <trans-unit id="6438104683709175776" datatype="html">
         <source>No commands match.</source>
         <target>Ningún comando coincide.</target>
+      </trans-unit>
+      <trans-unit id="1019897759924590321" datatype="html">
+        <source>Pull requests</source>
+        <target state="translated">Pull requests</target>
+      </trans-unit>
+      <trans-unit id="6944624327744535984" datatype="html">
+        <source><x id="START_BLOCK_IF" equiv-text="@if (prLookupLoading()) {"/> Looking up Pull request… <x id="CLOSE_BLOCK_IF" equiv-text="}"/><x id="START_BLOCK_ELSE" equiv-text="@else {"/> No matching Pull requests. <x id="CLOSE_BLOCK_ELSE" equiv-text="}"/></source>
+        <target state="translated"><x id="START_BLOCK_IF" equiv-text="@if (prLookupLoading()) {"/> Buscando Pull request… <x id="CLOSE_BLOCK_IF" equiv-text="}"/><x id="START_BLOCK_ELSE" equiv-text="@else {"/> No hay Pull requests que coincidan. <x id="CLOSE_BLOCK_ELSE" equiv-text="}"/></target>
       </trans-unit>
       <trans-unit id="2851884518340083917" datatype="html">
         <source>Attach image</source>
@@ -2329,6 +2353,10 @@
       <trans-unit id="5135659169158832318" datatype="html">
         <source>Hint</source>
         <target>Sugerencia</target>
+      </trans-unit>
+      <trans-unit id="6483675625701187931" datatype="html">
+        <source>You can attach up to 5 Pull request references per Message.</source>
+        <target state="translated">Puedes adjuntar hasta 5 referencias de Pull request por Mensaje.</target>
       </trans-unit>
       <trans-unit id="255244378910474380" datatype="html">
         <source>Finish or cancel the active Turn before changing Model.</source>
@@ -4040,6 +4068,14 @@
         <source>Could not change the Project settings.</source>
         <target>No se pudieron cambiar los ajustes del Proyecto.</target>
       </trans-unit>
+      <trans-unit id="8546113143996434038" datatype="html">
+        <source>PR worktree branch pattern</source>
+        <target state="translated">Patrón de rama de worktree de PR</target>
+      </trans-unit>
+      <trans-unit id="329034809436946533" datatype="html">
+        <source>Used for fork or colliding PR branches when starting a Session. Supports {number}, {headRef}, and {author}.</source>
+        <target state="translated">Se usa para ramas de PR de forks o en colisión al iniciar una Sesión. Admite {number}, {headRef} y {author}.</target>
+      </trans-unit>
       <trans-unit id="7292902857194439444" datatype="html">
         <source>Device</source>
         <target state="translated">Dispositivo</target>
@@ -4191,10 +4227,6 @@
       <trans-unit id="8747066693682957841" datatype="html">
         <source><x id="project" equiv-text="project.name"/> (<x id="device" equiv-text="device"/>) — Sessions</source>
         <target state="translated"><x id="project" equiv-text="project.name"/> (<x id="device" equiv-text="device"/>) — Sesiones</target>
-      </trans-unit>
-      <trans-unit id="1019897759924590321" datatype="html">
-        <source>Pull requests</source>
-        <target state="translated">Pull requests</target>
       </trans-unit>
       <trans-unit id="6357866423106114276" datatype="html">
         <source>Needs an answer</source>

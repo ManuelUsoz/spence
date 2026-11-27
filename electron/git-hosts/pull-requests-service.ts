@@ -13,7 +13,7 @@ import {
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { promisify } from 'node:util';
-import type { Project, ProjectId } from '../../src/shared/projects/projects.rpc';
+import { Timestamp, type Project, type ProjectId } from '../../src/shared/projects/projects.rpc';
 import {
   GitHostError,
   type GitHostKind,
@@ -180,6 +180,19 @@ export interface PullRequestsServiceShape {
     projectId: ProjectId,
     number: PullRequestNumber,
   ) => Effect.Effect<PullRequestDiff, GitHostError>;
+  readonly getSnapshotInputs: (
+    projectId: ProjectId,
+    number: PullRequestNumber,
+    includeDiff: boolean,
+  ) => Effect.Effect<
+    {
+      readonly detail: PullRequestDetail;
+      readonly diff?: PullRequestDiff;
+      readonly isCachedFallback: boolean;
+      readonly fetchedAt: Timestamp;
+    },
+    GitHostError
+  >;
   readonly notifyTurnEnded: (projectId: ProjectId) => Effect.Effect<void>;
   readonly evictProject: (projectId: ProjectId) => Effect.Effect<void>;
   readonly evictAll: () => Effect.Effect<void>;
@@ -722,6 +735,85 @@ export const layerPullRequestsService = Layer.effect(
       },
     );
 
+    const getSnapshotInputs: PullRequestsServiceShape['getSnapshotInputs'] = Effect.fnUntraced(
+      function* (projectId, number, includeDiff) {
+        let resolved = resolvedByProject.get(projectId);
+        if (resolved === undefined) {
+          const r = yield* resolveRemoteForProject(projectId);
+          if (r._tag === 'Unavailable') {
+            return yield* new GitHostError({ reason: 'NotFound', detail: r.state.detail });
+          }
+          resolved = r.resolved;
+        }
+        const host = yield* registry.get(resolved.repo.host);
+        const cached = yield* prStore.getDetail(projectId, number);
+
+        let detail: PullRequestDetail | undefined;
+        let isCachedFallback = false;
+        let fetchedAt: Timestamp = Timestamp.make(yield* Clock.currentTimeMillis);
+
+        const freshExit = yield* Effect.exit(
+          host.getDetail({
+            repo: resolved.repo,
+            number,
+            bypassEtag: true,
+            checkPending: false,
+          }),
+        );
+
+        if (freshExit._tag === 'Success' && !freshExit.value.notModified) {
+          detail = freshExit.value.detail;
+          yield* prStore.saveDetail(projectId, detail);
+        } else if (freshExit._tag === 'Failure') {
+          if (cached !== null) {
+            detail = cached;
+            isCachedFallback = true;
+            fetchedAt = cached.updatedAt;
+          } else {
+            return yield* Effect.failCause(freshExit.cause);
+          }
+        } else if (cached !== null) {
+          detail = cached;
+          fetchedAt = cached.updatedAt;
+        }
+
+        if (detail === undefined) {
+          return yield* new GitHostError({
+            reason: 'NotFound',
+            detail: `Pull request #${number} detail is not available.`,
+          });
+        }
+
+        let diff: PullRequestDiff | undefined;
+        if (includeDiff) {
+          const cachedDiff = yield* prStore.getDiff(projectId, number, detail.headSha);
+          if (cachedDiff !== null) {
+            diff = cachedDiff;
+          } else if (!isCachedFallback) {
+            const diffExit = yield* Effect.exit(
+              host.getDiff({
+                repo: resolved.repo,
+                number,
+                headSha: detail.headSha,
+                baseSha: detail.baseRef,
+              }),
+            );
+            if (diffExit._tag === 'Success') {
+              diff = diffExit.value;
+              yield* prStore.putDiff(projectId, diff);
+            }
+          }
+        }
+
+        return {
+          detail,
+          ...(diff === undefined ? {} : { diff }),
+          isCachedFallback,
+          fetchedAt,
+        };
+      },
+    );
+
     const notifyTurnEnded: PullRequestsServiceShape['notifyTurnEnded'] = Effect.fnUntraced(
       function* (projectId) {
         if (turnDebounceFiber !== null) {
@@ -772,6 +864,7 @@ export const layerPullRequestsService = Layer.effect(
       unpinNumber,
       getDetail,
       getDiff,
+      getSnapshotInputs,
       notifyTurnEnded,
       evictProject,
       evictAll,

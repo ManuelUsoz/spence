@@ -15,13 +15,16 @@ import {
   Fiber,
   FiberSet,
   Layer,
+  Option,
   PubSub,
   Schema,
   type Scope,
   Semaphore,
   Stream,
 } from 'effect';
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { promisify } from 'node:util';
 import { agentCopy } from '../i18n/agent-copy';
 import { resolveLocale, type Locale } from '../i18n/locale';
 import { sessionCopy } from '../i18n/session-copy';
@@ -40,6 +43,8 @@ import {
   type CantStartReason,
   type Compaction,
   CompactionId,
+  type ComposerPullRequestAttachment,
+  composerPullRequestAttachmentKey,
   type ContextCleared,
   type ContextUsage,
   type ContextUsageReading,
@@ -53,12 +58,14 @@ import {
   type HandoffSourceEndpoint,
   type LiveActivity,
   type LiveState,
+  MAX_COMPOSER_PULL_REQUESTS,
   type MessagePart,
   MessageId,
   type MessageSender,
   type OptionName,
   type PermissionRequest,
   PermissionRequestId,
+  type PullRequestPart,
   type QueuedMessage,
   SessionError,
   SessionId,
@@ -83,6 +90,8 @@ import {
   type UnconfirmedExit,
 } from '../../src/shared/sessions/sessions.rpc';
 import type { AcpSessionEvent, PendingPermission } from '../acp/acpClientDispatcher';
+import { PullRequestsService } from '../git-hosts/pull-requests-service';
+import { type FormatPrSnapshotInput, runPrWorkerTask } from '../git-hosts/pr-worker';
 import { AcpError } from '../acp/acpErrors';
 import { capOutputTail, MAX_STEP_OUTPUT_BYTES } from '../../src/shared/sessions/output-tail';
 import {
@@ -232,22 +241,26 @@ export interface SessionsShape {
     id: SessionId,
     parts: ReadonlyArray<MessagePart>,
     from?: MessageSender,
+    pullRequests?: ReadonlyArray<ComposerPullRequestAttachment>,
   ) => Effect.Effect<TurnId, SessionError>;
   readonly runWorkflow: (
     id: SessionId,
     parts: ReadonlyArray<MessagePart>,
     verificationOf?: TurnId,
     workflow?: WorkflowKind,
+    pullRequests?: ReadonlyArray<ComposerPullRequestAttachment>,
   ) => Effect.Effect<TurnId, SessionError>;
   /** Injects a Message into the running Turn without cancelling it; `NotRunning` when none runs. */
   readonly steer: (
     id: SessionId,
     parts: ReadonlyArray<MessagePart>,
+    pullRequests?: ReadonlyArray<ComposerPullRequestAttachment>,
   ) => Effect.Effect<void, SessionError>;
   /** Lines a Message up in the Queue; with no Turn running it starts one at once. */
   readonly enqueue: (
     id: SessionId,
     parts: ReadonlyArray<MessagePart>,
+    pullRequests?: ReadonlyArray<ComposerPullRequestAttachment>,
   ) => Effect.Effect<void, SessionError>;
   /**
    * Lines up a Message another Session sent (`from`), as the Composer would: says whether it started a Turn at once
@@ -627,6 +640,118 @@ export const layerSessions = Layer.effect(
     const remembered = yield* Remembered;
     const deleteQueue = yield* DeleteQueue;
     const browserService = yield* BrowserService;
+    const prService = Option.getOrUndefined(yield* Effect.serviceOption(PullRequestsService));
+    const execFileAsync = promisify(execFile);
+    const inspectWorktreeHead = (
+      cwd: string,
+    ): Promise<{ headSha: string | null; clean: boolean }> =>
+      Promise.all([
+        execFileAsync('git', ['rev-parse', 'HEAD'], { cwd, timeout: 5_000, windowsHide: true })
+          .then((r) => r.stdout.trim())
+          .catch(() => null),
+        execFileAsync('git', ['status', '--porcelain'], { cwd, timeout: 5_000, windowsHide: true })
+          .then((r) => r.stdout.trim().length === 0)
+          .catch(() => false),
+      ]).then(([headSha, clean]) => ({ headSha, clean }));
+
+    const resolvePullRequestParts = Effect.fnUntraced(function* (
+      session: LiveSession,
+      pullRequests: ReadonlyArray<ComposerPullRequestAttachment> | undefined,
+    ): Effect.fn.Return<ReadonlyArray<PullRequestPart>, SessionError> {
+      if (pullRequests === undefined || pullRequests.length === 0) return [];
+      if (prService === undefined) {
+        return yield* new SessionError({
+          reason: 'PullRequestUnavailable',
+          detail: 'Pull request service is unavailable.',
+        });
+      }
+      const seen = new Set<string>();
+      const unique: ComposerPullRequestAttachment[] = [];
+      for (const att of pullRequests) {
+        const key = composerPullRequestAttachmentKey(att);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        unique.push(att);
+        if (unique.length >= MAX_COMPOSER_PULL_REQUESTS) break;
+      }
+
+      const needsWorktreeHead = unique.some((att) => att.kind === 'pullRequest');
+      const worktreeHead = needsWorktreeHead
+        ? yield* Effect.promise(() => inspectWorktreeHead(session.meta.cwd))
+        : { headSha: null, clean: false };
+
+      const parts: PullRequestPart[] = [];
+      for (const att of unique) {
+        const inputs = yield* prService
+          .getSnapshotInputs(session.meta.projectId, att.ref.number, att.kind !== 'checkRun')
+          .pipe(
+            Effect.mapError(
+              (err) =>
+                new SessionError({
+                  reason: 'PullRequestUnavailable',
+                  detail: err.detail,
+                }),
+            ),
+          );
+        const { detail, diff, isCachedFallback, fetchedAt } = inputs;
+        const isWorktreeAtHeadCleanly =
+          worktreeHead.clean && worktreeHead.headSha === detail.headSha;
+
+        let workerInput: FormatPrSnapshotInput;
+        if (att.kind === 'reviewThread' && att.threadId !== undefined) {
+          workerInput = {
+            kind: 'reviewThread',
+            detail,
+            ...(diff === undefined ? {} : { diff }),
+            threadId: att.threadId,
+            ...(isCachedFallback ? { cachedFallbackFetchedAt: fetchedAt } : {}),
+          };
+        } else if (att.kind === 'checkRun' && att.checkId !== undefined) {
+          workerInput = {
+            kind: 'checkRun',
+            detail,
+            checkId: att.checkId,
+            ...(isCachedFallback ? { cachedFallbackFetchedAt: fetchedAt } : {}),
+          };
+        } else {
+          workerInput = {
+            kind: 'pullRequest',
+            detail,
+            ...(diff === undefined ? {} : { diff }),
+            isWorktreeAtHeadCleanly,
+            ...(isCachedFallback ? { cachedFallbackFetchedAt: fetchedAt } : {}),
+          };
+        }
+
+        const snapshot = yield* Effect.tryPromise({
+          try: () => runPrWorkerTask<string>({ kind: 'formatPrSnapshot', input: workerInput }),
+          catch: (err) =>
+            new SessionError({
+              reason: 'PullRequestUnavailable',
+              detail: err instanceof Error ? err.message : String(err),
+            }),
+        });
+
+        parts.push({
+          _tag: 'pullRequest',
+          kind: att.kind,
+          ref: att.ref,
+          title: detail.title,
+          state: detail.state,
+          headSha: detail.headSha,
+          url: detail.url,
+          ...(att.threadId === undefined ? {} : { threadId: att.threadId }),
+          ...(att.path === undefined ? {} : { path: att.path }),
+          ...(att.line === undefined ? {} : { line: att.line }),
+          ...(att.checkId === undefined ? {} : { checkId: att.checkId }),
+          ...(att.checkName === undefined ? {} : { checkName: att.checkName }),
+          snapshot,
+          ...(isCachedFallback ? { isCachedFallback: true } : {}),
+          fetchedAt,
+        });
+      }
+      return parts;
+    });
     const delegation = yield* makeDelegationServer;
     const browserMcp = yield* makeBrowserMcpServer;
     const runDelegation = yield* FiberSet.makeRuntimePromise();
@@ -2820,10 +2945,11 @@ export const layerSessions = Layer.effect(
 
     const prompt = Effect.fn('Sessions.prompt')(function* (
       id: SessionId,
-      parts: ReadonlyArray<MessagePart>,
+      rawParts: ReadonlyArray<MessagePart>,
       from?: MessageSender,
       workflowRun?: WorkflowRun,
       coordinated?: MessageId,
+      pullRequests?: ReadonlyArray<ComposerPullRequestAttachment>,
     ): Effect.fn.Return<TurnId, SessionError> {
       const session = yield* lookup(id);
       if (isNativeWorker(session.meta)) {
@@ -2840,6 +2966,8 @@ export const layerSessions = Layer.effect(
           detail: 'Start with empty context or prepare a summary handoff before sending',
         });
       }
+      const prParts = yield* resolvePullRequestParts(session, pullRequests);
+      const parts = prParts.length === 0 ? rawParts : [...rawParts, ...prParts];
       const workflow = workflowRoles.get(id);
       const busy = yield* Effect.sync(() => {
         if (
@@ -3222,11 +3350,14 @@ export const layerSessions = Layer.effect(
 
     const runWorkflow = Effect.fn('Sessions.runWorkflow')(function* (
       id: SessionId,
-      submitted: ReadonlyArray<MessagePart>,
+      rawSubmitted: ReadonlyArray<MessagePart>,
       verificationOf?: TurnId,
       workflow: WorkflowKind = 'coordinate',
+      pullRequests?: ReadonlyArray<ComposerPullRequestAttachment>,
     ) {
       const parent = yield* lookup(id);
+      const prParts = yield* resolvePullRequestParts(parent, pullRequests);
+      const submitted = prParts.length === 0 ? rawSubmitted : [...rawSubmitted, ...prParts];
       const turnId = TurnId.make(randomUUID());
       const originalTurnId = verificationOf ?? turnId;
       const { coordinator, divideAndConquer } = yield* settings.get;
@@ -4034,7 +4165,8 @@ export const layerSessions = Layer.effect(
 
     const steer = Effect.fn('Sessions.steer')(function* (
       id: SessionId,
-      parts: ReadonlyArray<MessagePart>,
+      rawParts: ReadonlyArray<MessagePart>,
+      pullRequests?: ReadonlyArray<ComposerPullRequestAttachment>,
     ): Effect.fn.Return<void, SessionError> {
       const session = yield* lookup(id);
       return yield* session.steeringLock(
@@ -4053,6 +4185,8 @@ export const layerSessions = Layer.effect(
               detail: `${session.agent.name} cannot steer a running Turn`,
             });
           }
+          const prParts = yield* resolvePullRequestParts(session, pullRequests);
+          const parts = prParts.length === 0 ? rawParts : [...rawParts, ...prParts];
           // Steer supersedes a pending Permission request: it is answered cancelled, then the Message redirects.
           yield* cancelPermissions(session);
           const toSessionError = (error: AcpError): SessionError =>
@@ -4172,10 +4306,13 @@ export const layerSessions = Layer.effect(
     /** Lines a Message up in the Queue; says whether it started a Turn at once or is still waiting. */
     const enqueueMessage = Effect.fn('Sessions.enqueueMessage')(function* (
       id: SessionId,
-      parts: ReadonlyArray<MessagePart>,
+      rawParts: ReadonlyArray<MessagePart>,
       from?: MessageSender,
+      pullRequests?: ReadonlyArray<ComposerPullRequestAttachment>,
     ): Effect.fn.Return<'started' | 'queued', SessionError> {
       const session = yield* lookup(id);
+      const prParts = yield* resolvePullRequestParts(session, pullRequests);
+      const parts = prParts.length === 0 ? rawParts : [...rawParts, ...prParts];
       const item: QueuedMessage = {
         id: MessageId.make(randomUUID()),
         parts,
@@ -4188,8 +4325,11 @@ export const layerSessions = Layer.effect(
       return session.queue.some((queued) => queued.id === item.id) ? 'queued' : 'started';
     });
 
-    const enqueue = (id: SessionId, parts: ReadonlyArray<MessagePart>) =>
-      enqueueMessage(id, parts).pipe(Effect.asVoid);
+    const enqueue = (
+      id: SessionId,
+      parts: ReadonlyArray<MessagePart>,
+      pullRequests?: ReadonlyArray<ComposerPullRequestAttachment>,
+    ) => enqueueMessage(id, parts, undefined, pullRequests).pipe(Effect.asVoid);
 
     const sessionTitle = (session: LiveSession): string => displayTitle(session.state.title);
 
@@ -6656,7 +6796,8 @@ export const layerSessions = Layer.effect(
       folderOf,
       isDraft,
       setDraftFolder,
-      prompt,
+      prompt: (id, parts, from, pullRequests) =>
+        prompt(id, parts, from, undefined, undefined, pullRequests),
       runWorkflow,
       steer,
       enqueue,

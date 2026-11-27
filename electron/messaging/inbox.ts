@@ -72,6 +72,7 @@ const fromSessionError = (error: SessionError): MessagingError => {
     case 'AgentNotInstalled':
     case 'AgentNeedsLogin':
     case 'AgentCantStart':
+    case 'PullRequestUnavailable':
       return new MessagingError({ reason: 'Unavailable', detail: error.detail });
     case 'Busy':
     case 'NotRunning':

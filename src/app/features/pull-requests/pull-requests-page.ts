@@ -17,9 +17,11 @@ import type { ProjectId } from '../../../shared/projects/projects.rpc';
 import {
   PullRequestNumber,
   type CheckRollupStatus,
+  type CheckRun,
   type ProjectPullRequestsState,
   type PullRequestDetail,
   type PullRequestSummary,
+  type ReviewThread,
 } from '../../../shared/pull-requests/pull-requests.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
@@ -444,8 +446,14 @@ type DetailLoadState =
                           [detail]="loaded.value"
                           [diffState]="diffLoad()"
                           [renderClient]="renderClient"
+                          [selectedThreadId]="prState.selectedThreadId()"
+                          [selectedCheckId]="prState.selectedCheckId()"
                           (retryDiff)="reloadDiffOnly()"
                           (openLink)="openExternal($event)"
+                          (referencePr)="referencePrInSession(loaded.value)"
+                          (startSession)="startSessionFromPr(loaded.value)"
+                          (referenceThread)="referenceThreadInSession(loaded.value, $event)"
+                          (referenceCheck)="referenceCheckInSession(loaded.value, $event)"
                         />
                       }
                     }
@@ -727,6 +735,62 @@ export class PullRequestsPage {
     void this.runtime.run(
       DesktopApi.use((api) => api['Links.openExternal']({ url })).pipe(Effect.ignore),
     );
+  }
+
+  protected referencePrInSession(detail: PullRequestDetail): void {
+    const pid = this.projectId();
+    if (pid === null) return;
+    this.prState.referenceInSession({
+      kind: 'pullRequest',
+      projectId: pid,
+      ref: detail.ref,
+      title: detail.title,
+      state: detail.state,
+      headSha: detail.headSha,
+      url: detail.url,
+    });
+  }
+
+  protected referenceThreadInSession(detail: PullRequestDetail, thread: ReviewThread): void {
+    const pid = this.projectId();
+    if (pid === null) return;
+    this.prState.referenceInSession({
+      kind: 'reviewThread',
+      projectId: pid,
+      ref: detail.ref,
+      title: detail.title,
+      state: detail.state,
+      headSha: detail.headSha,
+      url: detail.url,
+      threadId: thread.id,
+      path: thread.path,
+      line: thread.line,
+    });
+  }
+
+  protected referenceCheckInSession(detail: PullRequestDetail, check: CheckRun): void {
+    const pid = this.projectId();
+    if (pid === null) return;
+    this.prState.referenceInSession({
+      kind: 'checkRun',
+      projectId: pid,
+      ref: detail.ref,
+      title: detail.title,
+      state: detail.state,
+      headSha: detail.headSha,
+      url: detail.url,
+      checkId: check.id,
+      checkName: check.name,
+      checkUrl: check.url,
+    });
+  }
+
+  protected startSessionFromPr(detail: PullRequestDetail): void {
+    const pid = this.projectId();
+    if (pid === null) return;
+    const state = this.projectState();
+    const targetRemoteName = state?._tag === 'Available' ? state.targetRemoteName : 'origin';
+    this.prState.startSessionFromPr(pid, detail, targetRemoteName);
   }
 
   protected rollupDotClass(rollup: CheckRollupStatus): string {

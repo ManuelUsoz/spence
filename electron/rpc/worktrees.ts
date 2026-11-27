@@ -7,12 +7,12 @@ import { layerSessionsLive } from './sessions';
 /** Unbound: needs `Worktrees`, so a test Device can serve it over its own Sessions. */
 export const layerWorktreesHandlersWith = WorktreesRpcs.toLayer({
   'Worktrees.list': ({ sessionId }) => Worktrees.use((worktrees) => worktrees.list(sessionId)),
-  'Worktrees.prepareDraft': ({ sessionId, branch, base }) =>
-    Worktrees.use((worktrees) => worktrees.prepareDraft(sessionId, branch, base)),
-  'Worktrees.prepareDraftStream': ({ sessionId, branch, base, setupCommand }) =>
+  'Worktrees.prepareDraft': ({ sessionId, branch, base, prRef }) =>
+    Worktrees.use((worktrees) => worktrees.prepareDraft(sessionId, branch, base, prRef)),
+  'Worktrees.prepareDraftStream': ({ sessionId, branch, base, setupCommand, prRef }) =>
     Stream.unwrap(
       Worktrees.use((worktrees) =>
-        Effect.succeed(worktrees.prepareDraftStream(sessionId, branch, base, setupCommand)),
+        Effect.succeed(worktrees.prepareDraftStream(sessionId, branch, base, setupCommand, prRef)),
       ),
     ),
 });

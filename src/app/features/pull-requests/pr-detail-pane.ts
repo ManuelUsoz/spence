@@ -13,8 +13,11 @@ import { MarkdownView, type MarkdownBlock } from '@ui/markdown';
 import { isAllowedExternalUrl } from '../../../shared/links/link-policy';
 import type {
   CheckRun,
+  CheckRunId,
   PullRequestDetail,
   PullRequestDiff,
+  ReviewThread,
+  ReviewThreadId,
 } from '../../../shared/pull-requests/pull-requests.rpc';
 import { PrDiffView } from './pr-diff-view';
 import type { PrRenderClient } from './pr-render-client';
@@ -88,17 +91,41 @@ export type DiffLoadState =
           </div>
         </div>
 
-        <button
-          hlmBtn
-          type="button"
-          variant="outline"
-          size="sm"
-          data-testid="pr-open-external"
-          (click)="openLink.emit(detail().url)"
-          i18n
-        >
-          Open in GitHub
-        </button>
+        <div class="flex shrink-0 flex-wrap items-center gap-2">
+          <button
+            hlmBtn
+            type="button"
+            variant="default"
+            size="sm"
+            data-testid="pr-start-session"
+            (click)="startSession.emit()"
+            i18n
+          >
+            Start Session
+          </button>
+          <button
+            hlmBtn
+            type="button"
+            variant="outline"
+            size="sm"
+            data-testid="pr-reference-in-session"
+            (click)="referencePr.emit()"
+            i18n
+          >
+            Reference in Session
+          </button>
+          <button
+            hlmBtn
+            type="button"
+            variant="outline"
+            size="sm"
+            data-testid="pr-open-external"
+            (click)="openLink.emit(detail().url)"
+            i18n
+          >
+            Open in GitHub
+          </button>
+        </div>
       </div>
 
       <!-- Metadata grid -->
@@ -215,6 +242,17 @@ export type DiffLoadState =
                     }
                   </div>
                   <div class="flex shrink-0 items-center gap-2">
+                    @if (isFailingCheck(check)) {
+                      <button
+                        type="button"
+                        class="text-muted-foreground hover:text-foreground text-xs underline underline-offset-2"
+                        [attr.data-testid]="'pr-check-reference-' + check.id"
+                        (click)="referenceCheck.emit(check)"
+                        i18n
+                      >
+                        Reference in Session
+                      </button>
+                    }
                     @if (check.summary) {
                       <button
                         type="button"
@@ -327,19 +365,30 @@ export type DiffLoadState =
                 class="border-border/60 bg-card space-y-2 rounded-lg border p-3.5 text-sm"
                 [attr.data-testid]="'pr-review-thread-' + thread.id"
               >
-                <div class="flex flex-wrap items-center gap-2 text-xs">
-                  <span class="font-mono text-xs">
-                    {{ thread.path }}
-                    @if (thread.line !== null) {
-                      :{{ thread.line }}
+                <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="font-mono text-xs">
+                      {{ thread.path }}
+                      @if (thread.line !== null) {
+                        :{{ thread.line }}
+                      }
+                    </span>
+                    @if (thread.isOutdated) {
+                      <span hlmBadge variant="outline" class="text-[10px]" i18n>Outdated</span>
                     }
-                  </span>
-                  @if (thread.isOutdated) {
-                    <span hlmBadge variant="outline" class="text-[10px]" i18n>Outdated</span>
-                  }
-                  <span hlmBadge variant="secondary" class="text-[10px]">
-                    {{ thread.isResolved ? resolvedLabel : unresolvedLabel }}
-                  </span>
+                    <span hlmBadge variant="secondary" class="text-[10px]">
+                      {{ thread.isResolved ? resolvedLabel : unresolvedLabel }}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    class="text-muted-foreground hover:text-foreground text-xs underline underline-offset-2"
+                    [attr.data-testid]="'pr-thread-reference-' + thread.id"
+                    (click)="referenceThread.emit(thread)"
+                    i18n
+                  >
+                    Reference in Session
+                  </button>
                 </div>
                 <div class="space-y-2">
                   @for (comment of thread.comments; track comment.id) {
@@ -426,8 +475,14 @@ export class PrDetailPane {
   readonly detail = input.required<PullRequestDetail>();
   readonly diffState = input.required<DiffLoadState>();
   readonly renderClient = input.required<PrRenderClient>();
+  readonly selectedThreadId = input<ReviewThreadId | null>(null);
+  readonly selectedCheckId = input<CheckRunId | null>(null);
   readonly retryDiff = output<void>();
   readonly openLink = output<string>();
+  readonly referencePr = output<void>();
+  readonly startSession = output<void>();
+  readonly referenceThread = output<ReviewThread>();
+  readonly referenceCheck = output<CheckRun>();
 
   protected readonly checksExpanded = signal(false);
   private readonly expandedCheckIds = signal<ReadonlySet<string>>(new Set());
@@ -449,15 +504,17 @@ export class PrDetailPane {
   protected readonly isNonBlockingCheck = isNonBlockingCheck;
   protected readonly isAllowedLink = isAllowedExternalUrl;
 
+  protected isFailingCheck(check: CheckRun): boolean {
+    return (
+      check.conclusion === 'failure' ||
+      check.conclusion === 'timedOut' ||
+      check.conclusion === 'startupFailure' ||
+      check.conclusion === 'actionRequired'
+    );
+  }
+
   protected readonly failingCheckCount = computed(
-    () =>
-      this.detail().checks.filter(
-        (c) =>
-          c.conclusion === 'failure' ||
-          c.conclusion === 'timedOut' ||
-          c.conclusion === 'startupFailure' ||
-          c.conclusion === 'actionRequired',
-      ).length,
+    () => this.detail().checks.filter((c) => this.isFailingCheck(c)).length,
   );
 
   protected readonly pendingCheckCount = computed(
@@ -466,6 +523,14 @@ export class PrDetailPane {
   );
 
   constructor() {
+    effect(() => {
+      const checkId = this.selectedCheckId();
+      if (checkId !== null) {
+        this.checksExpanded.set(true);
+        this.expandedCheckIds.update((prev) => new Set([...prev, checkId]));
+      }
+    });
+
     effect(() => {
       const d = this.detail();
       const client = this.renderClient();

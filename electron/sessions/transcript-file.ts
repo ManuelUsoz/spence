@@ -10,6 +10,7 @@ import {
   Notice,
   PermissionRequest,
   Plan,
+  PullRequestPart,
   Step,
   StepDelta,
   TextContents,
@@ -41,6 +42,7 @@ const StoredPart = Schema.Union([
   StoredImagePart,
   StoredAudioPart,
   StoredResourcePart,
+  PullRequestPart,
 ]);
 type StoredPart = typeof StoredPart.Type;
 
@@ -85,6 +87,7 @@ const storePart =
     switch (part._tag) {
       case 'text':
       case 'link':
+      case 'pullRequest':
         return Effect.succeed(part);
       case 'image':
       case 'audio':
@@ -107,6 +110,7 @@ const inlinePart =
     switch (part._tag) {
       case 'text':
       case 'link':
+      case 'pullRequest':
         return Effect.succeed(part);
       case 'image':
       case 'audio':

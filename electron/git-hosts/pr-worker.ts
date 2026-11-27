@@ -11,10 +11,13 @@ import {
   type HostActor,
   type PrDiffHunk,
   type PrDiffLine,
+  type PullRequestDetail,
+  type PullRequestDiff,
   type PullRequestDiffFile,
   type ReviewComment,
   type ReviewThread,
 } from '../../src/shared/pull-requests/pull-requests.rpc';
+import type { Timestamp } from '../../src/shared/projects/projects.rpc';
 
 export interface DiffParseOptions {
   readonly maxFileLines?: number;
@@ -438,6 +441,242 @@ export const normalizeReviewThreads = (
   return threads;
 };
 
+export type FormatPrSnapshotInput =
+  | {
+      readonly kind: 'pullRequest';
+      readonly detail: PullRequestDetail;
+      readonly diff?: PullRequestDiff;
+      readonly isWorktreeAtHeadCleanly: boolean;
+      readonly cachedFallbackFetchedAt?: Timestamp;
+    }
+  | {
+      readonly kind: 'reviewThread';
+      readonly detail: PullRequestDetail;
+      readonly diff?: PullRequestDiff;
+      readonly threadId: ReviewThreadId;
+      readonly cachedFallbackFetchedAt?: Timestamp;
+    }
+  | {
+      readonly kind: 'checkRun';
+      readonly detail: PullRequestDetail;
+      readonly checkId: CheckRunId;
+      readonly cachedFallbackFetchedAt?: Timestamp;
+    };
+
+const MAX_BODY_BYTES = 8 * 1024;
+const MAX_PATCH_BYTES = 24 * 1024;
+const MAX_CHECK_SUMMARY_BYTES = 16 * 1024;
+const MAX_FAILING_PENDING_CHECKS = 20;
+const MAX_UNRESOLVED_THREADS = 25;
+const MAX_GENERAL_COMMENTS = 15;
+const MAX_DIFF_FILES = 100;
+
+const capUtf8Bytes = (text: string, maxBytes: number, suffix = '\n[truncated]'): string => {
+  const buf = Buffer.from(text, 'utf8');
+  if (buf.byteLength <= maxBytes) return text;
+  const suffixBytes = Buffer.byteLength(suffix, 'utf8');
+  let end = Math.max(0, maxBytes - suffixBytes);
+  while (end > 0 && ((buf[end] ?? 0) & 0xc0) === 0x80) end -= 1;
+  return `${buf.subarray(0, end).toString('utf8')}${suffix}`;
+};
+
+const formatHunk = (hunk: PrDiffHunk): string => {
+  const lines = [hunk.header];
+  for (const line of hunk.lines) {
+    const prefix = line.kind === 'added' ? '+' : line.kind === 'removed' ? '-' : ' ';
+    lines.push(`${prefix}${line.content}`);
+  }
+  return lines.join('\n');
+};
+
+const formatPrHeader = (detail: PullRequestDetail, includeFullMetadata: boolean): string[] => {
+  const headLabel = detail.headRepo
+    ? `${detail.headRepo.canonicalPath}:${detail.headRef}`
+    : detail.headRef;
+  const lines = [
+    `PR #${detail.ref.number}: ${detail.title}`,
+    `State: ${detail.state} | URL: ${detail.url}`,
+    `Branches: ${headLabel} -> ${detail.baseRef} | headSha: ${detail.headSha}`,
+  ];
+  if (includeFullMetadata) {
+    const labels = detail.labels.map((l) => l.name).join(', ') || 'none';
+    lines.push(
+      `Author: @${detail.author.login} | Merge state: ${detail.mergeState} | Review: ${detail.reviewDecision} | Labels: ${labels}`,
+    );
+  }
+  return lines;
+};
+
+const isFailingOrPendingCheck = (check: CheckRun): boolean => {
+  if (check.status !== 'completed') return true;
+  return (
+    check.conclusion === 'failure' ||
+    check.conclusion === 'timedOut' ||
+    check.conclusion === 'cancelled' ||
+    check.conclusion === 'actionRequired' ||
+    check.conclusion === 'startupFailure'
+  );
+};
+
+export const formatPrSnapshot = (input: FormatPrSnapshotInput): string => {
+  const { detail } = input;
+  const sections: string[] = [];
+
+  if (input.cachedFallbackFetchedAt !== undefined) {
+    sections.push(
+      `[cached snapshot · fetched at ${new Date(input.cachedFallbackFetchedAt).toISOString()}; offline/unreachable]`,
+    );
+  }
+
+  if (input.kind === 'pullRequest') {
+    const header = formatPrHeader(detail, true);
+    header.push(`HEAD === headSha cleanly: ${input.isWorktreeAtHeadCleanly ? 'yes' : 'no'}`);
+    sections.push(header.join('\n'));
+
+    const bodyText =
+      detail.body.trim().length > 0 ? capUtf8Bytes(detail.body, MAX_BODY_BYTES) : '(empty)';
+    sections.push(`## Description\n${bodyText}`);
+
+    const failingOrPending = detail.checks.filter(isFailingOrPendingCheck);
+    const checkLines = [
+      `## Checks (${detail.checkRollup}; ${detail.checks.length} total, ${failingOrPending.length} failing/pending)`,
+    ];
+    for (const check of failingOrPending.slice(0, MAX_FAILING_PENDING_CHECKS)) {
+      const conclusion = check.conclusion ?? 'pending';
+      const url = check.url ? ` (${check.url})` : '';
+      checkLines.push(`- ${check.name}: ${check.status}/${conclusion}${url}`);
+    }
+    if (failingOrPending.length > MAX_FAILING_PENDING_CHECKS) {
+      checkLines.push(`... (${failingOrPending.length - MAX_FAILING_PENDING_CHECKS} more)`);
+    }
+    sections.push(checkLines.join('\n'));
+
+    const unresolved = detail.reviewThreads.filter((t) => !t.isResolved);
+    const resolvedCount = detail.reviewThreads.length - unresolved.length;
+    const threadLines = [
+      `## Review threads (${unresolved.length} unresolved; Resolved threads: ${resolvedCount})`,
+    ];
+    for (const thread of unresolved.slice(0, MAX_UNRESOLVED_THREADS)) {
+      const loc =
+        thread.startLine !== null && thread.line !== null
+          ? `${thread.path}:${thread.startLine}-${thread.line}`
+          : thread.line !== null
+            ? `${thread.path}:${thread.line}`
+            : thread.path;
+      threadLines.push(`### ${loc}${thread.isOutdated ? ' [outdated]' : ''}`);
+      for (const c of thread.comments) {
+        threadLines.push(`- @${c.author.login}: ${c.body}`);
+      }
+    }
+    if (unresolved.length > MAX_UNRESOLVED_THREADS) {
+      threadLines.push(
+        `... (${unresolved.length - MAX_UNRESOLVED_THREADS} more unresolved threads)`,
+      );
+    }
+    sections.push(threadLines.join('\n'));
+
+    const recentComments = detail.comments.slice(-MAX_GENERAL_COMMENTS);
+    if (recentComments.length > 0) {
+      const commentLines = [
+        `## Recent comments (${recentComments.length} of ${detail.comments.length})`,
+      ];
+      for (const c of recentComments) {
+        commentLines.push(`- @${c.author.login}: ${c.body}`);
+      }
+      sections.push(commentLines.join('\n'));
+    }
+
+    if (input.diff && input.diff.files.length > 0) {
+      const files = input.diff.files.slice(0, MAX_DIFF_FILES);
+      const fileLines = [`## Changed files (${files.length} of ${input.diff.files.length})`];
+      for (const f of files) {
+        fileLines.push(`- ${f.path} (${f.status}, +${f.additions} -${f.deletions})`);
+      }
+      sections.push(fileLines.join('\n'));
+
+      if (!input.isWorktreeAtHeadCleanly) {
+        const patchParts: string[] = ['## Diff patches'];
+        let usedBytes = 0;
+        for (const f of files) {
+          if (f.truncated || f.hunks.length === 0) continue;
+          const filePatch = `--- ${f.path}\n${f.hunks.map(formatHunk).join('\n')}`;
+          const nextBytes = Buffer.byteLength(filePatch, 'utf8');
+          if (usedBytes + nextBytes > MAX_PATCH_BYTES) {
+            const remaining = MAX_PATCH_BYTES - usedBytes;
+            if (remaining > 64) {
+              patchParts.push(capUtf8Bytes(filePatch, remaining));
+            } else {
+              patchParts.push('[patches truncated at 24 KB]');
+            }
+            break;
+          }
+          patchParts.push(filePatch);
+          usedBytes += nextBytes;
+        }
+        if (patchParts.length > 1) {
+          sections.push(patchParts.join('\n'));
+        }
+      }
+    }
+
+    return sections.join('\n\n');
+  }
+
+  if (input.kind === 'reviewThread') {
+    sections.push(formatPrHeader(detail, false).join('\n'));
+    const thread = detail.reviewThreads.find((t) => t.id === input.threadId);
+    if (!thread) {
+      sections.push(`Review thread ${input.threadId} not found.`);
+      return sections.join('\n\n');
+    }
+    const loc =
+      thread.startLine !== null && thread.line !== null
+        ? `${thread.path}:${thread.startLine}-${thread.line}`
+        : thread.line !== null
+          ? `${thread.path}:${thread.line}`
+          : thread.path;
+    const status = `${thread.isResolved ? 'resolved' : 'unresolved'}${thread.isOutdated ? ', outdated' : ''}`;
+    const threadLines = [`## Review thread: ${loc} (${status})`];
+    const diffFile = input.diff?.files.find((f) => f.path === thread.path);
+    if (diffFile) {
+      const targetLine = thread.line ?? thread.startLine;
+      const matchingHunk =
+        (targetLine !== null
+          ? diffFile.hunks.find(
+              (h) =>
+                h.lines.some((l) => l.newLine === targetLine || l.oldLine === targetLine) ||
+                (targetLine >= h.newStart && targetLine <= h.newStart + h.newLines),
+            )
+          : undefined) ?? diffFile.hunks[0];
+      if (matchingHunk) {
+        threadLines.push('```diff', formatHunk(matchingHunk), '```');
+      }
+    }
+    for (const c of thread.comments) {
+      threadLines.push(`- @${c.author.login}: ${c.body}`);
+    }
+    sections.push(threadLines.join('\n'));
+    return sections.join('\n\n');
+  }
+
+  // kind === 'checkRun'
+  sections.push(formatPrHeader(detail, false).join('\n'));
+  const check = detail.checks.find((c) => c.id === input.checkId);
+  if (!check) {
+    sections.push(`Check run ${input.checkId} not found (rollup: ${detail.checkRollup}).`);
+    return sections.join('\n\n');
+  }
+  const checkLines = [
+    `## Check run: ${check.name} (rollup: ${detail.checkRollup})`,
+    `Status: ${check.status} | Conclusion: ${check.conclusion ?? 'none'}${check.url ? ` | URL: ${check.url}` : ''}`,
+  ];
+  if (check.summary && check.summary.trim().length > 0) {
+    checkLines.push(`### Summary\n${capUtf8Bytes(check.summary, MAX_CHECK_SUMMARY_BYTES)}`);
+  }
+  sections.push(checkLines.join('\n'));
+  return sections.join('\n\n');
+};
+
 export type PrWorkerTaskInput =
   | {
       readonly kind: 'parseDiff';
@@ -451,6 +690,10 @@ export type PrWorkerTaskInput =
   | {
       readonly kind: 'normalizeReviewThreads';
       readonly nodes: ReadonlyArray<RawReviewThreadNode | null | undefined>;
+    }
+  | {
+      readonly kind: 'formatPrSnapshot';
+      readonly input: FormatPrSnapshotInput;
     };
 
 export type PrWorkerTask = PrWorkerTaskInput & { readonly id: number };
@@ -473,6 +716,9 @@ if (!isMainThread && parentPort !== null) {
           break;
         case 'normalizeReviewThreads':
           result = normalizeReviewThreads(task.nodes);
+          break;
+        case 'formatPrSnapshot':
+          result = formatPrSnapshot(task.input);
           break;
       }
       const response: PrWorkerResponse = { id: task.id, ok: true, result };
@@ -504,6 +750,8 @@ export const runPrWorkerTask = <A>(task: PrWorkerTaskInput): Promise<A> => {
         return Promise.resolve(normalizeStatusCheckRollup(task.nodes) as A);
       case 'normalizeReviewThreads':
         return Promise.resolve(normalizeReviewThreads(task.nodes) as A);
+      case 'formatPrSnapshot':
+        return Promise.resolve(formatPrSnapshot(task.input) as A);
     }
   }
 
