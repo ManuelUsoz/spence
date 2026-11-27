@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from '@effect/vitest';
+import { Effect } from 'effect';
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -23,53 +24,69 @@ const initRepo = async (): Promise<string> => {
 };
 
 describe('detectPrTemplate', () => {
-  it('returns null when no template exists', async () => {
-    const dir = await initRepo();
-    try {
-      expect(await detectPrTemplate(dir)).toBeNull();
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
+  it.effect('returns null when no template exists', () =>
+    Effect.gen(function* () {
+      const dir = yield* Effect.promise(() => initRepo());
+      try {
+        expect(yield* detectPrTemplate(dir)).toBeNull();
+      } finally {
+        yield* Effect.promise(() => rm(dir, { recursive: true, force: true }));
+      }
+    }),
+  );
 
-  it('loads .github/PULL_REQUEST_TEMPLATE.md case-insensitively and prefers .github over root and docs', async () => {
-    const dir = await initRepo();
-    try {
-      await mkdir(path.join(dir, 'docs'), { recursive: true });
-      await writeFile(path.join(dir, 'docs', 'pull_request_template.md'), 'docs template\n');
-      await git(dir, 'add', '.');
-      await git(dir, 'commit', '-m', 'add docs template');
-      expect(await detectPrTemplate(dir)).toBe('docs template');
+  it.effect(
+    'loads .github/PULL_REQUEST_TEMPLATE.md case-insensitively and prefers .github over root and docs',
+    () =>
+      Effect.gen(function* () {
+        const dir = yield* Effect.promise(() => initRepo());
+        try {
+          yield* Effect.promise(() => mkdir(path.join(dir, 'docs'), { recursive: true }));
+          yield* Effect.promise(() =>
+            writeFile(path.join(dir, 'docs', 'pull_request_template.md'), 'docs template\n'),
+          );
+          yield* Effect.promise(() => git(dir, 'add', '.'));
+          yield* Effect.promise(() => git(dir, 'commit', '-m', 'add docs template'));
+          expect(yield* detectPrTemplate(dir)).toBe('docs template');
 
-      await writeFile(path.join(dir, 'PULL_REQUEST_TEMPLATE.md'), 'root template\n');
-      await git(dir, 'add', '.');
-      await git(dir, 'commit', '-m', 'add root template');
-      expect(await detectPrTemplate(dir)).toBe('root template');
+          yield* Effect.promise(() =>
+            writeFile(path.join(dir, 'PULL_REQUEST_TEMPLATE.md'), 'root template\n'),
+          );
+          yield* Effect.promise(() => git(dir, 'add', '.'));
+          yield* Effect.promise(() => git(dir, 'commit', '-m', 'add root template'));
+          expect(yield* detectPrTemplate(dir)).toBe('root template');
 
-      await mkdir(path.join(dir, '.github'), { recursive: true });
-      await writeFile(path.join(dir, '.github', 'PULL_REQUEST_TEMPLATE.md'), 'github template\n');
-      await git(dir, 'add', '.');
-      await git(dir, 'commit', '-m', 'add github template');
-      expect(await detectPrTemplate(dir)).toBe('github template');
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
+          yield* Effect.promise(() => mkdir(path.join(dir, '.github'), { recursive: true }));
+          yield* Effect.promise(() =>
+            writeFile(path.join(dir, '.github', 'PULL_REQUEST_TEMPLATE.md'), 'github template\n'),
+          );
+          yield* Effect.promise(() => git(dir, 'add', '.'));
+          yield* Effect.promise(() => git(dir, 'commit', '-m', 'add github template'));
+          expect(yield* detectPrTemplate(dir)).toBe('github template');
+        } finally {
+          yield* Effect.promise(() => rm(dir, { recursive: true, force: true }));
+        }
+      }),
+  );
 
-  it('caps templates at 8 KB and appends [truncated]', async () => {
-    const dir = await initRepo();
-    try {
-      await mkdir(path.join(dir, '.github'), { recursive: true });
-      await writeFile(path.join(dir, '.github', 'pull_request_template.md'), 'a'.repeat(12_000));
-      await git(dir, 'add', '.');
-      await git(dir, 'commit', '-m', 'add large template');
+  it.effect('caps templates at 8 KB and appends [truncated]', () =>
+    Effect.gen(function* () {
+      const dir = yield* Effect.promise(() => initRepo());
+      try {
+        yield* Effect.promise(() => mkdir(path.join(dir, '.github'), { recursive: true }));
+        yield* Effect.promise(() =>
+          writeFile(path.join(dir, '.github', 'pull_request_template.md'), 'a'.repeat(12_000)),
+        );
+        yield* Effect.promise(() => git(dir, 'add', '.'));
+        yield* Effect.promise(() => git(dir, 'commit', '-m', 'add large template'));
 
-      const tpl = await detectPrTemplate(dir);
-      expect(tpl).not.toBeNull();
-      expect(tpl?.endsWith('[truncated]')).toBe(true);
-      expect((tpl ?? '').length).toBeLessThan(8_500);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
+        const tpl = yield* detectPrTemplate(dir);
+        expect(tpl).not.toBeNull();
+        expect(tpl?.endsWith('[truncated]')).toBe(true);
+        expect((tpl ?? '').length).toBeLessThan(8_500);
+      } finally {
+        yield* Effect.promise(() => rm(dir, { recursive: true, force: true }));
+      }
+    }),
+  );
 });

@@ -2,6 +2,7 @@ import { DestroyRef, Injectable, InjectionToken, inject, signal, type Type } fro
 import { Effect, Stream } from 'effect';
 import type { ProjectId } from '../../shared/projects/projects.rpc';
 import type {
+  CheckRollupStatus,
   CheckRunId,
   ProjectPullRequestsState,
   PullRequestNumber,
@@ -15,6 +16,20 @@ import { EffectRuntime } from './effect-runtime';
 
 const normalizePath = (p: string): string =>
   p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+
+/** Maps a PR check rollup status to its theme-token indicator dot class. */
+export const checkRollupDotClass = (status: CheckRollupStatus): string => {
+  switch (status) {
+    case 'passing':
+      return 'bg-diff-add';
+    case 'failing':
+      return 'bg-destructive';
+    case 'pending':
+      return 'bg-attention';
+    case 'none':
+      return 'bg-muted-foreground/40';
+  }
+};
 
 /** Injection token for the dedicated Pull requests page component, avoiding shell -> feature imports. */
 export const PULL_REQUESTS_PAGE_VIEW = new InjectionToken<Type<unknown> | null>(

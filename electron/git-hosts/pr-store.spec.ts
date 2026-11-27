@@ -82,57 +82,54 @@ const makeDiff = (num: number): PullRequestDiff => ({
   files: [],
 });
 
-const withTempPrStore = async <A>(
+const withTempPrStore = <A>(
   run: (root: string) => Effect.Effect<A, never, PrStore>,
-): Promise<A> => {
-  const root = await mkdtemp(path.join(tmpdir(), 'spence-pr-store-'));
-  try {
-    const layer = layerPrStore.pipe(Layer.provide(layerStore(root)));
-    return await Effect.runPromise(run(root).pipe(Effect.provide(layer)));
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-};
+): Effect.Effect<A> =>
+  Effect.acquireUseRelease(
+    Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-pr-store-'))),
+    (root) => run(root).pipe(Effect.provide(layerPrStore.pipe(Layer.provide(layerStore(root))))),
+    (root) => Effect.promise(() => rm(root, { recursive: true, force: true })),
+  );
 
 describe('PrStore', () => {
-  it('persists summaries.json across restarts while stripping session-only #number pins', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'spence-pr-store-restart-'));
-    const projectId = ProjectId.make('proj-1');
-    try {
-      const layer1 = layerPrStore.pipe(Layer.provide(layerStore(root)));
-      await Effect.runPromise(
-        Effect.gen(function* () {
-          const prStore = yield* PrStore;
-          yield* prStore.saveSummaries(projectId, {
-            repo,
-            targetRemoteName: 'origin',
-            headRemoteName: 'origin',
-            capabilities,
-            lastSyncedAt: 5_000,
-            summaries: [makeSummary(1), makeSummary(99, { isPinned: true })],
-            worktreeLinks: {},
-          });
-        }).pipe(Effect.provide(layer1)),
-      );
+  it.effect(
+    'persists summaries.json across restarts while stripping session-only #number pins',
+    () =>
+      Effect.acquireUseRelease(
+        Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-pr-store-restart-'))),
+        (root) =>
+          Effect.gen(function* () {
+            const projectId = ProjectId.make('proj-1');
+            const layer1 = layerPrStore.pipe(Layer.provide(layerStore(root)));
+            yield* Effect.gen(function* () {
+              const prStore = yield* PrStore;
+              yield* prStore.saveSummaries(projectId, {
+                repo,
+                targetRemoteName: 'origin',
+                headRemoteName: 'origin',
+                capabilities,
+                lastSyncedAt: 5_000,
+                summaries: [makeSummary(1), makeSummary(99, { isPinned: true })],
+                worktreeLinks: {},
+              });
+            }).pipe(Effect.provide(layer1));
 
-      // Fresh PrStore instance reading from the same Store root
-      const layer2 = layerPrStore.pipe(Layer.provide(layerStore(root)));
-      const loaded = await Effect.runPromise(
-        Effect.gen(function* () {
-          const prStore = yield* PrStore;
-          return yield* prStore.loadSummaries(projectId);
-        }).pipe(Effect.provide(layer2)),
-      );
+            // Fresh PrStore instance reading from the same Store root
+            const layer2 = layerPrStore.pipe(Layer.provide(layerStore(root)));
+            const loaded = yield* Effect.gen(function* () {
+              const prStore = yield* PrStore;
+              return yield* prStore.loadSummaries(projectId);
+            }).pipe(Effect.provide(layer2));
 
-      expect(loaded).not.toBeNull();
-      expect(loaded?.summaries.map((s) => s.ref.number)).toEqual([1]);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
+            expect(loaded).not.toBeNull();
+            expect(loaded?.summaries.map((s) => s.ref.number)).toEqual([1]);
+          }),
+        (root) => Effect.promise(() => rm(root, { recursive: true, force: true })),
+      ),
+  );
 
-  it('caps details-lru.json at 20 most recently viewed PR details', async () => {
-    await withTempPrStore((root) =>
+  it.effect('caps details-lru.json at 20 most recently viewed PR details', () =>
+    withTempPrStore((root) =>
       Effect.gen(function* () {
         const prStore = yield* PrStore;
         const projectId = ProjectId.make('proj-lru');
@@ -162,11 +159,11 @@ describe('PrStore', () => {
 
         expect(countOnDisk).toEqual({ has6: true, has5: false });
       }),
-    );
-  });
+    ),
+  );
 
-  it('keeps diffs in a 15-item memory-only LRU and never writes them to disk', async () => {
-    await withTempPrStore((root) =>
+  it.effect('keeps diffs in a 15-item memory-only LRU and never writes them to disk', () =>
+    withTempPrStore((root) =>
       Effect.gen(function* () {
         const prStore = yield* PrStore;
         const projectId = ProjectId.make('proj-diff');
@@ -185,49 +182,51 @@ describe('PrStore', () => {
         ).not.toBeNull();
         expect(existsSync(path.join(root, 'pull-requests', 'projects', 'proj-diff'))).toBe(false);
       }),
-    );
-  });
+    ),
+  );
 
-  it('evicts project directory and in-memory state on evictProject and wipes all on evictAll', async () => {
-    await withTempPrStore((root) =>
-      Effect.gen(function* () {
-        const prStore = yield* PrStore;
-        const p1 = ProjectId.make('proj-a');
-        const p2 = ProjectId.make('proj-b');
+  it.effect(
+    'evicts project directory and in-memory state on evictProject and wipes all on evictAll',
+    () =>
+      withTempPrStore((root) =>
+        Effect.gen(function* () {
+          const prStore = yield* PrStore;
+          const p1 = ProjectId.make('proj-a');
+          const p2 = ProjectId.make('proj-b');
 
-        yield* prStore.saveSummaries(p1, {
-          repo,
-          targetRemoteName: 'origin',
-          headRemoteName: 'origin',
-          capabilities,
-          lastSyncedAt: 1_000,
-          summaries: [makeSummary(1)],
-          worktreeLinks: {},
-        });
-        yield* prStore.saveDetail(p1, makeDetail(1));
-        yield* prStore.putDiff(p1, makeDiff(1));
+          yield* prStore.saveSummaries(p1, {
+            repo,
+            targetRemoteName: 'origin',
+            headRemoteName: 'origin',
+            capabilities,
+            lastSyncedAt: 1_000,
+            summaries: [makeSummary(1)],
+            worktreeLinks: {},
+          });
+          yield* prStore.saveDetail(p1, makeDetail(1));
+          yield* prStore.putDiff(p1, makeDiff(1));
 
-        yield* prStore.saveSummaries(p2, {
-          repo,
-          targetRemoteName: 'origin',
-          headRemoteName: 'origin',
-          capabilities,
-          lastSyncedAt: 2_000,
-          summaries: [makeSummary(2)],
-          worktreeLinks: {},
-        });
+          yield* prStore.saveSummaries(p2, {
+            repo,
+            targetRemoteName: 'origin',
+            headRemoteName: 'origin',
+            capabilities,
+            lastSyncedAt: 2_000,
+            summaries: [makeSummary(2)],
+            worktreeLinks: {},
+          });
 
-        yield* prStore.evictProject(p1);
-        expect(existsSync(path.join(root, 'pull-requests', 'projects', 'proj-a'))).toBe(false);
-        expect(yield* prStore.loadSummaries(p1)).toBeNull();
-        expect(yield* prStore.getDetail(p1, PullRequestNumber.make(1))).toBeNull();
-        expect(yield* prStore.getDiff(p1, PullRequestNumber.make(1), 'sha-1')).toBeNull();
-        expect(existsSync(path.join(root, 'pull-requests', 'projects', 'proj-b'))).toBe(true);
+          yield* prStore.evictProject(p1);
+          expect(existsSync(path.join(root, 'pull-requests', 'projects', 'proj-a'))).toBe(false);
+          expect(yield* prStore.loadSummaries(p1)).toBeNull();
+          expect(yield* prStore.getDetail(p1, PullRequestNumber.make(1))).toBeNull();
+          expect(yield* prStore.getDiff(p1, PullRequestNumber.make(1), 'sha-1')).toBeNull();
+          expect(existsSync(path.join(root, 'pull-requests', 'projects', 'proj-b'))).toBe(true);
 
-        yield* prStore.evictAll();
-        expect(existsSync(path.join(root, 'pull-requests'))).toBe(false);
-        expect(yield* prStore.loadSummaries(p2)).toBeNull();
-      }),
-    );
-  });
+          yield* prStore.evictAll();
+          expect(existsSync(path.join(root, 'pull-requests'))).toBe(false);
+          expect(yield* prStore.loadSummaries(p2)).toBeNull();
+        }),
+      ),
+  );
 });

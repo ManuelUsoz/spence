@@ -1617,9 +1617,9 @@
         <source> Select a Pull request to inspect. </source>
         <target state="translated"> Selecciona un Pull request para inspeccionar. </target>
       </trans-unit>
-      <trans-unit id="4055420440460295506" datatype="html">
-        <source>Loading Pull request…</source>
-        <target state="translated">Cargando Pull request…</target>
+      <trans-unit id="3836497018043151420" datatype="html">
+        <source> Loading Pull request… </source>
+        <target state="translated"> Cargando Pull request… </target>
       </trans-unit>
       <trans-unit id="1841541108325449829" datatype="html">
         <source>Loading Pull requests…</source>
@@ -1661,6 +1661,10 @@
         <source>Could not update auto-merge.</source>
         <target state="translated">No se pudo actualizar la fusión automática.</target>
       </trans-unit>
+      <trans-unit id="1397293953960581138" datatype="html">
+        <source>Pull request action failed.</source>
+        <target state="translated">Falló la acción del Pull request.</target>
+      </trans-unit>
       <trans-unit id="8685173063581969521" datatype="html">
         <source>Could not update local base branch.</source>
         <target state="translated">No se pudo actualizar la rama base local.</target>
@@ -1672,10 +1676,6 @@
       <trans-unit id="8244547621025933919" datatype="html">
         <source>Could not switch to base branch.</source>
         <target state="translated">No se pudo cambiar a la rama base.</target>
-      </trans-unit>
-      <trans-unit id="1397293953960581138" datatype="html">
-        <source>Pull request action failed.</source>
-        <target state="translated">Falló la acción del Pull request.</target>
       </trans-unit>
       <trans-unit id="762864044091656147" datatype="html">
         <source>Folder not found</source>
@@ -4060,9 +4060,9 @@
         <source> Import from gh CLI </source>
         <target state="translated"> Importar desde gh CLI </target>
       </trans-unit>
-      <trans-unit id="5012961779948868354" datatype="html">
-        <source> Disconnect GitHub account? </source>
-        <target state="translated"> ¿Desconectar cuenta de GitHub? </target>
+      <trans-unit id="4866062696851192441" datatype="html">
+        <source>Disconnect GitHub account?</source>
+        <target state="translated">¿Desconectar cuenta de GitHub?</target>
       </trans-unit>
       <trans-unit id="4492621289333105725" datatype="html">
         <source> This removes <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;font-mono text-xs&quot;&gt;"/>@<x id="INTERPOLATION" equiv-text="{{ account.handle }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/> and clears cached Pull requests from this Device. </source>
@@ -4444,6 +4444,14 @@
         <source>Drafting Model</source>
         <target state="translated">Modelo de redacción</target>
       </trans-unit>
+      <trans-unit id="8317452073044533705" datatype="html">
+        <source>Update local base branch after merge</source>
+        <target state="translated">Actualizar la rama base local tras fusionar</target>
+      </trans-unit>
+      <trans-unit id="1109403635624407653" datatype="html">
+        <source>Automatically fast-forward the local base branch when a Pull request is merged.</source>
+        <target state="translated">Avanzar automáticamente en fast-forward la rama base local cuando se fusiona un Pull request.</target>
+      </trans-unit>
       <trans-unit id="8546113143996434038" datatype="html">
         <source>PR worktree branch pattern</source>
         <target state="translated">Patrón de rama de worktree de PR</target>
@@ -4459,14 +4467,6 @@
       <trans-unit id="1035993033735212935" datatype="html">
         <source>Agent is not installed.</source>
         <target state="translated">El Agente no está instalado.</target>
-      </trans-unit>
-      <trans-unit id="8317452073044533705" datatype="html">
-        <source>Update local base branch after merge</source>
-        <target state="translated">Actualizar la rama base local tras fusionar</target>
-      </trans-unit>
-      <trans-unit id="1109403635624407653" datatype="html">
-        <source>Automatically fast-forward the local base branch when a Pull request is merged.</source>
-        <target state="translated">Avanzar automáticamente en fast-forward la rama base local cuando se fusiona un Pull request.</target>
       </trans-unit>
       <trans-unit id="7292902857194439444" datatype="html">
         <source>Device</source>

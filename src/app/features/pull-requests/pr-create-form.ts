@@ -36,11 +36,11 @@ type PrepState =
   selector: 'app-pr-create-form',
   imports: [HlmButton, HlmInput, HlmSelectImports, HlmSwitch, HlmAlertDialogImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  host: { class: 'block', 'data-testid': 'pr-create-form' },
+  host: { class: 'block px-8 py-6', 'data-testid': 'pr-create-form' },
   template: `
     <div class="mx-auto max-w-2xl space-y-5">
       <div class="flex items-center justify-between gap-3">
-        <h2 class="font-display text-xl font-normal" i18n>Create Pull request</h2>
+        <h2 class="text-xl font-normal" i18n>Create Pull request</h2>
         <button
           hlmBtn
           type="button"
@@ -314,7 +314,7 @@ type PrepState =
         data-testid="pr-create-redraft-dialog"
       >
         <hlm-alert-dialog-header>
-          <h2 hlmAlertDialogTitle class="font-display text-xl font-normal" i18n>
+          <h2 hlmAlertDialogTitle class="text-lg font-medium" i18n>
             Replace edits with a fresh draft?
           </h2>
           <p hlmAlertDialogDescription i18n>

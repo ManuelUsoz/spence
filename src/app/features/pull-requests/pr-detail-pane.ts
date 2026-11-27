@@ -93,7 +93,7 @@ type ConfirmPrompt =
     PrDiffView,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  host: { class: 'block space-y-6', 'data-testid': 'pr-detail-pane' },
+  host: { class: 'block space-y-6 px-8 py-6', 'data-testid': 'pr-detail-pane' },
   template: `
     <!-- Header & Metadata -->
     <header class="border-border/60 space-y-3 border-b pb-5" data-testid="pr-detail-header">
@@ -662,7 +662,7 @@ type ConfirmPrompt =
         data-testid="pr-merge-confirm-dialog"
       >
         <hlm-alert-dialog-header>
-          <h2 hlmAlertDialogTitle class="font-display text-xl font-normal" i18n>
+          <h2 hlmAlertDialogTitle class="text-lg font-medium" i18n>
             {{ mergeMethodLabel(selectedMethod()) }} #{{ detail().ref.number }}?
           </h2>
           <p hlmAlertDialogDescription>
@@ -1225,7 +1225,7 @@ type ConfirmPrompt =
       <hlm-alert-dialog-content *hlmAlertDialogPortal="let ctx" data-testid="pr-confirm-dialog">
         @if (confirmPrompt(); as prompt) {
           <hlm-alert-dialog-header>
-            <h2 hlmAlertDialogTitle class="font-display text-xl font-normal">
+            <h2 hlmAlertDialogTitle class="text-lg font-medium">
               {{ prompt.title }}
             </h2>
             <p hlmAlertDialogDescription>{{ prompt.description }}</p>

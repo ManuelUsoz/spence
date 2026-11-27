@@ -29,7 +29,11 @@ import { DEFAULT_PULL_REQUEST_SETTINGS } from '../../../shared/settings/settings
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { prepareRejectionText, unavailableText } from '../../core/git-text';
-import { type PendingPrWorktreeStart, PullRequestsState } from '../../core/pull-requests-state';
+import {
+  type PendingPrWorktreeStart,
+  PullRequestsState,
+  checkRollupDotClass,
+} from '../../core/pull-requests-state';
 
 const loadChanges = Effect.fnUntraced(function* (sessionId: SessionId) {
   const api = yield* DesktopApi;
@@ -420,18 +424,7 @@ export class ComposerStatus {
     return state?._tag === 'Available';
   });
 
-  protected prCheckDotClass(rollup: 'pending' | 'passing' | 'failing' | 'none'): string {
-    switch (rollup) {
-      case 'passing':
-        return 'bg-diff-add';
-      case 'failing':
-        return 'bg-destructive';
-      case 'pending':
-        return 'bg-amber-500';
-      case 'none':
-        return 'bg-muted-foreground';
-    }
-  }
+  protected readonly prCheckDotClass = checkRollupDotClass;
 
   protected openPr(): void {
     const linked = this.linkedPr();

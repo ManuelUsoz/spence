@@ -20,7 +20,6 @@ import {
   GitHostError,
   PullRequestNumber,
   type AddCommentTarget,
-  type CheckRollupStatus,
   type CheckRun,
   type CommentId,
   type HostCapabilities,
@@ -40,7 +39,7 @@ import {
 } from '../../../shared/pull-requests/pull-requests.rpc';
 import { DesktopApi, type DesktopApiShape } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
-import { PullRequestsState } from '../../core/pull-requests-state';
+import { PullRequestsState, checkRollupDotClass } from '../../core/pull-requests-state';
 import { PrCreateForm } from './pr-create-form';
 import { PrDetailPane, type DiffLoadState, type PrConflictState } from './pr-detail-pane';
 import { PrRenderClient } from './pr-render-client';
@@ -75,6 +74,14 @@ type DetailLoadState =
       data-testid="pull-requests-header"
     >
       <div class="flex min-w-0 items-center gap-2">
+        @if (projectName(); as name) {
+          <span
+            class="text-foreground max-w-44 truncate text-sm font-medium"
+            data-testid="pull-requests-project-name"
+            >{{ name }}</span
+          >
+          <span class="text-border select-none" aria-hidden="true">/</span>
+        }
         <div
           class="bg-muted/60 border-border/60 flex items-center rounded-lg border p-0.5 text-xs"
           role="tablist"
@@ -405,7 +412,7 @@ type DetailLoadState =
               ← Back to Pull requests
             </button>
 
-            <div class="min-h-0 flex-1 px-8 py-6">
+            <div class="min-h-0 flex-1">
               @if (createMode()) {
                 @if (projectId(); as pid) {
                   <app-pr-create-form
@@ -416,7 +423,7 @@ type DetailLoadState =
                   />
                 }
               } @else if (selectedNumber() === null) {
-                <div class="flex h-full items-center justify-center">
+                <div class="flex h-full items-center justify-center px-8 py-6">
                   <p class="font-display text-muted-foreground text-xl font-normal" i18n>
                     Select a Pull request to inspect.
                   </p>
@@ -424,12 +431,14 @@ type DetailLoadState =
               } @else {
                 @switch (detailLoad().status) {
                   @case ('loading') {
-                    <p class="text-muted-foreground text-sm" i18n>Loading Pull request…</p>
+                    <p class="text-muted-foreground px-8 py-6 text-sm" i18n>
+                      Loading Pull request…
+                    </p>
                   }
                   @case ('failed') {
                     @if (detailLoad(); as failed) {
                       @if (failed.status === 'failed') {
-                        <div class="space-y-3" data-testid="pr-detail-error">
+                        <div class="space-y-3 px-8 py-6" data-testid="pr-detail-error">
                           <p class="text-muted-foreground text-sm">{{ failed.detail }}</p>
                           <button
                             hlmBtn
@@ -1187,16 +1196,5 @@ export class PullRequestsPage {
     );
   }
 
-  protected rollupDotClass(rollup: CheckRollupStatus): string {
-    switch (rollup) {
-      case 'passing':
-        return 'bg-diff-add';
-      case 'failing':
-        return 'bg-destructive';
-      case 'pending':
-        return 'bg-amber-500';
-      case 'none':
-        return 'bg-muted-foreground/40';
-    }
-  }
+  protected readonly rollupDotClass = checkRollupDotClass;
 }

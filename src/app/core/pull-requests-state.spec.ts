@@ -113,7 +113,7 @@ describe('PullRequestsState', () => {
     state.setActiveView({ projectId, prPageOpen: false, activePrNumber: null });
     state.loadProject(projectId);
 
-    await new Promise((r) => setTimeout(r, 20));
+    for (let i = 0; i < 6; i++) await Promise.resolve();
 
     expect(state.openCountForProject(projectId)).toBe(1);
     expect(state.linkForBranch('feat/pr-42')?.primary.ref.number).toBe(42);

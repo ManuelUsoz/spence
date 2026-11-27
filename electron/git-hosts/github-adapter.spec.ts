@@ -91,80 +91,90 @@ const makeTestLayer = (
   return Layer.mergeAll(authLayer, httpLayer, registryLayer);
 };
 
-describe('GitHubAdapter', () => {
-  it('short-circuits listForRepo on 304 Not Modified without calling GraphQL, and bypasses ETag when requested', async () => {
-    const requests: Array<{ url: string; ifNoneMatch?: string }> = [];
-    let graphqlCalls = 0;
+const withTempDir = <A, E>(
+  prefix: string,
+  use: (storeRoot: string) => Effect.Effect<A, E>,
+): Effect.Effect<A, E> =>
+  Effect.acquireUseRelease(
+    Effect.promise(() => mkdtemp(path.join(tmpdir(), prefix))),
+    use,
+    (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+  );
 
-    const storeRoot = await mkdtemp(path.join(tmpdir(), 'spence-gh-adapter-'));
-    try {
-      const layer = makeTestLayer(storeRoot, (req) => {
-        requests.push({
-          url: req.url,
-          ...(req.headers['if-none-match'] ? { ifNoneMatch: req.headers['if-none-match'] } : {}),
-        });
-        if (req.url.endsWith('/user')) {
-          return {
-            status: 200,
-            headers: { 'x-oauth-scopes': 'repo, read:org' },
-            body: { login: 'alice', name: 'Alice', avatar_url: null },
-          };
-        }
-        if (req.url.includes('/pulls?state=all')) {
-          if (req.headers['if-none-match'] === '"etag-1"') {
-            return { status: 304, headers: { etag: '"etag-1"' } };
+describe('GitHubAdapter', () => {
+  it.effect(
+    'short-circuits listForRepo on 304 Not Modified without calling GraphQL, and bypasses ETag when requested',
+    () =>
+      withTempDir('spence-gh-adapter-', (storeRoot) => {
+        const requests: Array<{ url: string; ifNoneMatch?: string }> = [];
+        let graphqlCalls = 0;
+
+        const layer = makeTestLayer(storeRoot, (req) => {
+          requests.push({
+            url: req.url,
+            ...(req.headers['if-none-match'] ? { ifNoneMatch: req.headers['if-none-match'] } : {}),
+          });
+          if (req.url.endsWith('/user')) {
+            return {
+              status: 200,
+              headers: { 'x-oauth-scopes': 'repo, read:org' },
+              body: { login: 'alice', name: 'Alice', avatar_url: null },
+            };
           }
-          return { status: 200, headers: { etag: '"etag-1"' }, body: [] };
-        }
-        if (req.url.endsWith('/graphql')) {
-          graphqlCalls += 1;
-          return {
-            status: 200,
-            body: {
-              data: {
-                repository: {
-                  pullRequests: {
-                    nodes: [
-                      {
-                        number: 42,
-                        title: 'Add feature',
-                        url: 'https://github.com/org/repo/pull/42',
-                        state: 'OPEN',
-                        isDraft: false,
-                        headRefName: 'feat/add',
-                        headRefOid: 'sha-42',
-                        baseRefName: 'main',
-                        updatedAt: '2026-11-20T12:00:00Z',
-                        isCrossRepository: false,
-                        headRepository: { nameWithOwner: 'org/repo' },
-                        reviewDecision: null,
-                        author: { login: 'alice', name: 'Alice', avatarUrl: null },
-                        comments: { totalCount: 2 },
-                        reviewThreads: { totalCount: 1 },
-                        reviewRequests: { nodes: [] },
-                        assignees: { nodes: [] },
-                        commits: {
-                          nodes: [
-                            {
-                              commit: {
-                                statusCheckRollup: { state: 'SUCCESS' },
+          if (req.url.includes('/pulls?state=all')) {
+            if (req.headers['if-none-match'] === '"etag-1"') {
+              return { status: 304, headers: { etag: '"etag-1"' } };
+            }
+            return { status: 200, headers: { etag: '"etag-1"' }, body: [] };
+          }
+          if (req.url.endsWith('/graphql')) {
+            graphqlCalls += 1;
+            return {
+              status: 200,
+              body: {
+                data: {
+                  repository: {
+                    pullRequests: {
+                      nodes: [
+                        {
+                          number: 42,
+                          title: 'Add feature',
+                          url: 'https://github.com/org/repo/pull/42',
+                          state: 'OPEN',
+                          isDraft: false,
+                          headRefName: 'feat/add',
+                          headRefOid: 'sha-42',
+                          baseRefName: 'main',
+                          updatedAt: '2026-11-20T12:00:00Z',
+                          isCrossRepository: false,
+                          headRepository: { nameWithOwner: 'org/repo' },
+                          reviewDecision: null,
+                          author: { login: 'alice', name: 'Alice', avatarUrl: null },
+                          comments: { totalCount: 2 },
+                          reviewThreads: { totalCount: 1 },
+                          reviewRequests: { nodes: [] },
+                          assignees: { nodes: [] },
+                          commits: {
+                            nodes: [
+                              {
+                                commit: {
+                                  statusCheckRollup: { state: 'SUCCESS' },
+                                },
                               },
-                            },
-                          ],
+                            ],
+                          },
                         },
-                      },
-                    ],
+                      ],
+                    },
                   },
                 },
               },
-            },
-          };
-        }
-        return { status: 404, body: { message: 'Not found' } };
-      });
+            };
+          }
+          return { status: 404, body: { message: 'Not found' } };
+        });
 
-      await Effect.runPromise(
-        Effect.gen(function* () {
+        return Effect.gen(function* () {
           const auth = yield* HostAuth;
           const registry = yield* GitHostRegistry;
           yield* auth.connectPat('github', 'ghp_test', 'secure');
@@ -189,18 +199,13 @@ describe('GitHubAdapter', () => {
           const third = yield* host.listForRepo({ repo, bypassEtag: true });
           expect(third.notModified).toBe(false);
           expect(graphqlCalls).toBe(2);
-        }).pipe(Effect.provide(layer)),
-      );
-    } finally {
-      await rm(storeRoot, { recursive: true, force: true });
-    }
-  });
+        }).pipe(Effect.provide(layer));
+      }),
+  );
 
-  it('checks pull and check-runs ETags for getDetail when checkPending is true', async () => {
-    let graphqlDetailCalls = 0;
-
-    const storeRoot = await mkdtemp(path.join(tmpdir(), 'spence-gh-adapter-'));
-    try {
+  it.effect('checks pull and check-runs ETags for getDetail when checkPending is true', () =>
+    withTempDir('spence-gh-adapter-', (storeRoot) => {
+      let graphqlDetailCalls = 0;
       const layer = makeTestLayer(storeRoot, (req) => {
         if (req.url.endsWith('/user')) {
           return {
@@ -301,132 +306,132 @@ describe('GitHubAdapter', () => {
         return { status: 404, body: {} };
       });
 
-      await Effect.runPromise(
-        Effect.gen(function* () {
-          const auth = yield* HostAuth;
-          const registry = yield* GitHostRegistry;
-          yield* auth.connectPat('github', 'ghp_test', 'secure');
-          const host = yield* registry.get('github');
-          const num = PullRequestNumber.make(7);
+      return Effect.gen(function* () {
+        const auth = yield* HostAuth;
+        const registry = yield* GitHostRegistry;
+        yield* auth.connectPat('github', 'ghp_test', 'secure');
+        const host = yield* registry.get('github');
+        const num = PullRequestNumber.make(7);
 
-          // Initial open (bypassEtag: true)
-          const first = yield* host.getDetail({ repo, number: num, bypassEtag: true });
-          expect(first.notModified).toBe(false);
-          expect(graphqlDetailCalls).toBe(1);
+        // Initial open (bypassEtag: true)
+        const first = yield* host.getDetail({ repo, number: num, bypassEtag: true });
+        expect(first.notModified).toBe(false);
+        expect(graphqlDetailCalls).toBe(1);
 
-          // Poll 1: primes REST ETags -> 200 -> calls GraphQL
-          const poll1 = yield* host.getDetail({ repo, number: num, checkPending: true });
-          expect(poll1.notModified).toBe(false);
-          expect(graphqlDetailCalls).toBe(2);
+        // Poll 1: primes REST ETags -> 200 -> calls GraphQL
+        const poll1 = yield* host.getDetail({ repo, number: num, checkPending: true });
+        expect(poll1.notModified).toBe(false);
+        expect(graphqlDetailCalls).toBe(2);
 
-          // Poll 2: both PR and check-runs return 304 -> notModified: true, 0 GraphQL calls
-          const poll2 = yield* host.getDetail({ repo, number: num, checkPending: true });
-          expect(poll2.notModified).toBe(true);
-          expect(graphqlDetailCalls).toBe(2);
-        }).pipe(Effect.provide(layer)),
-      );
-    } finally {
-      await rm(storeRoot, { recursive: true, force: true });
-    }
-  });
+        // Poll 2: both PR and check-runs return 304 -> notModified: true, 0 GraphQL calls
+        const poll2 = yield* host.getDetail({ repo, number: num, checkPending: true });
+        expect(poll2.notModified).toBe(true);
+        expect(graphqlDetailCalls).toBe(2);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
 
-  it('updates PR metadata (title, body, baseRef, draft, reviewers, assignees, labels, milestone) via GraphQL and REST', async () => {
-    const ops: Array<{ readonly kind: string; readonly payload: unknown }> = [];
-    const storeRoot = await mkdtemp(path.join(tmpdir(), 'spence-gh-update-'));
-    try {
-      const layer = makeTestLayer(storeRoot, (req) => {
-        if (req.url.endsWith('/user')) {
-          return {
-            status: 200,
-            headers: { 'x-oauth-scopes': 'repo, read:org' },
-            body: { login: 'alice', name: 'Alice', avatar_url: null },
-          };
-        }
-        if (req.url.endsWith('/issues/7') && req.method === 'PATCH') {
-          ops.push({ kind: 'patch-issue', payload: JSON.parse(req.bodyText) });
-          return { status: 200, body: {} };
-        }
-        if (req.url.endsWith('/pulls/7/requested_reviewers') && req.method === 'POST') {
-          ops.push({ kind: 'add-reviewers', payload: JSON.parse(req.bodyText) });
-          return { status: 201, body: {} };
-        }
-        if (req.url.endsWith('/pulls/7/requested_reviewers') && req.method === 'DELETE') {
-          ops.push({ kind: 'remove-reviewers', payload: JSON.parse(req.bodyText) });
-          return { status: 200, body: {} };
-        }
-        if (req.url.endsWith('/graphql')) {
-          const parsed = JSON.parse(req.bodyText) as { query: string; variables: unknown };
-          if (parsed.query.includes('UpdatePullRequest(')) {
-            ops.push({ kind: 'gql-update-pr', payload: parsed.variables });
+  it.effect(
+    'updates PR metadata (title, body, baseRef, draft, reviewers, assignees, labels, milestone) via GraphQL and REST',
+    () =>
+      withTempDir('spence-gh-update-', (storeRoot) => {
+        const ops: Array<{ readonly kind: string; readonly payload: unknown }> = [];
+        const layer = makeTestLayer(storeRoot, (req) => {
+          if (req.url.endsWith('/user')) {
             return {
               status: 200,
-              body: { data: { updatePullRequest: { pullRequest: { id: 'PR_7' } } } },
+              headers: { 'x-oauth-scopes': 'repo, read:org' },
+              body: { login: 'alice', name: 'Alice', avatar_url: null },
             };
           }
-          if (parsed.query.includes('ConvertPullRequestToDraft(')) {
-            ops.push({ kind: 'gql-to-draft', payload: parsed.variables });
-            return {
-              status: 200,
-              body: { data: { convertPullRequestToDraft: { pullRequest: { id: 'PR_7' } } } },
-            };
+          if (req.url.endsWith('/issues/7') && req.method === 'PATCH') {
+            ops.push({ kind: 'patch-issue', payload: JSON.parse(req.bodyText) });
+            return { status: 200, body: {} };
           }
-          if (parsed.query.includes('PullRequestDetail(')) {
-            return {
-              status: 200,
-              body: {
-                data: {
-                  repository: {
-                    mergeCommitAllowed: true,
-                    squashMergeAllowed: true,
-                    rebaseMergeAllowed: true,
-                    viewerPermission: 'WRITE',
-                    labels: { nodes: [{ name: 'bug', color: 'd73a4a', description: null }] },
-                    milestones: { nodes: [{ id: 'MS_2', number: 2, title: 'v2.0', dueOn: null }] },
-                    assignableUsers: { nodes: [{ login: 'bob', name: 'Bob', avatarUrl: null }] },
-                    pullRequest: {
-                      id: 'PR_7',
-                      number: 7,
-                      title: 'Updated title',
-                      url: 'https://github.com/org/repo/pull/7',
-                      body: 'Updated body',
-                      state: 'OPEN',
-                      isDraft: true,
-                      headRefName: 'feat/x',
-                      headRefOid: 'sha-7',
-                      baseRefName: 'develop',
-                      updatedAt: '2026-01-01T00:05:00.000Z',
-                      isCrossRepository: false,
-                      headRepository: { nameWithOwner: 'org/repo' },
-                      mergeStateStatus: 'CLEAN',
-                      autoMergeRequest: null,
-                      reviewDecision: 'REVIEW_REQUIRED',
-                      viewerCanUpdate: true,
-                      viewerDidAuthor: true,
-                      author: { login: 'alice', name: 'Alice', avatarUrl: null },
+          if (req.url.endsWith('/pulls/7/requested_reviewers') && req.method === 'POST') {
+            ops.push({ kind: 'add-reviewers', payload: JSON.parse(req.bodyText) });
+            return { status: 201, body: {} };
+          }
+          if (req.url.endsWith('/pulls/7/requested_reviewers') && req.method === 'DELETE') {
+            ops.push({ kind: 'remove-reviewers', payload: JSON.parse(req.bodyText) });
+            return { status: 200, body: {} };
+          }
+          if (req.url.endsWith('/graphql')) {
+            const parsed = JSON.parse(req.bodyText) as { query: string; variables: unknown };
+            if (parsed.query.includes('UpdatePullRequest(')) {
+              ops.push({ kind: 'gql-update-pr', payload: parsed.variables });
+              return {
+                status: 200,
+                body: { data: { updatePullRequest: { pullRequest: { id: 'PR_7' } } } },
+              };
+            }
+            if (parsed.query.includes('ConvertPullRequestToDraft(')) {
+              ops.push({ kind: 'gql-to-draft', payload: parsed.variables });
+              return {
+                status: 200,
+                body: { data: { convertPullRequestToDraft: { pullRequest: { id: 'PR_7' } } } },
+              };
+            }
+            if (parsed.query.includes('PullRequestDetail(')) {
+              return {
+                status: 200,
+                body: {
+                  data: {
+                    repository: {
+                      mergeCommitAllowed: true,
+                      squashMergeAllowed: true,
+                      rebaseMergeAllowed: true,
+                      viewerPermission: 'WRITE',
                       labels: { nodes: [{ name: 'bug', color: 'd73a4a', description: null }] },
-                      reviewRequests: {
-                        nodes: [
-                          { requestedReviewer: { login: 'carol', name: 'Carol', avatarUrl: null } },
-                        ],
+                      milestones: {
+                        nodes: [{ id: 'MS_2', number: 2, title: 'v2.0', dueOn: null }],
                       },
-                      assignees: { nodes: [{ login: 'bob', name: 'Bob', avatarUrl: null }] },
-                      milestone: { id: 'MS_2', number: 2, title: 'v2.0', dueOn: null },
-                      comments: { totalCount: 0, nodes: [] },
-                      reviewThreads: { totalCount: 0, nodes: [] },
-                      reviews: { nodes: [] },
-                      commits: { nodes: [] },
+                      assignableUsers: { nodes: [{ login: 'bob', name: 'Bob', avatarUrl: null }] },
+                      pullRequest: {
+                        id: 'PR_7',
+                        number: 7,
+                        title: 'Updated title',
+                        url: 'https://github.com/org/repo/pull/7',
+                        body: 'Updated body',
+                        state: 'OPEN',
+                        isDraft: true,
+                        headRefName: 'feat/x',
+                        headRefOid: 'sha-7',
+                        baseRefName: 'develop',
+                        updatedAt: '2026-01-01T00:05:00.000Z',
+                        isCrossRepository: false,
+                        headRepository: { nameWithOwner: 'org/repo' },
+                        mergeStateStatus: 'CLEAN',
+                        autoMergeRequest: null,
+                        reviewDecision: 'REVIEW_REQUIRED',
+                        viewerCanUpdate: true,
+                        viewerDidAuthor: true,
+                        author: { login: 'alice', name: 'Alice', avatarUrl: null },
+                        labels: { nodes: [{ name: 'bug', color: 'd73a4a', description: null }] },
+                        reviewRequests: {
+                          nodes: [
+                            {
+                              requestedReviewer: { login: 'carol', name: 'Carol', avatarUrl: null },
+                            },
+                          ],
+                        },
+                        assignees: { nodes: [{ login: 'bob', name: 'Bob', avatarUrl: null }] },
+                        milestone: { id: 'MS_2', number: 2, title: 'v2.0', dueOn: null },
+                        comments: { totalCount: 0, nodes: [] },
+                        reviewThreads: { totalCount: 0, nodes: [] },
+                        reviews: { nodes: [] },
+                        commits: { nodes: [] },
+                      },
                     },
                   },
                 },
-              },
-            };
+              };
+            }
           }
-        }
-        return { status: 404, body: {} };
-      });
+          return { status: 404, body: {} };
+        });
 
-      await Effect.runPromise(
-        Effect.gen(function* () {
+        return Effect.gen(function* () {
           const auth = yield* HostAuth;
           const registry = yield* GitHostRegistry;
           yield* auth.connectPat('github', 'ghp_test', 'secure');
@@ -462,213 +467,215 @@ describe('GitHubAdapter', () => {
           expect(ops.map((o) => o.kind)).toContain('patch-issue');
           expect(ops.map((o) => o.kind)).toContain('add-reviewers');
           expect(ops.map((o) => o.kind)).toContain('remove-reviewers');
-        }).pipe(Effect.provide(layer)),
-      );
-    } finally {
-      await rm(storeRoot, { recursive: true, force: true });
-    }
-  });
+        }).pipe(Effect.provide(layer));
+      }),
+  );
 
-  it('handles comments (general, thread reply, pending/immediate diff line), reviews (own-PR & empty guards), and thread resolution', async () => {
-    const mutations: Array<{ readonly op: string; readonly variables: Record<string, unknown> }> =
-      [];
-    let viewerDidAuthor = false;
-    let hasPendingReview = false;
-    let pendingHasInlineComments = false;
-    let threadResolved = false;
+  it.effect(
+    'handles comments (general, thread reply, pending/immediate diff line), reviews (own-PR & empty guards), and thread resolution',
+    () =>
+      withTempDir('spence-gh-reviews-', (storeRoot) => {
+        const mutations: Array<{
+          readonly op: string;
+          readonly variables: Record<string, unknown>;
+        }> = [];
+        let viewerDidAuthor = false;
+        let hasPendingReview = false;
+        let pendingHasInlineComments = false;
+        let threadResolved = false;
 
-    const storeRoot = await mkdtemp(path.join(tmpdir(), 'spence-gh-reviews-'));
-    try {
-      const layer = makeTestLayer(storeRoot, (req) => {
-        if (req.url.endsWith('/user')) {
-          return {
-            status: 200,
-            headers: { 'x-oauth-scopes': 'repo, read:org' },
-            body: { login: 'alice', name: 'Alice', avatar_url: null },
-          };
-        }
-        if (req.url.endsWith('/graphql')) {
-          const parsed = JSON.parse(req.bodyText) as {
-            query: string;
-            variables: Record<string, unknown>;
-          };
-          if (parsed.query.includes('PullRequestNodeId(')) {
-            return { status: 200, body: { data: { repository: { pullRequest: { id: 'PR_7' } } } } };
-          }
-          if (parsed.query.includes('AddComment(')) {
-            mutations.push({ op: 'AddComment', variables: parsed.variables });
-            return { status: 200, body: { data: { addComment: { clientMutationId: '1' } } } };
-          }
-          if (parsed.query.includes('AddReviewThreadReply(')) {
-            mutations.push({ op: 'AddReviewThreadReply', variables: parsed.variables });
+        const layer = makeTestLayer(storeRoot, (req) => {
+          if (req.url.endsWith('/user')) {
             return {
               status: 200,
-              body: { data: { addPullRequestReviewThreadReply: { comment: { id: 'RC_1' } } } },
+              headers: { 'x-oauth-scopes': 'repo, read:org' },
+              body: { login: 'alice', name: 'Alice', avatar_url: null },
             };
           }
-          if (parsed.query.includes('AddPullRequestReview(')) {
-            mutations.push({ op: 'AddPullRequestReview', variables: parsed.variables });
-            return {
-              status: 200,
-              body: { data: { addPullRequestReview: { pullRequestReview: { id: 'REV_NEW' } } } },
+          if (req.url.endsWith('/graphql')) {
+            const parsed = JSON.parse(req.bodyText) as {
+              query: string;
+              variables: Record<string, unknown>;
             };
-          }
-          if (parsed.query.includes('AddPullRequestReviewThread(')) {
-            mutations.push({ op: 'AddPullRequestReviewThread', variables: parsed.variables });
-            return {
-              status: 200,
-              body: { data: { addPullRequestReviewThread: { thread: { id: 'THR_NEW' } } } },
-            };
-          }
-          if (parsed.query.includes('UpdateIssueComment(')) {
-            mutations.push({ op: 'UpdateIssueComment', variables: parsed.variables });
-            return {
-              status: 200,
-              body: { data: { updateIssueComment: { issueComment: { id: 'IC_1' } } } },
-            };
-          }
-          if (parsed.query.includes('DeleteReviewComment(')) {
-            mutations.push({ op: 'DeleteReviewComment', variables: parsed.variables });
-            return {
-              status: 200,
-              body: {
-                data: {
-                  deletePullRequestReviewComment: { pullRequestReviewComment: { id: 'RC_1' } },
+            if (parsed.query.includes('PullRequestNodeId(')) {
+              return {
+                status: 200,
+                body: { data: { repository: { pullRequest: { id: 'PR_7' } } } },
+              };
+            }
+            if (parsed.query.includes('AddComment(')) {
+              mutations.push({ op: 'AddComment', variables: parsed.variables });
+              return { status: 200, body: { data: { addComment: { clientMutationId: '1' } } } };
+            }
+            if (parsed.query.includes('AddReviewThreadReply(')) {
+              mutations.push({ op: 'AddReviewThreadReply', variables: parsed.variables });
+              return {
+                status: 200,
+                body: { data: { addPullRequestReviewThreadReply: { comment: { id: 'RC_1' } } } },
+              };
+            }
+            if (parsed.query.includes('AddPullRequestReview(')) {
+              mutations.push({ op: 'AddPullRequestReview', variables: parsed.variables });
+              return {
+                status: 200,
+                body: { data: { addPullRequestReview: { pullRequestReview: { id: 'REV_NEW' } } } },
+              };
+            }
+            if (parsed.query.includes('AddPullRequestReviewThread(')) {
+              mutations.push({ op: 'AddPullRequestReviewThread', variables: parsed.variables });
+              return {
+                status: 200,
+                body: { data: { addPullRequestReviewThread: { thread: { id: 'THR_NEW' } } } },
+              };
+            }
+            if (parsed.query.includes('UpdateIssueComment(')) {
+              mutations.push({ op: 'UpdateIssueComment', variables: parsed.variables });
+              return {
+                status: 200,
+                body: { data: { updateIssueComment: { issueComment: { id: 'IC_1' } } } },
+              };
+            }
+            if (parsed.query.includes('DeleteReviewComment(')) {
+              mutations.push({ op: 'DeleteReviewComment', variables: parsed.variables });
+              return {
+                status: 200,
+                body: {
+                  data: {
+                    deletePullRequestReviewComment: { pullRequestReviewComment: { id: 'RC_1' } },
+                  },
                 },
-              },
-            };
-          }
-          if (parsed.query.includes('SubmitPullRequestReview(')) {
-            mutations.push({ op: 'SubmitPullRequestReview', variables: parsed.variables });
-            return {
-              status: 200,
-              body: {
-                data: { submitPullRequestReview: { pullRequestReview: { id: 'REV_PENDING' } } },
-              },
-            };
-          }
-          if (parsed.query.includes('DeletePullRequestReview(')) {
-            mutations.push({ op: 'DeletePullRequestReview', variables: parsed.variables });
-            return {
-              status: 200,
-              body: {
-                data: { deletePullRequestReview: { pullRequestReview: { id: 'REV_PENDING' } } },
-              },
-            };
-          }
-          if (parsed.query.includes('ResolveReviewThread(')) {
-            threadResolved = true;
-            mutations.push({ op: 'ResolveReviewThread', variables: parsed.variables });
-            return {
-              status: 200,
-              body: { data: { resolveReviewThread: { thread: { isResolved: true } } } },
-            };
-          }
-          if (parsed.query.includes('UnresolveReviewThread(')) {
-            threadResolved = false;
-            mutations.push({ op: 'UnresolveReviewThread', variables: parsed.variables });
-            return {
-              status: 200,
-              body: { data: { unresolveReviewThread: { thread: { isResolved: false } } } },
-            };
-          }
-          if (parsed.query.includes('PullRequestDetail(')) {
-            return {
-              status: 200,
-              body: {
-                data: {
-                  repository: {
-                    mergeCommitAllowed: true,
-                    squashMergeAllowed: true,
-                    rebaseMergeAllowed: true,
-                    viewerPermission: 'WRITE',
-                    labels: { nodes: [] },
-                    milestones: { nodes: [] },
-                    assignableUsers: { nodes: [] },
-                    pullRequest: {
-                      id: 'PR_7',
-                      number: 7,
-                      title: 'PR 7',
-                      url: 'https://github.com/org/repo/pull/7',
-                      body: '',
-                      state: 'OPEN',
-                      isDraft: false,
-                      headRefName: 'feat/x',
-                      headRefOid: 'sha-7',
-                      baseRefName: 'main',
-                      updatedAt: '2026-01-01T00:00:00.000Z',
-                      isCrossRepository: false,
-                      headRepository: { nameWithOwner: 'org/repo' },
-                      mergeStateStatus: 'CLEAN',
-                      autoMergeRequest: null,
-                      reviewDecision: 'REVIEW_REQUIRED',
-                      viewerCanUpdate: true,
-                      viewerDidAuthor,
-                      author: {
-                        login: viewerDidAuthor ? 'alice' : 'bob',
-                        name: null,
-                        avatarUrl: null,
-                      },
+              };
+            }
+            if (parsed.query.includes('SubmitPullRequestReview(')) {
+              mutations.push({ op: 'SubmitPullRequestReview', variables: parsed.variables });
+              return {
+                status: 200,
+                body: {
+                  data: { submitPullRequestReview: { pullRequestReview: { id: 'REV_PENDING' } } },
+                },
+              };
+            }
+            if (parsed.query.includes('DeletePullRequestReview(')) {
+              mutations.push({ op: 'DeletePullRequestReview', variables: parsed.variables });
+              return {
+                status: 200,
+                body: {
+                  data: { deletePullRequestReview: { pullRequestReview: { id: 'REV_PENDING' } } },
+                },
+              };
+            }
+            if (parsed.query.includes('ResolveReviewThread(')) {
+              threadResolved = true;
+              mutations.push({ op: 'ResolveReviewThread', variables: parsed.variables });
+              return {
+                status: 200,
+                body: { data: { resolveReviewThread: { thread: { isResolved: true } } } },
+              };
+            }
+            if (parsed.query.includes('UnresolveReviewThread(')) {
+              threadResolved = false;
+              mutations.push({ op: 'UnresolveReviewThread', variables: parsed.variables });
+              return {
+                status: 200,
+                body: { data: { unresolveReviewThread: { thread: { isResolved: false } } } },
+              };
+            }
+            if (parsed.query.includes('PullRequestDetail(')) {
+              return {
+                status: 200,
+                body: {
+                  data: {
+                    repository: {
+                      mergeCommitAllowed: true,
+                      squashMergeAllowed: true,
+                      rebaseMergeAllowed: true,
+                      viewerPermission: 'WRITE',
                       labels: { nodes: [] },
-                      reviewRequests: { nodes: [] },
-                      assignees: { nodes: [] },
-                      milestone: null,
-                      comments: { totalCount: 0, nodes: [] },
-                      reviews: {
-                        nodes: hasPendingReview
-                          ? [
-                              {
-                                id: 'REV_PENDING',
-                                state: 'PENDING',
-                                body: '',
-                                submittedAt: null,
-                                author: { login: 'alice', name: 'Alice', avatarUrl: null },
+                      milestones: { nodes: [] },
+                      assignableUsers: { nodes: [] },
+                      pullRequest: {
+                        id: 'PR_7',
+                        number: 7,
+                        title: 'PR 7',
+                        url: 'https://github.com/org/repo/pull/7',
+                        body: '',
+                        state: 'OPEN',
+                        isDraft: false,
+                        headRefName: 'feat/x',
+                        headRefOid: 'sha-7',
+                        baseRefName: 'main',
+                        updatedAt: '2026-01-01T00:00:00.000Z',
+                        isCrossRepository: false,
+                        headRepository: { nameWithOwner: 'org/repo' },
+                        mergeStateStatus: 'CLEAN',
+                        autoMergeRequest: null,
+                        reviewDecision: 'REVIEW_REQUIRED',
+                        viewerCanUpdate: true,
+                        viewerDidAuthor,
+                        author: {
+                          login: viewerDidAuthor ? 'alice' : 'bob',
+                          name: null,
+                          avatarUrl: null,
+                        },
+                        labels: { nodes: [] },
+                        reviewRequests: { nodes: [] },
+                        assignees: { nodes: [] },
+                        milestone: null,
+                        comments: { totalCount: 0, nodes: [] },
+                        reviews: {
+                          nodes: hasPendingReview
+                            ? [
+                                {
+                                  id: 'REV_PENDING',
+                                  state: 'PENDING',
+                                  body: '',
+                                  submittedAt: null,
+                                  author: { login: 'alice', name: 'Alice', avatarUrl: null },
+                                },
+                              ]
+                            : [],
+                        },
+                        reviewThreads: {
+                          totalCount: 1,
+                          nodes: [
+                            {
+                              id: 'THR_1',
+                              path: 'src/a.ts',
+                              line: 10,
+                              startLine: null,
+                              diffSide: 'RIGHT',
+                              isResolved: threadResolved,
+                              isOutdated: false,
+                              comments: {
+                                nodes: pendingHasInlineComments
+                                  ? [
+                                      {
+                                        id: 'RC_P1',
+                                        body: 'pending note',
+                                        createdAt: '2026-01-01T00:00:00.000Z',
+                                        updatedAt: '2026-01-01T00:00:00.000Z',
+                                        url: 'https://github.com/org/repo/pull/7#r1',
+                                        pullRequestReview: { id: 'REV_PENDING' },
+                                        author: { login: 'alice', name: 'Alice', avatarUrl: null },
+                                      },
+                                    ]
+                                  : [],
                               },
-                            ]
-                          : [],
-                      },
-                      reviewThreads: {
-                        totalCount: 1,
-                        nodes: [
-                          {
-                            id: 'THR_1',
-                            path: 'src/a.ts',
-                            line: 10,
-                            startLine: null,
-                            diffSide: 'RIGHT',
-                            isResolved: threadResolved,
-                            isOutdated: false,
-                            comments: {
-                              nodes: pendingHasInlineComments
-                                ? [
-                                    {
-                                      id: 'RC_P1',
-                                      body: 'pending note',
-                                      createdAt: '2026-01-01T00:00:00.000Z',
-                                      updatedAt: '2026-01-01T00:00:00.000Z',
-                                      url: 'https://github.com/org/repo/pull/7#r1',
-                                      pullRequestReview: { id: 'REV_PENDING' },
-                                      author: { login: 'alice', name: 'Alice', avatarUrl: null },
-                                    },
-                                  ]
-                                : [],
                             },
-                          },
-                        ],
+                          ],
+                        },
+                        commits: { nodes: [] },
                       },
-                      commits: { nodes: [] },
                     },
                   },
                 },
-              },
-            };
+              };
+            }
           }
-        }
-        return { status: 404, body: {} };
-      });
+          return { status: 404, body: {} };
+        });
 
-      await Effect.runPromise(
-        Effect.gen(function* () {
+        return Effect.gen(function* () {
           const auth = yield* HostAuth;
           const registry = yield* GitHostRegistry;
           yield* auth.connectPat('github', 'ghp_test', 'secure');
@@ -804,138 +811,135 @@ describe('GitHubAdapter', () => {
             threadId: ReviewThreadId.make('THR_1'),
           });
           expect(unresolved.reviewThreads[0]?.isResolved).toBe(false);
-        }).pipe(Effect.provide(layer)),
-      );
-    } finally {
-      await rm(storeRoot, { recursive: true, force: true });
-    }
-  });
+        }).pipe(Effect.provide(layer));
+      }),
+  );
 
-  it('merges a PR with expectedHeadSha, surfaces Conflict on SHA mismatch, and toggles auto-merge', async () => {
-    const graphqlCalls: Array<{
-      readonly query: string;
-      readonly variables: Record<string, unknown>;
-    }> = [];
-    let merged = false;
-    let autoMerge = false;
-    let simulateShaMismatch = false;
+  it.effect(
+    'merges a PR with expectedHeadSha, surfaces Conflict on SHA mismatch, and toggles auto-merge',
+    () =>
+      withTempDir('spence-gh-merge-', (storeRoot) => {
+        const graphqlCalls: Array<{
+          readonly query: string;
+          readonly variables: Record<string, unknown>;
+        }> = [];
+        let merged = false;
+        let autoMerge = false;
+        let simulateShaMismatch = false;
 
-    const storeRoot = await mkdtemp(path.join(tmpdir(), 'spence-gh-merge-'));
-    try {
-      const layer = makeTestLayer(storeRoot, (req) => {
-        if (req.url.endsWith('/user')) {
-          return {
-            status: 200,
-            headers: { 'x-oauth-scopes': 'repo, read:org' },
-            body: { login: 'alice', name: 'Alice', avatar_url: null },
-          };
-        }
-        if (req.url.endsWith('/graphql')) {
-          const parsed = JSON.parse(req.bodyText) as {
-            query: string;
-            variables: Record<string, unknown>;
-          };
-          graphqlCalls.push(parsed);
+        const layer = makeTestLayer(storeRoot, (req) => {
+          if (req.url.endsWith('/user')) {
+            return {
+              status: 200,
+              headers: { 'x-oauth-scopes': 'repo, read:org' },
+              body: { login: 'alice', name: 'Alice', avatar_url: null },
+            };
+          }
+          if (req.url.endsWith('/graphql')) {
+            const parsed = JSON.parse(req.bodyText) as {
+              query: string;
+              variables: Record<string, unknown>;
+            };
+            graphqlCalls.push(parsed);
 
-          if (parsed.query.includes('PullRequestNodeId')) {
+            if (parsed.query.includes('PullRequestNodeId')) {
+              return {
+                status: 200,
+                body: {
+                  data: {
+                    repository: {
+                      pullRequest: { id: 'PR_node_42', headRefOid: 'sha-expected' },
+                    },
+                  },
+                },
+              };
+            }
+            if (parsed.query.includes('MergePullRequest')) {
+              if (simulateShaMismatch) {
+                return {
+                  status: 200,
+                  body: {
+                    data: { mergePullRequest: null },
+                    errors: [
+                      {
+                        type: 'UNPROCESSABLE',
+                        message: 'Head sha expected-stale does not match head sha sha-newer',
+                      },
+                    ],
+                  },
+                };
+              }
+              merged = true;
+              return {
+                status: 200,
+                body: { data: { mergePullRequest: { pullRequest: { number: 42 } } } },
+              };
+            }
+            if (parsed.query.includes('EnablePullRequestAutoMerge')) {
+              autoMerge = true;
+              return {
+                status: 200,
+                body: { data: { enablePullRequestAutoMerge: { pullRequest: { number: 42 } } } },
+              };
+            }
+            if (parsed.query.includes('DisablePullRequestAutoMerge')) {
+              autoMerge = false;
+              return {
+                status: 200,
+                body: { data: { disablePullRequestAutoMerge: { pullRequest: { number: 42 } } } },
+              };
+            }
+            // PullRequestDetail
             return {
               status: 200,
               body: {
                 data: {
                   repository: {
-                    pullRequest: { id: 'PR_node_42', headRefOid: 'sha-expected' },
-                  },
-                },
-              },
-            };
-          }
-          if (parsed.query.includes('MergePullRequest')) {
-            if (simulateShaMismatch) {
-              return {
-                status: 200,
-                body: {
-                  data: { mergePullRequest: null },
-                  errors: [
-                    {
-                      type: 'UNPROCESSABLE',
-                      message: 'Head sha expected-stale does not match head sha sha-newer',
-                    },
-                  ],
-                },
-              };
-            }
-            merged = true;
-            return {
-              status: 200,
-              body: { data: { mergePullRequest: { pullRequest: { number: 42 } } } },
-            };
-          }
-          if (parsed.query.includes('EnablePullRequestAutoMerge')) {
-            autoMerge = true;
-            return {
-              status: 200,
-              body: { data: { enablePullRequestAutoMerge: { pullRequest: { number: 42 } } } },
-            };
-          }
-          if (parsed.query.includes('DisablePullRequestAutoMerge')) {
-            autoMerge = false;
-            return {
-              status: 200,
-              body: { data: { disablePullRequestAutoMerge: { pullRequest: { number: 42 } } } },
-            };
-          }
-          // PullRequestDetail
-          return {
-            status: 200,
-            body: {
-              data: {
-                repository: {
-                  mergeCommitAllowed: true,
-                  squashMergeAllowed: true,
-                  rebaseMergeAllowed: false,
-                  viewerPermission: 'WRITE',
-                  labels: { nodes: [] },
-                  milestones: { nodes: [] },
-                  assignableUsers: { nodes: [] },
-                  pullRequest: {
-                    id: 'PR_node_42',
-                    number: 42,
-                    title: 'Mergeable PR',
-                    url: 'https://github.com/org/repo/pull/42',
-                    body: '',
-                    state: merged ? 'MERGED' : 'OPEN',
-                    isDraft: false,
-                    headRefName: 'feat/merge',
-                    headRefOid: 'sha-expected',
-                    baseRefName: 'main',
-                    updatedAt: '2026-11-20T12:00:00Z',
-                    isCrossRepository: false,
-                    headRepository: { nameWithOwner: 'org/repo' },
-                    mergeStateStatus: merged ? 'UNKNOWN' : 'CLEAN',
-                    autoMergeRequest: autoMerge ? { mergeMethod: 'SQUASH' } : null,
-                    reviewDecision: 'APPROVED',
-                    viewerCanUpdate: true,
-                    viewerDidAuthor: false,
-                    author: { login: 'alice', name: 'Alice', avatarUrl: null },
+                    mergeCommitAllowed: true,
+                    squashMergeAllowed: true,
+                    rebaseMergeAllowed: false,
+                    viewerPermission: 'WRITE',
                     labels: { nodes: [] },
-                    reviewRequests: { nodes: [] },
-                    assignees: { nodes: [] },
-                    milestone: null,
-                    comments: { totalCount: 0, nodes: [] },
-                    reviewThreads: { totalCount: 0, nodes: [] },
-                    reviews: { nodes: [] },
-                    commits: { nodes: [] },
+                    milestones: { nodes: [] },
+                    assignableUsers: { nodes: [] },
+                    pullRequest: {
+                      id: 'PR_node_42',
+                      number: 42,
+                      title: 'Mergeable PR',
+                      url: 'https://github.com/org/repo/pull/42',
+                      body: '',
+                      state: merged ? 'MERGED' : 'OPEN',
+                      isDraft: false,
+                      headRefName: 'feat/merge',
+                      headRefOid: 'sha-expected',
+                      baseRefName: 'main',
+                      updatedAt: '2026-11-20T12:00:00Z',
+                      isCrossRepository: false,
+                      headRepository: { nameWithOwner: 'org/repo' },
+                      mergeStateStatus: merged ? 'UNKNOWN' : 'CLEAN',
+                      autoMergeRequest: autoMerge ? { mergeMethod: 'SQUASH' } : null,
+                      reviewDecision: 'APPROVED',
+                      viewerCanUpdate: true,
+                      viewerDidAuthor: false,
+                      author: { login: 'alice', name: 'Alice', avatarUrl: null },
+                      labels: { nodes: [] },
+                      reviewRequests: { nodes: [] },
+                      assignees: { nodes: [] },
+                      milestone: null,
+                      comments: { totalCount: 0, nodes: [] },
+                      reviewThreads: { totalCount: 0, nodes: [] },
+                      reviews: { nodes: [] },
+                      commits: { nodes: [] },
+                    },
                   },
                 },
               },
-            },
-          };
-        }
-        return { status: 404, body: {} };
-      });
+            };
+          }
+          return { status: 404, body: {} };
+        });
 
-      await Effect.runPromise(
-        Effect.gen(function* () {
+        return Effect.gen(function* () {
           const auth = yield* HostAuth;
           const registry = yield* GitHostRegistry;
           yield* auth.connectPat('github', 'ghp_test', 'secure');
@@ -997,10 +1001,7 @@ describe('GitHubAdapter', () => {
               commitBody: 'Closes #42',
             },
           });
-        }).pipe(Effect.provide(layer)),
-      );
-    } finally {
-      await rm(storeRoot, { recursive: true, force: true });
-    }
-  });
+        }).pipe(Effect.provide(layer));
+      }),
+  );
 });

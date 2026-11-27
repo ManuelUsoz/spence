@@ -398,13 +398,15 @@ export interface RawReviewThreadNode {
   } | null;
 }
 
-const toHostActor = (actor: RawActorNode | null | undefined): HostActor => ({
+/** Normalizes a nullable GitHub GraphQL actor node into a `HostActor`. */
+export const toHostActor = (actor: RawActorNode | null | undefined): HostActor => ({
   login: actor?.login ?? 'ghost',
   displayName: actor?.name ?? null,
   avatarUrl: actor?.avatarUrl ?? null,
 });
 
-const toTimestamp = (iso: string | null | undefined): number => {
+/** Parses an ISO-8601 timestamp string into epoch milliseconds, returning `0` when absent/invalid. */
+export const toTimestamp = (iso: string | null | undefined): number => {
   if (!iso) return 0;
   const parsed = Date.parse(iso);
   return Number.isFinite(parsed) ? parsed : 0;

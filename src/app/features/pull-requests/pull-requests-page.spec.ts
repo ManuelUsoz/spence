@@ -379,6 +379,15 @@ const setupPage = (
   return fixture;
 };
 
+const flush = async (fixture: {
+  whenStable: () => Promise<unknown>;
+  detectChanges: () => void;
+}) => {
+  for (let i = 0; i < 6; i++) await Promise.resolve();
+  await fixture.whenStable();
+  fixture.detectChanges();
+};
+
 describe('PullRequestsPage', () => {
   it('renders quiet font-display empty states for disconnected and empty repositories', async () => {
     const disconnected: ProjectPullRequestsState = {
@@ -395,7 +404,7 @@ describe('PullRequestsPage', () => {
       worktreeLinks: {},
     };
     const fixture = setupPage(disconnected);
-    await new Promise((r) => setTimeout(r, 20));
+    await flush(fixture);
     fixture.detectChanges();
 
     const empty = fixture.nativeElement.querySelector('[data-testid="pr-empty-disconnected"]');
@@ -421,7 +430,7 @@ describe('PullRequestsPage', () => {
     };
 
     const fixture = setupPage(available);
-    await new Promise((r) => setTimeout(r, 20));
+    await flush(fixture);
     fixture.detectChanges();
 
     const el = fixture.nativeElement as HTMLElement;
@@ -469,7 +478,7 @@ describe('PullRequestsPage', () => {
       getDetail: () => Effect.succeed(makeDetail(pinnedSummary)),
       getDiff: () => Effect.succeed(makeDiff(pinnedSummary)),
     });
-    await new Promise((r) => setTimeout(r, 20));
+    await flush(fixture);
     fixture.detectChanges();
 
     const el = fixture.nativeElement as HTMLElement;
@@ -477,13 +486,13 @@ describe('PullRequestsPage', () => {
     input.value = '#99';
     input.dispatchEvent(new Event('input'));
     el.querySelector<HTMLButtonElement>('[data-testid="pr-lookup-submit"]')?.click();
-    await new Promise((r) => setTimeout(r, 20));
+    await flush(fixture);
     fixture.detectChanges();
 
     expect(lookupSpy).toHaveBeenCalledWith(PullRequestNumber.make(99));
 
     el.querySelector<HTMLButtonElement>('[data-testid="pr-unpin-99"]')?.click();
-    await new Promise((r) => setTimeout(r, 20));
+    await flush(fixture);
     expect(unpinned).toEqual([99]);
   });
 
@@ -513,12 +522,12 @@ describe('PullRequestsPage', () => {
       setActiveView: (v) => activeViews.push(v.activePrNumber),
       openExternal: (url) => openedUrls.push(url),
     });
-    await new Promise((r) => setTimeout(r, 20));
+    await flush(fixture);
     fixture.detectChanges();
 
     const el = fixture.nativeElement as HTMLElement;
     el.querySelector<HTMLButtonElement>('[data-testid="pr-list-item-42"]')?.click();
-    await new Promise((r) => setTimeout(r, 40));
+    await flush(fixture);
     fixture.detectChanges();
 
     expect(activeViews).toContain(42);
@@ -531,7 +540,10 @@ describe('PullRequestsPage', () => {
     expect(el.querySelector('[data-testid="pr-detail-milestone"]')?.textContent).toContain('v1.0');
     expect(el.querySelector('[data-testid="pr-review-rev-1"]')).not.toBeNull();
     expect(el.querySelector('[data-testid="pr-comment-c-1"]')).not.toBeNull();
-    expect(el.querySelector('[data-testid="pr-diff-inline-thread-thr-1"]')).not.toBeNull();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(el.querySelector('[data-testid="pr-diff-inline-thread-thr-1"]')).not.toBeNull();
+    });
     expect(el.querySelector('[data-testid="pr-diff-no-preview"]')?.textContent).toContain(
       'Binary file not shown.',
     );
@@ -545,7 +557,7 @@ describe('PullRequestsPage', () => {
 
     // Open external link
     el.querySelector<HTMLButtonElement>('[data-testid="pr-open-external"]')?.click();
-    await new Promise((r) => setTimeout(r, 20));
+    await flush(fixture);
     expect(openedUrls).toEqual(['https://github.com/org/repo/pull/42']);
   });
 
@@ -570,7 +582,7 @@ describe('PullRequestsPage', () => {
     fixture.componentInstance.openSettings.subscribe(() => {
       reconnectEmitted = true;
     });
-    await new Promise((r) => setTimeout(r, 20));
+    await flush(fixture);
     fixture.detectChanges();
 
     const el = fixture.nativeElement as HTMLElement;
@@ -642,14 +654,14 @@ describe('PullRequestsPage', () => {
         }),
     });
 
-    await new Promise((r) => setTimeout(r, 30));
+    await flush(fixture);
     fixture.detectChanges();
 
     const row1 = fixture.nativeElement.querySelector(
       '[data-testid="pr-list-item-1"]',
     ) as HTMLElement;
     row1.click();
-    await new Promise((r) => setTimeout(r, 40));
+    await flush(fixture);
     fixture.detectChanges();
 
     // Merge is disabled while blocked, and Merge when ready is available
@@ -664,7 +676,7 @@ describe('PullRequestsPage', () => {
     ) as HTMLButtonElement | null;
     expect(autoMergeBtn).not.toBeNull();
     autoMergeBtn?.click();
-    await new Promise((r) => setTimeout(r, 30));
+    await flush(fixture);
     fixture.detectChanges();
     expect(autoMergeCalls).toEqual([{ number: 1, enabled: true }]);
 
@@ -679,7 +691,7 @@ describe('PullRequestsPage', () => {
     ) as HTMLButtonElement | null;
     expect(refreshBtn).not.toBeNull();
     refreshBtn?.click();
-    await new Promise((r) => setTimeout(r, 40));
+    await flush(fixture);
     fixture.detectChanges();
 
     const enabledMergeBtn = fixture.nativeElement.querySelector(
@@ -699,7 +711,7 @@ describe('PullRequestsPage', () => {
       '[data-testid="pr-merge-confirm"]',
     );
     confirmBtn?.click();
-    await new Promise((r) => setTimeout(r, 40));
+    await flush(fixture);
     fixture.detectChanges();
 
     expect(mergeCalls).toEqual([
@@ -773,12 +785,12 @@ describe('PullRequestsPage', () => {
         });
       },
     });
-    await new Promise((r) => setTimeout(r, 20));
+    await flush(fixture);
     fixture.detectChanges();
 
     const el = fixture.nativeElement as HTMLElement;
     el.querySelector<HTMLButtonElement>('[data-testid="pr-list-item-42"]')?.click();
-    await new Promise((r) => setTimeout(r, 40));
+    await flush(fixture);
     fixture.detectChanges();
 
     // Open edit form
@@ -795,7 +807,7 @@ describe('PullRequestsPage', () => {
 
     // Save -> triggers Conflict on title
     el.querySelector<HTMLButtonElement>('[data-testid="pr-edit-save"]')?.click();
-    await new Promise((r) => setTimeout(r, 40));
+    await flush(fixture);
     fixture.detectChanges();
 
     const conflictBanner = el.querySelector('[data-testid="pr-conflict-banner-title"]');
@@ -806,7 +818,7 @@ describe('PullRequestsPage', () => {
     el.querySelector<HTMLButtonElement>('[data-testid="pr-conflict-keep-title"]')?.click();
     fixture.detectChanges();
     el.querySelector<HTMLButtonElement>('[data-testid="pr-edit-save"]')?.click();
-    await new Promise((r) => setTimeout(r, 40));
+    await flush(fixture);
     fixture.detectChanges();
 
     expect(savedPatches.length).toBe(1);
@@ -891,12 +903,12 @@ describe('PullRequestsPage', () => {
         });
       },
     });
-    await new Promise((r) => setTimeout(r, 20));
+    await flush(fixture);
     fixture.detectChanges();
 
     const el = fixture.nativeElement as HTMLElement;
     el.querySelector<HTMLButtonElement>('[data-testid="pr-list-item-42"]')?.click();
-    await new Promise((r) => setTimeout(r, 40));
+    await flush(fixture);
     fixture.detectChanges();
 
     // Own-PR guard: Approve & Request changes disabled
@@ -920,13 +932,13 @@ describe('PullRequestsPage', () => {
     }
     fixture.detectChanges();
     el.querySelector<HTMLButtonElement>('[data-testid="pr-general-comment-submit"]')?.click();
-    await new Promise((r) => setTimeout(r, 30));
+    await flush(fixture);
     fixture.detectChanges();
     expect(actionsCalled).toContain('add:Nice work!');
 
     // One-click resolve thread
     el.querySelector<HTMLButtonElement>('[data-testid="pr-thread-resolve-toggle-thr-1"]')?.click();
-    await new Promise((r) => setTimeout(r, 30));
+    await flush(fixture);
     fixture.detectChanges();
     expect(actionsCalled).toContain('resolve:thr-1');
 
@@ -940,7 +952,7 @@ describe('PullRequestsPage', () => {
     }
     fixture.detectChanges();
     el.querySelector<HTMLButtonElement>('[data-testid="pr-review-submit-comment"]')?.click();
-    await new Promise((r) => setTimeout(r, 30));
+    await flush(fixture);
     fixture.detectChanges();
     expect(actionsCalled).toContain('review:comment:Summary note');
   });

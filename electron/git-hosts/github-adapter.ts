@@ -6,7 +6,6 @@ import {
   ReviewId,
   type CheckRollupStatus,
   type CheckRun,
-  type HostActor,
   type HostCapabilities,
   type MergeMethod,
   type MergeStateStatus,
@@ -29,12 +28,17 @@ import { GitHubHttp } from './github-http';
 import { HostAuth } from './host-auth';
 import {
   runPrWorkerTask,
+  toHostActor,
+  toTimestamp,
   type RawActorNode,
   type RawReviewThreadNode,
   type RawStatusCheckNode,
 } from './pr-worker';
 
-const GITHUB_API_BASE = 'https://api.github.com';
+const e2eApiUrl =
+  process.env['SPENCE_E2E'] === '1' ? process.env['SPENCE_GITHUB_API_URL']?.trim() : undefined;
+const GITHUB_API_BASE =
+  e2eApiUrl && e2eApiUrl.length > 0 ? e2eApiUrl.replace(/\/+$/, '') : 'https://api.github.com';
 const GITHUB_GRAPHQL_URL = `${GITHUB_API_BASE}/graphql`;
 
 export const GITHUB_CAPABILITIES: HostCapabilities = {
@@ -638,18 +642,6 @@ interface RawSummaryNode {
     } | null> | null;
   } | null;
 }
-
-const toTimestamp = (iso: string | null | undefined): number => {
-  if (!iso) return 0;
-  const parsed = Date.parse(iso);
-  return Number.isFinite(parsed) ? parsed : 0;
-};
-
-const toHostActor = (actor: RawActorNode | null | undefined): HostActor => ({
-  login: actor?.login ?? 'ghost',
-  displayName: actor?.name ?? null,
-  avatarUrl: actor?.avatarUrl ?? null,
-});
 
 const mapPrState = (state: string, isDraft: boolean): PullRequestState => {
   switch (state.toUpperCase()) {

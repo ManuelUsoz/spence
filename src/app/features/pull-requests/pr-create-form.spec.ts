@@ -60,6 +60,15 @@ const createdSummary: PullRequestSummary = {
   isCrossRepo: false,
 };
 
+const flush = async (fixture: {
+  whenStable: () => Promise<unknown>;
+  detectChanges: () => void;
+}) => {
+  for (let i = 0; i < 6; i++) await Promise.resolve();
+  await fixture.whenStable();
+  fixture.detectChanges();
+};
+
 const setupForm = async (options?: {
   readonly prep?: CreatePrPreparation;
   readonly draft?: () => Effect.Effect<
@@ -143,8 +152,7 @@ const setupForm = async (options?: {
   const fixture = TestBed.createComponent(PrCreateForm);
   fixture.componentRef.setInput('projectId', projectId);
   fixture.detectChanges();
-  await new Promise((r) => setTimeout(r, 30));
-  fixture.detectChanges();
+  await flush(fixture);
   return fixture;
 };
 
@@ -173,7 +181,7 @@ describe('PrCreateForm', () => {
     expect(bodyInput?.value).toBe('AI drafted body');
 
     submit?.click();
-    await new Promise((r) => setTimeout(r, 20));
+    await flush(fixture);
     expect(createdPayload).toMatchObject({
       projectId,
       baseRef: 'develop',

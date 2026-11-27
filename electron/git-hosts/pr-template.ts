@@ -1,9 +1,7 @@
-import { execFile } from 'node:child_process';
 import { lstat, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { promisify } from 'node:util';
-
-const execFileAsync = promisify(execFile);
+import { Effect } from 'effect';
+import { runGitBuffer } from './git-exec';
 
 const TEMPLATE_MAX_BYTES = 8_000;
 const TRUNCATION_MARKER = '[truncated]';
@@ -16,17 +14,6 @@ const CANDIDATE_PATHS = [
   'docs/pull_request_template.md',
   'docs/pull_request_template.txt',
 ] as const;
-
-const runGitBuffer = (cwd: string, args: ReadonlyArray<string>): Promise<Buffer | null> =>
-  execFileAsync('git', [...args], {
-    cwd,
-    encoding: 'buffer',
-    maxBuffer: 1024 * 1024,
-    timeout: 5_000,
-    windowsHide: true,
-  })
-    .then((r) => r.stdout)
-    .catch(() => null);
 
 interface TreeBlob {
   readonly objectId: string;
@@ -61,12 +48,14 @@ const formatTemplate = (raw: Buffer): string | null => {
   return truncated && !text.endsWith(TRUNCATION_MARKER) ? `${text}\n\n${TRUNCATION_MARKER}` : text;
 };
 
-const readFromWorktreeFs = async (cwd: string): Promise<string | null> => {
+const readFromWorktreeFs = Effect.fnUntraced(function* (cwd: string) {
   const dirs = ['.github', '.', 'docs'] as const;
   const byLower = new Map<string, string>();
   for (const dir of dirs) {
     const absDir = dir === '.' ? cwd : path.join(cwd, dir);
-    const names = await readdir(absDir).catch(() => [] as string[]);
+    const names = yield* Effect.tryPromise(() => readdir(absDir)).pipe(
+      Effect.catch(() => Effect.succeed([] as string[])),
+    );
     for (const name of names) {
       const rel = dir === '.' ? name : `${dir}/${name}`;
       byLower.set(rel.toLowerCase(), path.join(absDir, name));
@@ -75,22 +64,26 @@ const readFromWorktreeFs = async (cwd: string): Promise<string | null> => {
   for (const candidate of CANDIDATE_PATHS) {
     const abs = byLower.get(candidate);
     if (abs === undefined) continue;
-    const st = await lstat(abs).catch(() => null);
+    const st = yield* Effect.tryPromise(() => lstat(abs)).pipe(
+      Effect.catch(() => Effect.succeed(null)),
+    );
     if (st === null || !st.isFile() || st.isSymbolicLink()) continue;
-    const buf = await readFile(abs).catch(() => null);
+    const buf = yield* Effect.tryPromise(() => readFile(abs)).pipe(
+      Effect.catch(() => Effect.succeed(null)),
+    );
     if (buf === null) continue;
     const formatted = formatTemplate(buf);
     if (formatted !== null) return formatted;
   }
   return null;
-};
+});
 
 /**
  * Loads the repository's Pull request template case-insensitively from `.github/pull_request_template.md`,
  * `pull_request_template.md`, or `docs/pull_request_template.md` (plus `.txt` fallbacks), capped at 8 KB.
  */
-export const detectPrTemplate = async (cwd: string): Promise<string | null> => {
-  const treeBuf = await runGitBuffer(cwd, [
+export const detectPrTemplate = Effect.fn('PullRequests.detectPrTemplate')(function* (cwd: string) {
+  const treeBuf = yield* runGitBuffer(cwd, [
     'ls-tree',
     '-r',
     '-z',
@@ -112,11 +105,11 @@ export const detectPrTemplate = async (cwd: string): Promise<string | null> => {
     for (const candidate of CANDIDATE_PATHS) {
       const match = byLower.get(candidate);
       if (match === undefined) continue;
-      const content = await runGitBuffer(cwd, ['cat-file', 'blob', match.objectId]);
+      const content = yield* runGitBuffer(cwd, ['cat-file', 'blob', match.objectId]);
       if (content === null) continue;
       const formatted = formatTemplate(content);
       if (formatted !== null) return formatted;
     }
   }
-  return readFromWorktreeFs(cwd);
-};
+  return yield* readFromWorktreeFs(cwd);
+});

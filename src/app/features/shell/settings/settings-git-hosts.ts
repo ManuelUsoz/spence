@@ -352,9 +352,7 @@ const openExternalUrl = (url: string) =>
       >
         @if (githubAccount(); as account) {
           <hlm-alert-dialog-header>
-            <h2 hlmAlertDialogTitle class="font-display text-xl font-normal" i18n>
-              Disconnect GitHub account?
-            </h2>
+            <h2 hlmAlertDialogTitle class="text-lg font-medium" i18n>Disconnect GitHub account?</h2>
             <p hlmAlertDialogDescription i18n>
               This removes <span class="font-mono text-xs">@{{ account.handle }}</span> and clears
               cached Pull requests from this Device.

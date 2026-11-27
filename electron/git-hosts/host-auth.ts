@@ -22,8 +22,14 @@ import { GitHubHttp } from './github-http';
 
 const execFileAsync = promisify(execFile);
 
-const GITHUB_WEB_BASE = 'https://github.com';
-const GITHUB_API_BASE = 'https://api.github.com';
+const e2eWebUrl =
+  process.env['SPENCE_E2E'] === '1' ? process.env['SPENCE_GITHUB_WEB_URL']?.trim() : undefined;
+const e2eApiUrl =
+  process.env['SPENCE_E2E'] === '1' ? process.env['SPENCE_GITHUB_API_URL']?.trim() : undefined;
+const GITHUB_WEB_BASE =
+  e2eWebUrl && e2eWebUrl.length > 0 ? e2eWebUrl.replace(/\/+$/, '') : 'https://github.com';
+const GITHUB_API_BASE =
+  e2eApiUrl && e2eApiUrl.length > 0 ? e2eApiUrl.replace(/\/+$/, '') : 'https://api.github.com';
 const DEFAULT_GITHUB_CLIENT_ID = 'Ov23liSpenceDesktop';
 
 const githubClientId = (): string => {

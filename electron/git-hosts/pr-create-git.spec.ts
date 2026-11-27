@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from '@effect/vitest';
+import { Effect } from 'effect';
 import { execFile } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -34,60 +35,68 @@ const setupRepoWithOrigin = async () => {
 };
 
 describe('pr-create-git', () => {
-  it('inspects createdFromBranch, aheadCount, needsPush, and dirty state in a real repo', async () => {
-    const { base, work } = await setupRepoWithOrigin();
-    try {
-      await git(work, 'checkout', '-b', 'develop');
-      await git(work, 'push', '-u', 'origin', 'develop');
-      await git(work, 'checkout', '-b', 'feat/login');
-      await writeFile(path.join(work, 'auth.ts'), 'export const ok = true;\n');
-      await git(work, 'add', 'auth.ts');
-      await git(work, 'commit', '-m', 'add auth');
-      await writeFile(path.join(work, 'dirty.txt'), 'uncommitted\n');
+  it.effect(
+    'inspects createdFromBranch, aheadCount, needsPush, and dirty state in a real repo',
+    () =>
+      Effect.gen(function* () {
+        const { base, work } = yield* Effect.promise(() => setupRepoWithOrigin());
+        try {
+          yield* Effect.promise(() => git(work, 'checkout', '-b', 'develop'));
+          yield* Effect.promise(() => git(work, 'push', '-u', 'origin', 'develop'));
+          yield* Effect.promise(() => git(work, 'checkout', '-b', 'feat/login'));
+          yield* Effect.promise(() =>
+            writeFile(path.join(work, 'auth.ts'), 'export const ok = true;\n'),
+          );
+          yield* Effect.promise(() => git(work, 'add', 'auth.ts'));
+          yield* Effect.promise(() => git(work, 'commit', '-m', 'add auth'));
+          yield* Effect.promise(() => writeFile(path.join(work, 'dirty.txt'), 'uncommitted\n'));
 
-      const ctx = await inspectCreateContext({
-        worktreePath: work,
-        targetRemoteName: 'origin',
-        headRemoteName: 'origin',
-        createdFromBranch: 'develop',
-      });
+          const ctx = yield* inspectCreateContext({
+            worktreePath: work,
+            targetRemoteName: 'origin',
+            headRemoteName: 'origin',
+            createdFromBranch: 'develop',
+          });
 
-      expect(ctx.headRef).toBe('feat/login');
-      expect(ctx.defaultBaseRef).toBe('develop');
-      expect(ctx.baseRef).toBe('develop');
-      expect(ctx.aheadCount).toBe(1);
-      expect(ctx.behindCount).toBe(0);
-      expect(ctx.needsPush).toBe(true);
-      expect(ctx.isDirty).toBe(true);
-    } finally {
-      await rm(base, { recursive: true, force: true });
-    }
-  });
+          expect(ctx.headRef).toBe('feat/login');
+          expect(ctx.defaultBaseRef).toBe('develop');
+          expect(ctx.baseRef).toBe('develop');
+          expect(ctx.aheadCount).toBe(1);
+          expect(ctx.behindCount).toBe(0);
+          expect(ctx.needsPush).toBe(true);
+          expect(ctx.isDirty).toBe(true);
+        } finally {
+          yield* Effect.promise(() => rm(base, { recursive: true, force: true }));
+        }
+      }),
+  );
 
-  it('gathers commit log, diffstat, and unified diff truncated at 24 KB', async () => {
-    const { base, work } = await setupRepoWithOrigin();
-    try {
-      await git(work, 'checkout', '-b', 'feat/big');
-      await writeFile(path.join(work, 'big.txt'), 'line\n'.repeat(10_000));
-      await git(work, 'add', 'big.txt');
-      await git(work, 'commit', '-m', 'add big file');
+  it.effect('gathers commit log, diffstat, and unified diff truncated at 24 KB', () =>
+    Effect.gen(function* () {
+      const { base, work } = yield* Effect.promise(() => setupRepoWithOrigin());
+      try {
+        yield* Effect.promise(() => git(work, 'checkout', '-b', 'feat/big'));
+        yield* Effect.promise(() => writeFile(path.join(work, 'big.txt'), 'line\n'.repeat(10_000)));
+        yield* Effect.promise(() => git(work, 'add', 'big.txt'));
+        yield* Effect.promise(() => git(work, 'commit', '-m', 'add big file'));
 
-      const draftInput = await gatherDraftCreateInput({
-        worktreePath: work,
-        baseRef: 'main',
-        targetRemoteName: 'origin',
-        templateBody: '## Summary\n',
-      });
+        const draftInput = yield* gatherDraftCreateInput({
+          worktreePath: work,
+          baseRef: 'main',
+          targetRemoteName: 'origin',
+          templateBody: '## Summary\n',
+        });
 
-      expect(draftInput.commitLog).toContain('add big file');
-      expect(draftInput.diffStat).toContain('big.txt');
-      expect(Buffer.byteLength(draftInput.unifiedDiff, 'utf8')).toBeLessThanOrEqual(25_000);
-      expect(draftInput.unifiedDiff).toContain('[diff truncated at 24 KB]');
-      expect(draftInput.templateBody).toBe('## Summary\n');
-    } finally {
-      await rm(base, { recursive: true, force: true });
-    }
-  });
+        expect(draftInput.commitLog).toContain('add big file');
+        expect(draftInput.diffStat).toContain('big.txt');
+        expect(Buffer.byteLength(draftInput.unifiedDiff, 'utf8')).toBeLessThanOrEqual(25_000);
+        expect(draftInput.unifiedDiff).toContain('[diff truncated at 24 KB]');
+        expect(draftInput.templateBody).toBe('## Summary\n');
+      } finally {
+        yield* Effect.promise(() => rm(base, { recursive: true, force: true }));
+      }
+    }),
+  );
 
   it('parses JSON or fenced JSON replies from drafting agent', () => {
     const parsed = parseDraftAgentReply(

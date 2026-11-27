@@ -12,10 +12,8 @@ import {
   Semaphore,
   Stream,
 } from 'effect';
-import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { promisify } from 'node:util';
 import { Timestamp, type Project, type ProjectId } from '../../src/shared/projects/projects.rpc';
 import {
   GitHostError,
@@ -68,6 +66,7 @@ import {
   type GitHost,
   type ResolvedProjectRemote,
 } from './git-host';
+import { runGit } from './git-exec';
 import { HostAuth } from './host-auth';
 import {
   buildDraftCreatePrompt,
@@ -77,8 +76,6 @@ import {
 } from './pr-create-git';
 import { detectPrTemplate } from './pr-template';
 import { PrStore } from './pr-store';
-
-const execFileAsync = promisify(execFile);
 
 const PR_PAGE_POLL_INTERVAL = Duration.seconds(60);
 const SESSION_VIEW_POLL_INTERVAL = Duration.minutes(3);
@@ -115,11 +112,6 @@ export class ProjectGitInspector extends Context.Service<
   ProjectGitInspectorShape
 >()('git-hosts/ProjectGitInspector') {}
 
-const runGit = (cwd: string, args: ReadonlyArray<string>): Promise<string> =>
-  execFileAsync('git', [...args], { cwd, timeout: 10_000, windowsHide: true }).then((r) =>
-    r.stdout.trimEnd(),
-  );
-
 const parseWorktreePorcelain = (output: string): ReadonlyArray<InspectedWorktree> => {
   const worktrees: InspectedWorktree[] = [];
   const blocks = output.split(/\r?\n\r?\n/).filter((b) => b.trim().length > 0);
@@ -155,10 +147,7 @@ export const layerProjectGitInspectorLive = Layer.succeed(ProjectGitInspector, {
         detail: `Folder '${project.path}' is missing.`,
       };
     }
-    const gitAvailable = yield* Effect.tryPromise(() => runGit(project.path, ['--version'])).pipe(
-      Effect.as(true),
-      Effect.catch(() => Effect.succeed(false)),
-    );
+    const gitAvailable = (yield* runGit(project.path, ['--version'])) !== null;
     if (!gitAvailable) {
       return {
         _tag: 'Unavailable' as const,
@@ -166,12 +155,8 @@ export const layerProjectGitInspectorLive = Layer.succeed(ProjectGitInspector, {
         detail: 'Git CLI is not available on PATH.',
       };
     }
-    const isRepo = yield* Effect.tryPromise(() =>
-      runGit(project.path, ['rev-parse', '--is-inside-work-tree']),
-    ).pipe(
-      Effect.map((out) => out.trim() === 'true'),
-      Effect.catch(() => Effect.succeed(false)),
-    );
+    const isRepoOut = yield* runGit(project.path, ['rev-parse', '--is-inside-work-tree']);
+    const isRepo = isRepoOut !== null && isRepoOut.trim() === 'true';
     if (!isRepo) {
       return {
         _tag: 'Unavailable' as const,
@@ -179,12 +164,8 @@ export const layerProjectGitInspectorLive = Layer.succeed(ProjectGitInspector, {
         detail: `'${project.path}' is not a Git repository.`,
       };
     }
-    const remotesOutput = yield* Effect.tryPromise(() =>
-      runGit(project.path, ['remote', '-v']),
-    ).pipe(Effect.catch(() => Effect.succeed('')));
-    const wtOutput = yield* Effect.tryPromise(() =>
-      runGit(project.path, ['worktree', 'list', '--porcelain']),
-    ).pipe(Effect.catch(() => Effect.succeed('')));
+    const remotesOutput = (yield* runGit(project.path, ['remote', '-v'])) ?? '';
+    const wtOutput = (yield* runGit(project.path, ['worktree', 'list', '--porcelain'])) ?? '';
     return {
       _tag: 'Available' as const,
       remotesOutput,
@@ -1204,32 +1185,21 @@ export const layerPullRequestsService = Layer.effect(
       function* (input) {
         const { project, resolved } = yield* resolveProjectAndRemote(input.projectId);
         const worktreePath = input.worktreePath ?? project.path;
-        const headBranchOut = yield* Effect.tryPromise(() =>
-          runGit(worktreePath, ['symbolic-ref', '--quiet', '--short', 'HEAD']),
-        ).pipe(Effect.catch(() => Effect.succeed('')));
+        const headBranchOut =
+          (yield* runGit(worktreePath, ['symbolic-ref', '--quiet', '--short', 'HEAD'])) ?? '';
         const currentHeadBranch = headBranchOut.trim().length > 0 ? headBranchOut.trim() : null;
         const createdFromBranch =
           branchOrigins !== undefined && currentHeadBranch !== null
             ? yield* branchOrigins.get({ worktreePath, branch: currentHeadBranch })
             : null;
 
-        const ctx = yield* Effect.tryPromise(() =>
-          inspectCreateContext({
-            worktreePath,
-            targetRemoteName: resolved.targetRemoteName,
-            headRemoteName: resolved.headRemoteName,
-            ...(input.baseRef !== undefined ? { baseRefOverride: input.baseRef } : {}),
-            createdFromBranch,
-          }),
-        ).pipe(
-          Effect.mapError(
-            (err) =>
-              new GitHostError({
-                reason: 'HostError',
-                detail: err instanceof Error ? err.message : 'Failed to inspect Git branch state.',
-              }),
-          ),
-        );
+        const ctx = yield* inspectCreateContext({
+          worktreePath,
+          targetRemoteName: resolved.targetRemoteName,
+          headRemoteName: resolved.headRemoteName,
+          ...(input.baseRef !== undefined ? { baseRefOverride: input.baseRef } : {}),
+          createdFromBranch,
+        });
 
         const accountsState = yield* auth.getAccounts;
         const connected = accountsState.accounts.some(
@@ -1322,9 +1292,8 @@ export const layerPullRequestsService = Layer.effect(
         });
       }
 
-      const headBranchOut = yield* Effect.tryPromise(() =>
-        runGit(worktreePath, ['symbolic-ref', '--quiet', '--short', 'HEAD']),
-      ).pipe(Effect.catch(() => Effect.succeed('')));
+      const headBranchOut =
+        (yield* runGit(worktreePath, ['symbolic-ref', '--quiet', '--short', 'HEAD'])) ?? '';
       const headRef = headBranchOut.trim();
       if (headRef.length === 0) {
         return yield* new GitHostError({
@@ -1341,23 +1310,13 @@ export const layerPullRequestsService = Layer.effect(
         });
       }
 
-      const templateBody = yield* Effect.promise(() => detectPrTemplate(worktreePath));
-      const draftInput = yield* Effect.tryPromise(() =>
-        gatherDraftCreateInput({
-          worktreePath,
-          baseRef: input.baseRef,
-          targetRemoteName: resolved.targetRemoteName,
-          templateBody,
-        }),
-      ).pipe(
-        Effect.mapError(
-          (err) =>
-            new GitHostError({
-              reason: 'HostError',
-              detail: err instanceof Error ? err.message : 'Failed to gather diff for drafting.',
-            }),
-        ),
-      );
+      const templateBody = yield* detectPrTemplate(worktreePath);
+      const draftInput = yield* gatherDraftCreateInput({
+        worktreePath,
+        baseRef: input.baseRef,
+        targetRemoteName: resolved.targetRemoteName,
+        templateBody,
+      });
 
       const promptText = buildDraftCreatePrompt({
         headRef,
@@ -1403,9 +1362,7 @@ export const layerPullRequestsService = Layer.effect(
         const pathEnv = process.env['PATH'] ?? process.env['Path'] ?? '';
 
         if (input.pushFirst) {
-          const headSha = yield* Effect.tryPromise(() =>
-            runGit(worktreePath, ['rev-parse', '--verify', 'HEAD']),
-          ).pipe(Effect.catch(() => Effect.succeed('')));
+          const headSha = (yield* runGit(worktreePath, ['rev-parse', '--verify', 'HEAD'])) ?? '';
           const pushKey = `${resolved.headRemoteName}\0${input.headRef}\0${headSha}`;
           if (!pushedHeadShas.has(pushKey)) {
             const pushed = yield* Effect.tryPromise(() =>

@@ -65,7 +65,8 @@ describe('SettingsPullRequests', () => {
 
     const fixture = TestBed.createComponent(SettingsPullRequests);
     fixture.detectChanges();
-    await new Promise((r) => setTimeout(r, 30));
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+    await fixture.whenStable();
     fixture.detectChanges();
 
     const toggle = fixture.nativeElement.querySelector(
@@ -79,7 +80,8 @@ describe('SettingsPullRequests', () => {
 
     const btn = toggle?.querySelector('button') ?? toggle;
     btn?.click();
-    await new Promise((r) => setTimeout(r, 30));
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+    await fixture.whenStable();
     fixture.detectChanges();
 
     expect(patches).toEqual([false]);
