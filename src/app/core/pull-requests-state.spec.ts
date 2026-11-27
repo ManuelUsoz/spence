@@ -91,6 +91,14 @@ describe('PullRequestsState', () => {
         'PullRequests.updateLocalBaseBranch': () => Effect.die('unused'),
         'PullRequests.switchToBaseBranch': () => Effect.die('unused'),
         'PullRequests.getPostMergeStatus': () => Effect.die('unused'),
+        'PullRequests.update': () => Effect.die('unused'),
+        'PullRequests.addComment': () => Effect.die('unused'),
+        'PullRequests.editComment': () => Effect.die('unused'),
+        'PullRequests.deleteComment': () => Effect.die('unused'),
+        'PullRequests.submitReview': () => Effect.die('unused'),
+        'PullRequests.deletePendingReview': () => Effect.die('unused'),
+        'PullRequests.resolveThread': () => Effect.die('unused'),
+        'PullRequests.unresolveThread': () => Effect.die('unused'),
       }),
     );
 

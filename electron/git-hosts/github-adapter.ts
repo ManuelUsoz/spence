@@ -189,6 +189,7 @@ query PullRequestDetail($owner: String!, $name: String!, $number: Int!) {
     milestones(first: 30, states: [OPEN]) {
       nodes {
         id
+        number
         title
         dueOn
       }
@@ -201,6 +202,7 @@ query PullRequestDetail($owner: String!, $name: String!, $number: Int!) {
       }
     }
     pullRequest(number: $number) {
+      id
       number
       title
       url
@@ -258,6 +260,7 @@ query PullRequestDetail($owner: String!, $name: String!, $number: Int!) {
       }
       milestone {
         id
+        number
         title
         dueOn
       }
@@ -310,6 +313,9 @@ query PullRequestDetail($owner: String!, $name: String!, $number: Int!) {
               createdAt
               updatedAt
               url
+              pullRequestReview {
+                id
+              }
               author {
                 login
                 avatarUrl
@@ -391,6 +397,200 @@ mutation DisablePullRequestAutoMerge($pullRequestId: ID!) {
   disablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId }) {
     pullRequest {
       number
+    }
+  }
+}
+`;
+
+const UPDATE_PULL_REQUEST_MUTATION = `
+mutation UpdatePullRequest(
+  $pullRequestId: ID!
+  $title: String
+  $body: String
+  $baseRefName: String
+) {
+  updatePullRequest(
+    input: {
+      pullRequestId: $pullRequestId
+      title: $title
+      body: $body
+      baseRefName: $baseRefName
+    }
+  ) {
+    pullRequest {
+      id
+    }
+  }
+}
+`;
+
+const MARK_READY_MUTATION = `
+mutation MarkPullRequestReadyForReview($pullRequestId: ID!) {
+  markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {
+    pullRequest {
+      id
+    }
+  }
+}
+`;
+
+const CONVERT_TO_DRAFT_MUTATION = `
+mutation ConvertPullRequestToDraft($pullRequestId: ID!) {
+  convertPullRequestToDraft(input: { pullRequestId: $pullRequestId }) {
+    pullRequest {
+      id
+    }
+  }
+}
+`;
+
+const ADD_COMMENT_MUTATION = `
+mutation AddComment($subjectId: ID!, $body: String!) {
+  addComment(input: { subjectId: $subjectId, body: $body }) {
+    clientMutationId
+  }
+}
+`;
+
+const ADD_REVIEW_THREAD_REPLY_MUTATION = `
+mutation AddReviewThreadReply($threadId: ID!, $body: String!) {
+  addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $threadId, body: $body }) {
+    comment {
+      id
+    }
+  }
+}
+`;
+
+const ADD_PULL_REQUEST_REVIEW_MUTATION = `
+mutation AddPullRequestReview(
+  $pullRequestId: ID!
+  $event: PullRequestReviewEvent
+  $body: String
+  $threads: [DraftPullRequestReviewThread!]
+) {
+  addPullRequestReview(
+    input: {
+      pullRequestId: $pullRequestId
+      event: $event
+      body: $body
+      threads: $threads
+    }
+  ) {
+    pullRequestReview {
+      id
+    }
+  }
+}
+`;
+
+const ADD_PULL_REQUEST_REVIEW_THREAD_MUTATION = `
+mutation AddPullRequestReviewThread(
+  $pullRequestReviewId: ID!
+  $path: String!
+  $line: Int!
+  $side: DiffSide!
+  $startLine: Int
+  $startSide: DiffSide
+  $body: String!
+) {
+  addPullRequestReviewThread(
+    input: {
+      pullRequestReviewId: $pullRequestReviewId
+      path: $path
+      line: $line
+      side: $side
+      startLine: $startLine
+      startSide: $startSide
+      body: $body
+    }
+  ) {
+    thread {
+      id
+    }
+  }
+}
+`;
+
+const UPDATE_ISSUE_COMMENT_MUTATION = `
+mutation UpdateIssueComment($commentId: ID!, $body: String!) {
+  updateIssueComment(input: { id: $commentId, body: $body }) {
+    issueComment {
+      id
+    }
+  }
+}
+`;
+
+const UPDATE_REVIEW_COMMENT_MUTATION = `
+mutation UpdateReviewComment($commentId: ID!, $body: String!) {
+  updatePullRequestReviewComment(input: { pullRequestReviewCommentId: $commentId, body: $body }) {
+    pullRequestReviewComment {
+      id
+    }
+  }
+}
+`;
+
+const DELETE_ISSUE_COMMENT_MUTATION = `
+mutation DeleteIssueComment($commentId: ID!) {
+  deleteIssueComment(input: { id: $commentId }) {
+    clientMutationId
+  }
+}
+`;
+
+const DELETE_REVIEW_COMMENT_MUTATION = `
+mutation DeleteReviewComment($commentId: ID!) {
+  deletePullRequestReviewComment(input: { id: $commentId }) {
+    pullRequestReviewComment {
+      id
+    }
+  }
+}
+`;
+
+const SUBMIT_PULL_REQUEST_REVIEW_MUTATION = `
+mutation SubmitPullRequestReview(
+  $pullRequestReviewId: ID!
+  $event: PullRequestReviewEvent!
+  $body: String
+) {
+  submitPullRequestReview(
+    input: { pullRequestReviewId: $pullRequestReviewId, event: $event, body: $body }
+  ) {
+    pullRequestReview {
+      id
+    }
+  }
+}
+`;
+
+const DELETE_PULL_REQUEST_REVIEW_MUTATION = `
+mutation DeletePullRequestReview($pullRequestReviewId: ID!) {
+  deletePullRequestReview(input: { pullRequestReviewId: $pullRequestReviewId }) {
+    pullRequestReview {
+      id
+    }
+  }
+}
+`;
+
+const RESOLVE_REVIEW_THREAD_MUTATION = `
+mutation ResolveReviewThread($threadId: ID!) {
+  resolveReviewThread(input: { threadId: $threadId }) {
+    thread {
+      isResolved
+    }
+  }
+}
+`;
+
+const UNRESOLVE_REVIEW_THREAD_MUTATION = `
+mutation UnresolveReviewThread($threadId: ID!) {
+  unresolveReviewThread(input: { threadId: $threadId }) {
+    thread {
+      isResolved
     }
   }
 }
@@ -611,6 +811,43 @@ export const makeGitHubAdapter = Effect.gen(function* () {
     string,
     { readonly prEtag?: string; readonly checksEtag?: string; readonly headSha?: string }
   >();
+  const prNodeIds = new Map<string, string>();
+
+  const getPrNodeId = Effect.fn('GitHubAdapter.getPrNodeId')(function* (
+    repo: RemoteRepoRef,
+    number: PullRequestNumber,
+  ) {
+    const key = `${repo.canonicalPath}#${number}`;
+    const cached = prNodeIds.get(key);
+    if (cached !== undefined) return cached;
+    const { owner, name } = splitRepo(repo);
+    const data = yield* runGraphQl<{
+      readonly repository?: { readonly pullRequest?: { readonly id?: string } | null } | null;
+    }>(PULL_REQUEST_NODE_ID_QUERY, { owner, name, number: Number(number) });
+    const id = data.repository?.pullRequest?.id;
+    if (!id) {
+      return yield* new GitHostError({
+        reason: 'NotFound',
+        detail: `Pull request #${number} was not found in ${repo.canonicalPath}.`,
+      });
+    }
+    prNodeIds.set(key, id);
+    return id;
+  });
+
+  const fetchFreshDetail = (repo: RemoteRepoRef, number: PullRequestNumber) =>
+    getDetail({ repo, number, bypassEtag: true, checkPending: false }).pipe(
+      Effect.flatMap((res) =>
+        res.notModified
+          ? Effect.fail(
+              new GitHostError({
+                reason: 'NotFound',
+                detail: `Pull request #${number} was not found in ${repo.canonicalPath}.`,
+              }),
+            )
+          : Effect.succeed(res.detail),
+      ),
+    );
 
   const getViewerLogin = () =>
     auth.getAccounts.pipe(
@@ -817,6 +1054,7 @@ export const makeGitHubAdapter = Effect.gen(function* () {
         readonly milestones?: {
           readonly nodes?: ReadonlyArray<{
             readonly id: string;
+            readonly number?: number | null;
             readonly title: string;
             readonly dueOn?: string | null;
           } | null> | null;
@@ -826,6 +1064,7 @@ export const makeGitHubAdapter = Effect.gen(function* () {
         } | null;
         readonly pullRequest?:
           | (RawSummaryNode & {
+              readonly id?: string | null;
               readonly body?: string | null;
               readonly mergeStateStatus?: string | null;
               readonly autoMergeRequest?: { readonly mergeMethod?: string | null } | null;
@@ -840,6 +1079,7 @@ export const makeGitHubAdapter = Effect.gen(function* () {
               } | null;
               readonly milestone?: {
                 readonly id: string;
+                readonly number?: number | null;
                 readonly title: string;
                 readonly dueOn?: string | null;
               } | null;
@@ -891,6 +1131,9 @@ export const makeGitHubAdapter = Effect.gen(function* () {
         detail: `Pull request #${number} was not found in ${repo.canonicalPath}.`,
       });
     }
+    if (pr.id) {
+      prNodeIds.set(key, pr.id);
+    }
 
     const summary = toSummary(repo, pr, viewerLogin);
     const rawCheckNodes = pr.commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts?.nodes ?? [];
@@ -939,10 +1182,12 @@ export const makeGitHubAdapter = Effect.gen(function* () {
 
     const toMilestone = (m: {
       readonly id: string;
+      readonly number?: number | null;
       readonly title: string;
       readonly dueOn?: string | null;
     }): PullRequestMilestone => ({
       id: m.id,
+      ...(typeof m.number === 'number' ? { number: m.number } : {}),
       title: m.title,
       dueOn: m.dueOn ? toTimestamp(m.dueOn) : null,
     });
@@ -1013,6 +1258,7 @@ export const makeGitHubAdapter = Effect.gen(function* () {
         headSha: summary.headSha,
         updatedAt: summary.updatedAt,
       },
+      viewerLogin,
     };
 
     return { notModified: false, detail } as const;
@@ -1051,6 +1297,257 @@ export const makeGitHubAdapter = Effect.gen(function* () {
       files,
     };
   });
+
+  const update: GitHost['update'] = Effect.fn('GitHubAdapter.update')(function* ({
+    repo,
+    number,
+    patch,
+    currentDetail,
+  }) {
+    const { owner, name } = splitRepo(repo);
+    const pullRequestId = yield* getPrNodeId(repo, number);
+
+    if (patch.title !== undefined || patch.body !== undefined || patch.baseRef !== undefined) {
+      yield* runGraphQl(UPDATE_PULL_REQUEST_MUTATION, {
+        pullRequestId,
+        ...(patch.title !== undefined ? { title: patch.title } : {}),
+        ...(patch.body !== undefined ? { body: patch.body } : {}),
+        ...(patch.baseRef !== undefined ? { baseRefName: patch.baseRef } : {}),
+      });
+    }
+
+    if (patch.draft !== undefined && patch.draft !== (currentDetail.state === 'draft')) {
+      yield* runGraphQl(patch.draft ? CONVERT_TO_DRAFT_MUTATION : MARK_READY_MUTATION, {
+        pullRequestId,
+      });
+    }
+
+    if (
+      patch.assignees !== undefined ||
+      patch.labels !== undefined ||
+      patch.milestoneId !== undefined
+    ) {
+      const issueBody: Record<string, unknown> = {};
+      if (patch.assignees !== undefined) issueBody['assignees'] = patch.assignees;
+      if (patch.labels !== undefined) issueBody['labels'] = patch.labels;
+      if (patch.milestoneId !== undefined) {
+        if (patch.milestoneId === null) {
+          issueBody['milestone'] = null;
+        } else {
+          const ms = currentDetail.repoMilestones.find((m) => m.id === patch.milestoneId);
+          if (ms?.number !== undefined) {
+            issueBody['milestone'] = ms.number;
+          } else {
+            return yield* new GitHostError({
+              reason: 'ValidationFailed',
+              detail: `Milestone '${patch.milestoneId}' could not be resolved to a repository milestone number.`,
+            });
+          }
+        }
+      }
+      yield* auth.withToken('github', (token) =>
+        http.patchJson(`${GITHUB_API_BASE}/repos/${owner}/${name}/issues/${number}`, issueBody, {
+          headers: { authorization: `Bearer ${token}` },
+        }),
+      );
+    }
+
+    if (patch.reviewers !== undefined) {
+      const prevSet = new Set(currentDetail.reviewers.map((r) => r.login));
+      const nextSet = new Set(patch.reviewers);
+      const toAdd = patch.reviewers.filter((r) => !prevSet.has(r));
+      const toRemove = currentDetail.reviewers.map((r) => r.login).filter((r) => !nextSet.has(r));
+
+      if (toAdd.length > 0) {
+        yield* auth.withToken('github', (token) =>
+          http.postJson(
+            `${GITHUB_API_BASE}/repos/${owner}/${name}/pulls/${number}/requested_reviewers`,
+            { reviewers: toAdd },
+            { headers: { authorization: `Bearer ${token}` } },
+          ),
+        );
+      }
+      if (toRemove.length > 0) {
+        yield* auth.withToken('github', (token) =>
+          http.deleteJson(
+            `${GITHUB_API_BASE}/repos/${owner}/${name}/pulls/${number}/requested_reviewers`,
+            { reviewers: toRemove },
+            { headers: { authorization: `Bearer ${token}` } },
+          ),
+        );
+      }
+    }
+
+    return yield* fetchFreshDetail(repo, number);
+  });
+
+  const toGitHubReviewEvent = (
+    event: 'comment' | 'approve' | 'requestChanges',
+  ): 'COMMENT' | 'APPROVE' | 'REQUEST_CHANGES' => {
+    switch (event) {
+      case 'comment':
+        return 'COMMENT';
+      case 'approve':
+        return 'APPROVE';
+      case 'requestChanges':
+        return 'REQUEST_CHANGES';
+    }
+  };
+
+  const addComment: GitHost['addComment'] = Effect.fn('GitHubAdapter.addComment')(function* ({
+    repo,
+    number,
+    body,
+    target,
+  }) {
+    if (target._tag === 'General') {
+      const pullRequestId = yield* getPrNodeId(repo, number);
+      yield* runGraphQl(ADD_COMMENT_MUTATION, { subjectId: pullRequestId, body });
+      return yield* fetchFreshDetail(repo, number);
+    }
+
+    if (target._tag === 'ThreadReply') {
+      yield* runGraphQl(ADD_REVIEW_THREAD_REPLY_MUTATION, {
+        threadId: target.threadId,
+        body,
+      });
+      return yield* fetchFreshDetail(repo, number);
+    }
+
+    const detail = yield* fetchFreshDetail(repo, number);
+    const pullRequestId = yield* getPrNodeId(repo, number);
+    const viewerLogin = detail.viewerLogin ?? (yield* getViewerLogin());
+    const pendingReview = target.pending
+      ? detail.reviews.find(
+          (r) =>
+            r.state === 'pending' &&
+            (viewerLogin === null || r.author.login.toLowerCase() === viewerLogin.toLowerCase()),
+        )
+      : undefined;
+
+    if (pendingReview !== undefined) {
+      yield* runGraphQl(ADD_PULL_REQUEST_REVIEW_THREAD_MUTATION, {
+        pullRequestReviewId: pendingReview.id,
+        path: target.path,
+        line: target.line,
+        side: target.side,
+        ...(target.startLine !== undefined ? { startLine: target.startLine } : {}),
+        ...(target.startSide !== undefined ? { startSide: target.startSide } : {}),
+        body,
+      });
+    } else {
+      yield* runGraphQl(ADD_PULL_REQUEST_REVIEW_MUTATION, {
+        pullRequestId,
+        ...(target.pending ? {} : { event: 'COMMENT' }),
+        threads: [
+          {
+            path: target.path,
+            line: target.line,
+            side: target.side,
+            ...(target.startLine !== undefined ? { startLine: target.startLine } : {}),
+            ...(target.startSide !== undefined ? { startSide: target.startSide } : {}),
+            body,
+          },
+        ],
+      });
+    }
+
+    return yield* fetchFreshDetail(repo, number);
+  });
+
+  const editComment: GitHost['editComment'] = Effect.fn('GitHubAdapter.editComment')(function* ({
+    repo,
+    number,
+    commentId,
+    kind,
+    body,
+  }) {
+    yield* runGraphQl(
+      kind === 'issue' ? UPDATE_ISSUE_COMMENT_MUTATION : UPDATE_REVIEW_COMMENT_MUTATION,
+      { commentId, body },
+    );
+    return yield* fetchFreshDetail(repo, number);
+  });
+
+  const deleteComment: GitHost['deleteComment'] = Effect.fn('GitHubAdapter.deleteComment')(
+    function* ({ repo, number, commentId, kind }) {
+      yield* runGraphQl(
+        kind === 'issue' ? DELETE_ISSUE_COMMENT_MUTATION : DELETE_REVIEW_COMMENT_MUTATION,
+        { commentId },
+      );
+      return yield* fetchFreshDetail(repo, number);
+    },
+  );
+
+  const submitReview: GitHost['submitReview'] = Effect.fn('GitHubAdapter.submitReview')(function* ({
+    repo,
+    number,
+    reviewId,
+    event,
+    body,
+  }) {
+    const detail = yield* fetchFreshDetail(repo, number);
+    if (
+      (event === 'approve' || event === 'requestChanges') &&
+      !detail.actions.canApproveOrRequestChanges
+    ) {
+      return yield* new GitHostError({
+        reason: 'Forbidden',
+        detail: 'You cannot approve or request changes on your own Pull request.',
+      });
+    }
+
+    if (event === 'requestChanges' && body.trim().length === 0) {
+      const hasPendingComments =
+        reviewId !== undefined &&
+        detail.reviewThreads.some((t) => t.comments.some((c) => c.reviewId === reviewId));
+      if (!hasPendingComments) {
+        return yield* new GitHostError({
+          reason: 'ValidationFailed',
+          detail: 'Requesting changes requires a non-empty summary or inline review comments.',
+        });
+      }
+    }
+
+    const gqlEvent = toGitHubReviewEvent(event);
+    if (reviewId !== undefined) {
+      yield* runGraphQl(SUBMIT_PULL_REQUEST_REVIEW_MUTATION, {
+        pullRequestReviewId: reviewId,
+        event: gqlEvent,
+        body,
+      });
+    } else {
+      const pullRequestId = yield* getPrNodeId(repo, number);
+      yield* runGraphQl(ADD_PULL_REQUEST_REVIEW_MUTATION, {
+        pullRequestId,
+        event: gqlEvent,
+        body,
+      });
+    }
+
+    return yield* fetchFreshDetail(repo, number);
+  });
+
+  const deletePendingReview: GitHost['deletePendingReview'] = Effect.fn(
+    'GitHubAdapter.deletePendingReview',
+  )(function* ({ repo, number, reviewId }) {
+    yield* runGraphQl(DELETE_PULL_REQUEST_REVIEW_MUTATION, { pullRequestReviewId: reviewId });
+    return yield* fetchFreshDetail(repo, number);
+  });
+
+  const resolveThread: GitHost['resolveThread'] = Effect.fn('GitHubAdapter.resolveThread')(
+    function* ({ repo, number, threadId }) {
+      yield* runGraphQl(RESOLVE_REVIEW_THREAD_MUTATION, { threadId });
+      return yield* fetchFreshDetail(repo, number);
+    },
+  );
+
+  const unresolveThread: GitHost['unresolveThread'] = Effect.fn('GitHubAdapter.unresolveThread')(
+    function* ({ repo, number, threadId }) {
+      yield* runGraphQl(UNRESOLVE_REVIEW_THREAD_MUTATION, { threadId });
+      return yield* fetchFreshDetail(repo, number);
+    },
+  );
 
   const clearEtags: GitHost['clearEtags'] = (repo) =>
     Effect.sync(() => {
@@ -1172,6 +1669,14 @@ export const makeGitHubAdapter = Effect.gen(function* () {
     getDiff,
     merge,
     setAutoMerge,
+    update,
+    addComment,
+    editComment,
+    deleteComment,
+    submitReview,
+    deletePendingReview,
+    resolveThread,
+    unresolveThread,
     clearEtags,
   };
 
