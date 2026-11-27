@@ -9,8 +9,11 @@ import { promisify } from 'node:util';
 import { describe, expect } from 'vitest';
 import { ProjectId, type Project } from '../../src/shared/projects/projects.rpc';
 import {
+  CommentId,
   GitHostError,
   PullRequestNumber,
+  ReviewId,
+  ReviewThreadId,
   type HostAccount,
   type HostAccountsState,
   type PullRequestDetail,
@@ -110,6 +113,14 @@ const makeHarness = (options: {
   readonly listForRepo: GitHost['listForRepo'];
   readonly getDetail?: GitHost['getDetail'];
   readonly getSummaryByNumber?: GitHost['getSummaryByNumber'];
+  readonly update?: GitHost['update'];
+  readonly addComment?: GitHost['addComment'];
+  readonly editComment?: GitHost['editComment'];
+  readonly deleteComment?: GitHost['deleteComment'];
+  readonly submitReview?: GitHost['submitReview'];
+  readonly deletePendingReview?: GitHost['deletePendingReview'];
+  readonly resolveThread?: GitHost['resolveThread'];
+  readonly unresolveThread?: GitHost['unresolveThread'];
 }) => {
   let accountStatus: HostAccount['status'] = 'connected';
   const fakeAuth: HostAuthShape = {
@@ -153,6 +164,21 @@ const makeHarness = (options: {
           state: draft ? 'draft' : 'open',
         }),
       ),
+    update:
+      options.update ??
+      (({ currentDetail, patch }) =>
+        Effect.succeed({
+          ...currentDetail,
+          ...(patch.title !== undefined ? { title: patch.title } : {}),
+          ...(patch.body !== undefined ? { body: patch.body } : {}),
+        })),
+    addComment: options.addComment ?? (() => Effect.die('unused')),
+    editComment: options.editComment ?? (() => Effect.die('unused')),
+    deleteComment: options.deleteComment ?? (() => Effect.die('unused')),
+    submitReview: options.submitReview ?? (() => Effect.die('unused')),
+    deletePendingReview: options.deletePendingReview ?? (() => Effect.die('unused')),
+    resolveThread: options.resolveThread ?? (() => Effect.die('unused')),
+    unresolveThread: options.unresolveThread ?? (() => Effect.die('unused')),
     clearEtags: () => Effect.void,
   };
 
@@ -440,6 +466,14 @@ describe('PullRequestsService polling & lifecycle', () => {
             );
           }),
         clearEtags: () => Effect.void,
+        update: () => Effect.die('unused'),
+        addComment: () => Effect.die('unused'),
+        editComment: () => Effect.die('unused'),
+        deleteComment: () => Effect.die('unused'),
+        submitReview: () => Effect.die('unused'),
+        deletePendingReview: () => Effect.die('unused'),
+        resolveThread: () => Effect.die('unused'),
+        unresolveThread: () => Effect.die('unused'),
       };
 
       const repoProject: Project = { ...sampleProject, path: work };
@@ -552,5 +586,189 @@ describe('PullRequestsService polling & lifecycle', () => {
         Effect.ensuring(Effect.promise(() => rm(root, { recursive: true, force: true }))),
       );
     }),
+  );
+
+  it.effect(
+    'detects field-level conflicts on update when edited field changed remotely, but allows edits when only unrelated fields changed',
+    () =>
+      Effect.gen(function* () {
+        const storeRoot = yield* Effect.promise(() =>
+          mkdtemp(path.join(tmpdir(), 'spence-pr-update-')),
+        );
+        const num = PullRequestNumber.make(10);
+        const initial = makeDetail(10, {
+          title: 'Original title',
+          body: 'Original body',
+          updatedAt: 1_000,
+          revision: { headSha: 'sha-10', updatedAt: 1_000 },
+        });
+        let remote = initial;
+        let updateCalls = 0;
+
+        const layer = makeHarness({
+          storeRoot,
+          listForRepo: () => Effect.succeed({ notModified: false, summaries: [makeSummary(10)] }),
+          getDetail: () => Effect.succeed({ notModified: false, detail: remote }),
+          update: ({ currentDetail, patch }) => {
+            updateCalls += 1;
+            const next: PullRequestDetail = {
+              ...currentDetail,
+              ...(patch.title !== undefined ? { title: patch.title } : {}),
+              ...(patch.body !== undefined ? { body: patch.body } : {}),
+              updatedAt: currentDetail.updatedAt + 100,
+              revision: {
+                headSha: currentDetail.headSha,
+                updatedAt: currentDetail.updatedAt + 100,
+              },
+            };
+            remote = next;
+            return Effect.succeed(next);
+          },
+        });
+
+        yield* Effect.gen(function* () {
+          const svc = yield* PullRequestsService;
+          const loaded = yield* svc.getDetail(projectId, num);
+          expect(loaded.title).toBe('Original title');
+
+          // Remote changes ONLY body (unrelated to user's title edit)
+          remote = {
+            ...initial,
+            body: 'Remote edited body',
+            updatedAt: 2_000,
+            revision: { headSha: 'sha-10', updatedAt: 2_000 },
+          };
+
+          const updated = yield* svc.update({
+            projectId,
+            number: num,
+            revision: loaded.revision,
+            patch: { title: 'My new title' },
+          });
+          expect(updated.title).toBe('My new title');
+          expect(updated.body).toBe('Remote edited body');
+          expect(updateCalls).toBe(1);
+
+          // Now remote changes title as well; user tries to edit title using stale revision
+          const staleRevision = updated.revision;
+          remote = {
+            ...updated,
+            title: 'Someone else title',
+            updatedAt: 3_000,
+            revision: { headSha: 'sha-10', updatedAt: 3_000 },
+          };
+
+          const err = yield* svc
+            .update({
+              projectId,
+              number: num,
+              revision: staleRevision,
+              patch: { title: 'My conflicting title' },
+            })
+            .pipe(Effect.flip);
+
+          expect(err).toBeInstanceOf(GitHostError);
+          expect(err.reason).toBe('Conflict');
+          expect(err.conflictingFields).toEqual(['title']);
+          expect(err.latestDetail?.title).toBe('Someone else title');
+          expect(updateCalls).toBe(1);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(Effect.promise(() => rm(storeRoot, { recursive: true, force: true }))),
+        );
+      }),
+  );
+
+  it.effect(
+    'delegates comment, review, and thread-resolution mutations and updates cached detail + summary counts',
+    () =>
+      Effect.gen(function* () {
+        const storeRoot = yield* Effect.promise(() =>
+          mkdtemp(path.join(tmpdir(), 'spence-pr-mut-')),
+        );
+        const num = PullRequestNumber.make(11);
+        const base = makeDetail(11, { commentCount: 0, unresolvedThreadCount: 1 });
+        const afterResolve = makeDetail(11, { commentCount: 1, unresolvedThreadCount: 0 });
+
+        const layer = makeHarness({
+          storeRoot,
+          listForRepo: () => Effect.succeed({ notModified: false, summaries: [makeSummary(11)] }),
+          getDetail: () => Effect.succeed({ notModified: false, detail: base }),
+          addComment: () => Effect.succeed(makeDetail(11, { commentCount: 1 })),
+          editComment: () => Effect.succeed(makeDetail(11, { commentCount: 1 })),
+          deleteComment: () => Effect.succeed(makeDetail(11, { commentCount: 0 })),
+          submitReview: () => Effect.succeed(makeDetail(11, { reviewDecision: 'approved' })),
+          deletePendingReview: () => Effect.succeed(base),
+          resolveThread: () => Effect.succeed(afterResolve),
+          unresolveThread: () => Effect.succeed(base),
+        });
+
+        yield* Effect.gen(function* () {
+          const svc = yield* PullRequestsService;
+          yield* svc.getProjectState(projectId);
+
+          const c1 = yield* svc.addComment({
+            projectId,
+            number: num,
+            body: 'hi',
+            target: { _tag: 'General' },
+          });
+          expect(c1.commentCount).toBe(1);
+
+          const c2 = yield* svc.editComment({
+            projectId,
+            number: num,
+            commentId: CommentId.make('c1'),
+            kind: 'issue',
+            body: 'edited',
+          });
+          expect(c2.commentCount).toBe(1);
+
+          const c3 = yield* svc.deleteComment({
+            projectId,
+            number: num,
+            commentId: CommentId.make('c1'),
+            kind: 'issue',
+          });
+          expect(c3.commentCount).toBe(0);
+
+          const r1 = yield* svc.submitReview({
+            projectId,
+            number: num,
+            event: 'approve',
+            body: 'lgtm',
+          });
+          expect(r1.reviewDecision).toBe('approved');
+
+          const r2 = yield* svc.deletePendingReview({
+            projectId,
+            number: num,
+            reviewId: ReviewId.make('rev-1'),
+          });
+          expect(r2.reviews.length).toBe(0);
+
+          const t1 = yield* svc.resolveThread({
+            projectId,
+            number: num,
+            threadId: ReviewThreadId.make('thr-1'),
+          });
+          expect(t1.unresolvedThreadCount).toBe(0);
+
+          const stateAfter = yield* svc.getProjectState(projectId);
+          if (stateAfter._tag === 'Available') {
+            expect(stateAfter.summaries[0]?.unresolvedThreadCount).toBe(0);
+          }
+
+          const t2 = yield* svc.unresolveThread({
+            projectId,
+            number: num,
+            threadId: ReviewThreadId.make('thr-1'),
+          });
+          expect(t2.unresolvedThreadCount).toBe(1);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(Effect.promise(() => rm(storeRoot, { recursive: true, force: true }))),
+        );
+      }),
   );
 });

@@ -89,6 +89,14 @@ describe('PullRequestsState', () => {
         'PullRequests.prepareCreate': () => Effect.die('unused'),
         'PullRequests.draftCreate': () => Effect.die('unused'),
         'PullRequests.create': () => Effect.die('unused'),
+        'PullRequests.update': () => Effect.die('unused'),
+        'PullRequests.addComment': () => Effect.die('unused'),
+        'PullRequests.editComment': () => Effect.die('unused'),
+        'PullRequests.deleteComment': () => Effect.die('unused'),
+        'PullRequests.submitReview': () => Effect.die('unused'),
+        'PullRequests.deletePendingReview': () => Effect.die('unused'),
+        'PullRequests.resolveThread': () => Effect.die('unused'),
+        'PullRequests.unresolveThread': () => Effect.die('unused'),
       }),
     );
 

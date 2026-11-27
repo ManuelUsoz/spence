@@ -97,6 +97,14 @@ const setupForm = async (options?: {
           options?.onCreate?.(input);
           return createdSummary;
         }),
+      'PullRequests.update': () => Effect.die('unused'),
+      'PullRequests.addComment': () => Effect.die('unused'),
+      'PullRequests.editComment': () => Effect.die('unused'),
+      'PullRequests.deleteComment': () => Effect.die('unused'),
+      'PullRequests.submitReview': () => Effect.die('unused'),
+      'PullRequests.deletePendingReview': () => Effect.die('unused'),
+      'PullRequests.resolveThread': () => Effect.die('unused'),
+      'PullRequests.unresolveThread': () => Effect.die('unused'),
     }),
     SettingsRpcs.toLayer({
       'Settings.get': () =>

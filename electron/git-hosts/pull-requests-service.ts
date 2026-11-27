@@ -22,12 +22,20 @@ import {
   type CreatePrBlocker,
   type CreatePrPreparation,
   type DraftPullRequestResult,
+  type AddCommentTarget,
+  type CommentId,
   type GitHostKind,
   type ProjectPullRequestsState,
+  type PullRequestCommentKind,
   type PullRequestDetail,
   type PullRequestDiff,
   type PullRequestNumber,
+  type PullRequestRevision,
   type PullRequestSummary,
+  type PullRequestUpdatePatch,
+  type ReviewId,
+  type ReviewSubmitEvent,
+  type ReviewThreadId,
   type SyncStatus,
   type WorktreePullRequestLink,
 } from '../../src/shared/pull-requests/pull-requests.rpc';
@@ -45,6 +53,7 @@ import {
   GitHostRegistry,
   matchWorktreeToPullRequest,
   resolveProjectRemote,
+  type GitHost,
   type ResolvedProjectRemote,
 } from './git-host';
 import { HostAuth } from './host-auth';
@@ -221,10 +230,139 @@ export interface PullRequestsServiceShape {
     readonly draft: boolean;
     readonly pushFirst: boolean;
   }) => Effect.Effect<PullRequestSummary, GitHostError>;
+  readonly update: (input: {
+    readonly projectId: ProjectId;
+    readonly number: PullRequestNumber;
+    readonly revision: PullRequestRevision;
+    readonly patch: PullRequestUpdatePatch;
+    readonly baseline?: PullRequestUpdatePatch;
+  }) => Effect.Effect<PullRequestDetail, GitHostError>;
+  readonly addComment: (input: {
+    readonly projectId: ProjectId;
+    readonly number: PullRequestNumber;
+    readonly body: string;
+    readonly target: AddCommentTarget;
+  }) => Effect.Effect<PullRequestDetail, GitHostError>;
+  readonly editComment: (input: {
+    readonly projectId: ProjectId;
+    readonly number: PullRequestNumber;
+    readonly commentId: CommentId;
+    readonly kind: PullRequestCommentKind;
+    readonly body: string;
+  }) => Effect.Effect<PullRequestDetail, GitHostError>;
+  readonly deleteComment: (input: {
+    readonly projectId: ProjectId;
+    readonly number: PullRequestNumber;
+    readonly commentId: CommentId;
+    readonly kind: PullRequestCommentKind;
+  }) => Effect.Effect<PullRequestDetail, GitHostError>;
+  readonly submitReview: (input: {
+    readonly projectId: ProjectId;
+    readonly number: PullRequestNumber;
+    readonly reviewId?: ReviewId;
+    readonly event: ReviewSubmitEvent;
+    readonly body: string;
+  }) => Effect.Effect<PullRequestDetail, GitHostError>;
+  readonly deletePendingReview: (input: {
+    readonly projectId: ProjectId;
+    readonly number: PullRequestNumber;
+    readonly reviewId: ReviewId;
+  }) => Effect.Effect<PullRequestDetail, GitHostError>;
+  readonly resolveThread: (input: {
+    readonly projectId: ProjectId;
+    readonly number: PullRequestNumber;
+    readonly threadId: ReviewThreadId;
+  }) => Effect.Effect<PullRequestDetail, GitHostError>;
+  readonly unresolveThread: (input: {
+    readonly projectId: ProjectId;
+    readonly number: PullRequestNumber;
+    readonly threadId: ReviewThreadId;
+  }) => Effect.Effect<PullRequestDetail, GitHostError>;
   readonly notifyTurnEnded: (projectId: ProjectId) => Effect.Effect<void>;
   readonly evictProject: (projectId: ProjectId) => Effect.Effect<void>;
   readonly evictAll: () => Effect.Effect<void>;
 }
+
+const sortedEqual = (a: ReadonlyArray<string>, b: ReadonlyArray<string>): boolean => {
+  if (a.length !== b.length) return false;
+  const sa = [...a].sort();
+  const sb = [...b].sort();
+  return sa.every((v, i) => v === sb[i]);
+};
+
+const detectConflictingFields = (
+  patch: PullRequestUpdatePatch,
+  fresh: PullRequestDetail,
+  snapshot: PullRequestDetail | null,
+  explicitBaseline?: PullRequestUpdatePatch,
+): ReadonlyArray<string> => {
+  const conflicts: string[] = [];
+  if (patch.title !== undefined) {
+    const base = explicitBaseline?.title ?? snapshot?.title;
+    if (base !== undefined && fresh.title !== base) conflicts.push('title');
+  }
+  if (patch.body !== undefined) {
+    const base = explicitBaseline?.body ?? snapshot?.body;
+    if (base !== undefined && fresh.body !== base) conflicts.push('body');
+  }
+  if (patch.baseRef !== undefined) {
+    const base = explicitBaseline?.baseRef ?? snapshot?.baseRef;
+    if (base !== undefined && fresh.baseRef !== base) conflicts.push('baseRef');
+  }
+  if (patch.draft !== undefined) {
+    const base =
+      explicitBaseline?.draft ?? (snapshot !== null ? snapshot.state === 'draft' : undefined);
+    if (base !== undefined && (fresh.state === 'draft') !== base) conflicts.push('draft');
+  }
+  if (patch.reviewers !== undefined) {
+    const base = explicitBaseline?.reviewers ?? snapshot?.reviewers.map((r) => r.login);
+    if (
+      base !== undefined &&
+      !sortedEqual(
+        fresh.reviewers.map((r) => r.login),
+        base,
+      )
+    ) {
+      conflicts.push('reviewers');
+    }
+  }
+  if (patch.assignees !== undefined) {
+    const base = explicitBaseline?.assignees ?? snapshot?.assignees.map((a) => a.login);
+    if (
+      base !== undefined &&
+      !sortedEqual(
+        fresh.assignees.map((a) => a.login),
+        base,
+      )
+    ) {
+      conflicts.push('assignees');
+    }
+  }
+  if (patch.labels !== undefined) {
+    const base = explicitBaseline?.labels ?? snapshot?.labels.map((l) => l.name);
+    if (
+      base !== undefined &&
+      !sortedEqual(
+        fresh.labels.map((l) => l.name),
+        base,
+      )
+    ) {
+      conflicts.push('labels');
+    }
+  }
+  if (patch.milestoneId !== undefined) {
+    const base =
+      explicitBaseline?.milestoneId !== undefined
+        ? explicitBaseline.milestoneId
+        : snapshot !== null
+          ? (snapshot.milestone?.id ?? null)
+          : undefined;
+    if (base !== undefined && (fresh.milestone?.id ?? null) !== base) {
+      conflicts.push('milestoneId');
+    }
+  }
+  return conflicts;
+};
 
 /** Coordinates PR discovery, ETag-gated focused polling, caching, and eviction. */
 export class PullRequestsService extends Context.Service<
@@ -558,12 +696,24 @@ export const layerPullRequestsService = Layer.effect(
       }),
     );
 
-    const getDetailInternal = Effect.fnUntraced(function* (
+    const revisionSnapshots = new Map<string, PullRequestDetail>();
+    const snapshotKey = (
       projectId: ProjectId,
       number: PullRequestNumber,
-      bypassEtag: boolean,
-      checkPending: boolean,
-    ) {
+      rev: PullRequestRevision,
+    ): string => `${projectId}#${number}@${rev.headSha}:${rev.updatedAt}`;
+
+    const recordSnapshot = (projectId: ProjectId, detail: PullRequestDetail): void => {
+      const key = snapshotKey(projectId, detail.ref.number, detail.revision);
+      revisionSnapshots.delete(key);
+      revisionSnapshots.set(key, detail);
+      if (revisionSnapshots.size > 50) {
+        const firstKey = revisionSnapshots.keys().next().value;
+        if (firstKey !== undefined) revisionSnapshots.delete(firstKey);
+      }
+    };
+
+    const requireResolved = Effect.fnUntraced(function* (projectId: ProjectId) {
       let resolved = resolvedByProject.get(projectId);
       if (resolved === undefined) {
         const r = yield* resolveRemoteForProject(projectId);
@@ -572,10 +722,47 @@ export const layerPullRequestsService = Layer.effect(
         }
         resolved = r.resolved;
       }
+      return resolved;
+    });
+
+    const syncDetailToState = Effect.fnUntraced(function* (
+      projectId: ProjectId,
+      detail: PullRequestDetail,
+    ) {
+      yield* prStore.saveDetail(projectId, detail);
+      recordSnapshot(projectId, detail);
+      const current = states.get(projectId);
+      if (current?._tag === 'Available') {
+        const nextSummaries = current.summaries.map((s) =>
+          s.ref.number === detail.ref.number
+            ? {
+                ...s,
+                title: detail.title,
+                state: detail.state,
+                baseRef: detail.baseRef,
+                updatedAt: detail.updatedAt,
+                reviewDecision: detail.reviewDecision,
+                commentCount: detail.commentCount,
+                unresolvedThreadCount: detail.unresolvedThreadCount,
+              }
+            : s,
+        );
+        yield* publishState({ ...current, summaries: nextSummaries });
+      }
+    });
+
+    const getDetailInternal = Effect.fnUntraced(function* (
+      projectId: ProjectId,
+      number: PullRequestNumber,
+      bypassEtag: boolean,
+      checkPending: boolean,
+    ) {
+      const resolved = yield* requireResolved(projectId);
       const host = yield* registry.get(resolved.repo.host);
       const cached = yield* prStore.getDetail(projectId, number);
 
       if (!bypassEtag && cached !== null && !checkPending) {
+        recordSnapshot(projectId, cached);
         return cached;
       }
 
@@ -610,6 +797,7 @@ export const layerPullRequestsService = Layer.effect(
         });
         if (!forced.notModified) {
           yield* prStore.saveDetail(projectId, forced.detail);
+          recordSnapshot(projectId, forced.detail);
           return forced.detail;
         }
         return yield* new GitHostError({
@@ -619,6 +807,7 @@ export const layerPullRequestsService = Layer.effect(
       }
 
       yield* prStore.saveDetail(projectId, res.detail);
+      recordSnapshot(projectId, res.detail);
       return res.detail;
     });
 
@@ -1032,6 +1221,147 @@ export const layerPullRequestsService = Layer.effect(
       },
     );
 
+    const update: PullRequestsServiceShape['update'] = Effect.fnUntraced(function* ({
+      projectId,
+      number,
+      revision,
+      patch,
+      baseline,
+    }) {
+      const resolved = yield* requireResolved(projectId);
+      const host = yield* registry.get(resolved.repo.host);
+      const freshRes = yield* host.getDetail({
+        repo: resolved.repo,
+        number,
+        bypassEtag: true,
+        checkPending: false,
+      });
+      if (freshRes.notModified) {
+        return yield* new GitHostError({
+          reason: 'NotFound',
+          detail: `Pull request #${number} detail is not available.`,
+        });
+      }
+      const freshDetail = freshRes.detail;
+      if (
+        freshDetail.revision.headSha !== revision.headSha ||
+        freshDetail.revision.updatedAt !== revision.updatedAt
+      ) {
+        const cached = yield* prStore.getDetail(projectId, number);
+        const snapshot =
+          revisionSnapshots.get(snapshotKey(projectId, number, revision)) ??
+          (cached !== null &&
+          cached.revision.headSha === revision.headSha &&
+          cached.revision.updatedAt === revision.updatedAt
+            ? cached
+            : null);
+        const conflictingFields = detectConflictingFields(patch, freshDetail, snapshot, baseline);
+        if (conflictingFields.length > 0) {
+          yield* syncDetailToState(projectId, freshDetail);
+          return yield* new GitHostError({
+            reason: 'Conflict',
+            detail: `Remote Pull request changed on: ${conflictingFields.join(', ')}.`,
+            conflictingFields,
+            latestDetail: freshDetail,
+          });
+        }
+      }
+
+      const updated = yield* host.update({
+        repo: resolved.repo,
+        number,
+        patch,
+        currentDetail: freshDetail,
+      });
+      yield* syncDetailToState(projectId, updated);
+      return updated;
+    });
+
+    const runDetailMutation = Effect.fnUntraced(function* (
+      projectId: ProjectId,
+      fn: (
+        host: GitHost,
+        repo: ResolvedProjectRemote['repo'],
+      ) => Effect.Effect<PullRequestDetail, GitHostError>,
+    ) {
+      const resolved = yield* requireResolved(projectId);
+      const host = yield* registry.get(resolved.repo.host);
+      const updated = yield* fn(host, resolved.repo);
+      yield* syncDetailToState(projectId, updated);
+      return updated;
+    });
+
+    const addComment: PullRequestsServiceShape['addComment'] = ({
+      projectId,
+      number,
+      body,
+      target,
+    }) =>
+      runDetailMutation(projectId, (host, repo) => host.addComment({ repo, number, body, target }));
+
+    const editComment: PullRequestsServiceShape['editComment'] = ({
+      projectId,
+      number,
+      commentId,
+      kind,
+      body,
+    }) =>
+      runDetailMutation(projectId, (host, repo) =>
+        host.editComment({ repo, number, commentId, kind, body }),
+      );
+
+    const deleteComment: PullRequestsServiceShape['deleteComment'] = ({
+      projectId,
+      number,
+      commentId,
+      kind,
+    }) =>
+      runDetailMutation(projectId, (host, repo) =>
+        host.deleteComment({ repo, number, commentId, kind }),
+      );
+
+    const submitReview: PullRequestsServiceShape['submitReview'] = ({
+      projectId,
+      number,
+      reviewId,
+      event,
+      body,
+    }) =>
+      runDetailMutation(projectId, (host, repo) =>
+        host.submitReview({
+          repo,
+          number,
+          ...(reviewId !== undefined ? { reviewId } : {}),
+          event,
+          body,
+        }),
+      );
+
+    const deletePendingReview: PullRequestsServiceShape['deletePendingReview'] = ({
+      projectId,
+      number,
+      reviewId,
+    }) =>
+      runDetailMutation(projectId, (host, repo) =>
+        host.deletePendingReview({ repo, number, reviewId }),
+      );
+
+    const resolveThread: PullRequestsServiceShape['resolveThread'] = ({
+      projectId,
+      number,
+      threadId,
+    }) =>
+      runDetailMutation(projectId, (host, repo) => host.resolveThread({ repo, number, threadId }));
+
+    const unresolveThread: PullRequestsServiceShape['unresolveThread'] = ({
+      projectId,
+      number,
+      threadId,
+    }) =>
+      runDetailMutation(projectId, (host, repo) =>
+        host.unresolveThread({ repo, number, threadId }),
+      );
+
     const notifyTurnEnded: PullRequestsServiceShape['notifyTurnEnded'] = Effect.fnUntraced(
       function* (projectId) {
         if (turnDebounceFiber !== null) {
@@ -1085,6 +1415,14 @@ export const layerPullRequestsService = Layer.effect(
       prepareCreate,
       draftCreate,
       create,
+      update,
+      addComment,
+      editComment,
+      deleteComment,
+      submitReview,
+      deletePendingReview,
+      resolveThread,
+      unresolveThread,
       notifyTurnEnded,
       evictProject,
       evictAll,

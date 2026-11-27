@@ -5,6 +5,7 @@ import {
   CheckRunId,
   CommentId,
   GitHostError,
+  ReviewId,
   ReviewThreadId,
   type CheckRollupStatus,
   type CheckRun,
@@ -389,6 +390,7 @@ export interface RawReviewThreadNode {
       readonly updatedAt?: string | null;
       readonly url?: string | null;
       readonly author?: RawActorNode | null;
+      readonly pullRequestReview?: { readonly id?: string | null } | null;
     } | null> | null;
   } | null;
 }
@@ -417,6 +419,7 @@ export const normalizeReviewThreads = (
       if (!c || !c.id) continue;
       comments.push({
         id: CommentId.make(c.id),
+        ...(c.pullRequestReview?.id ? { reviewId: ReviewId.make(c.pullRequestReview.id) } : {}),
         author: toHostActor(c.author),
         body: c.body ?? '',
         createdAt: toTimestamp(c.createdAt),
