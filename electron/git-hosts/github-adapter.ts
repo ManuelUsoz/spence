@@ -355,6 +355,47 @@ query PullRequestDetail($owner: String!, $name: String!, $number: Int!) {
 }
 `;
 
+const PULL_REQUEST_NODE_ID_QUERY = `
+query PullRequestNodeId($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      id
+      headRefOid
+    }
+  }
+}
+`;
+
+const MERGE_PULL_REQUEST_MUTATION = `
+mutation MergePullRequest($input: MergePullRequestInput!) {
+  mergePullRequest(input: $input) {
+    pullRequest {
+      number
+    }
+  }
+}
+`;
+
+const ENABLE_AUTO_MERGE_MUTATION = `
+mutation EnablePullRequestAutoMerge($input: EnablePullRequestAutoMergeInput!) {
+  enablePullRequestAutoMerge(input: $input) {
+    pullRequest {
+      number
+    }
+  }
+}
+`;
+
+const DISABLE_AUTO_MERGE_MUTATION = `
+mutation DisablePullRequestAutoMerge($pullRequestId: ID!) {
+  disablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId }) {
+    pullRequest {
+      number
+    }
+  }
+}
+`;
+
 interface GraphQlResponse<A> {
   readonly data?: A;
   readonly errors?: ReadonlyArray<{ readonly message?: string; readonly type?: string }>;
@@ -467,6 +508,25 @@ const mapMergeState = (raw: string | null | undefined, isDraft: boolean): MergeS
   }
 };
 
+const mergeStateReasonFor = (state: MergeStateStatus): string | undefined => {
+  switch (state) {
+    case 'clean':
+      return undefined;
+    case 'draft':
+      return 'Pull request is still a draft.';
+    case 'dirty':
+      return 'Merge conflicts must be resolved before merging.';
+    case 'behind':
+      return 'Head branch is behind the base branch.';
+    case 'blocked':
+      return 'Merging is blocked by branch protection rules (required checks or reviews).';
+    case 'unstable':
+      return 'Status checks are failing or unstable.';
+    case 'unknown':
+      return 'Mergeability status is currently unknown.';
+  }
+};
+
 const mapReviewState = (raw: string | null | undefined): ReviewState => {
   switch ((raw ?? '').toUpperCase()) {
     case 'PENDING':
@@ -557,6 +617,30 @@ export const makeGitHubAdapter = Effect.gen(function* () {
       Effect.map((state) => state.accounts.find((a) => a.host === 'github')?.handle ?? null),
     );
 
+  const mapGraphQlError = (
+    errors: ReadonlyArray<{ readonly message?: string; readonly type?: string }>,
+  ): GitHostError => {
+    const first = errors[0];
+    const msg = first?.message ?? 'GitHub GraphQL query failed.';
+    if (first?.type === 'NOT_FOUND') {
+      return new GitHostError({ reason: 'NotFound', detail: msg });
+    }
+    if (first?.type === 'FORBIDDEN') {
+      return new GitHostError({ reason: 'Forbidden', detail: msg });
+    }
+    if (
+      /head.*sha|expectedHeadOid|does not match|already.*merged|base.*modified|not.*mergeable|conflict/i.test(
+        msg,
+      )
+    ) {
+      return new GitHostError({ reason: 'Conflict', detail: msg });
+    }
+    if (first?.type === 'UNPROCESSABLE') {
+      return new GitHostError({ reason: 'ValidationFailed', detail: msg });
+    }
+    return new GitHostError({ reason: 'HostError', detail: msg });
+  };
+
   const runGraphQl = <A>(
     query: string,
     variables: Readonly<Record<string, unknown>>,
@@ -570,13 +654,8 @@ export const makeGitHubAdapter = Effect.gen(function* () {
         )
         .pipe(
           Effect.flatMap((res) => {
-            if (res.data.errors && res.data.errors.length > 0 && !res.data.data) {
-              const first = res.data.errors[0];
-              const msg = first?.message ?? 'GitHub GraphQL query failed.';
-              if (first?.type === 'NOT_FOUND') {
-                return Effect.fail(new GitHostError({ reason: 'NotFound', detail: msg }));
-              }
-              return Effect.fail(new GitHostError({ reason: 'HostError', detail: msg }));
+            if (res.data.errors && res.data.errors.length > 0) {
+              return Effect.fail(mapGraphQlError(res.data.errors));
             }
             if (!res.data.data) {
               return Effect.fail(
@@ -889,12 +968,14 @@ export const makeGitHubAdapter = Effect.gen(function* () {
         submittedAt: r.submittedAt ? toTimestamp(r.submittedAt) : null,
       }));
 
+    const mergeStateReason = mergeStateReasonFor(mergeState);
     const detail: PullRequestDetail = {
       ...summary,
       checkRollup,
       unresolvedThreadCount: reviewThreads.filter((t) => !t.isResolved).length,
       body: pr.body ?? '',
       mergeState,
+      ...(mergeStateReason !== undefined ? { mergeStateReason } : {}),
       autoMergeEnabled: pr.autoMergeRequest !== null && pr.autoMergeRequest !== undefined,
       labels: (pr.labels?.nodes ?? [])
         .filter((l): l is NonNullable<typeof l> => l !== null)
@@ -985,6 +1066,102 @@ export const makeGitHubAdapter = Effect.gen(function* () {
       }
     });
 
+  const getPullRequestNodeId = Effect.fn('GitHubAdapter.getPullRequestNodeId')(function* (
+    repo: RemoteRepoRef,
+    number: PullRequestNumber,
+  ) {
+    const { owner, name } = splitRepo(repo);
+    const data = yield* runGraphQl<{
+      readonly repository?: {
+        readonly pullRequest?: { readonly id: string; readonly headRefOid: string } | null;
+      } | null;
+    }>(PULL_REQUEST_NODE_ID_QUERY, { owner, name, number: Number(number) });
+    const pr = data.repository?.pullRequest;
+    if (!pr) {
+      return yield* new GitHostError({
+        reason: 'NotFound',
+        detail: `Pull request #${number} was not found in ${repo.canonicalPath}.`,
+      });
+    }
+    return pr;
+  });
+
+  const toGitHubMergeMethod = (method: MergeMethod): 'MERGE' | 'SQUASH' | 'REBASE' => {
+    switch (method) {
+      case 'merge':
+        return 'MERGE';
+      case 'squash':
+        return 'SQUASH';
+      case 'rebase':
+        return 'REBASE';
+    }
+  };
+
+  const merge: GitHost['merge'] = Effect.fn('GitHubAdapter.merge')(function* ({
+    repo,
+    number,
+    expectedHeadSha,
+    method,
+    commitTitle,
+    commitMessage,
+  }) {
+    const pr = yield* getPullRequestNodeId(repo, number);
+    yield* runGraphQl<unknown>(MERGE_PULL_REQUEST_MUTATION, {
+      input: {
+        pullRequestId: pr.id,
+        expectedHeadOid: expectedHeadSha,
+        mergeMethod: toGitHubMergeMethod(method),
+        ...(commitTitle !== undefined && commitTitle.trim().length > 0
+          ? { commitHeadline: commitTitle }
+          : {}),
+        ...(commitMessage !== undefined && commitMessage.trim().length > 0
+          ? { commitBody: commitMessage }
+          : {}),
+      },
+    });
+    yield* clearEtags(repo);
+    const refreshed = yield* getDetail({ repo, number, bypassEtag: true });
+    if (refreshed.notModified) {
+      return yield* new GitHostError({
+        reason: 'HostError',
+        detail: 'Expected refreshed Pull request detail after merge.',
+      });
+    }
+    return refreshed.detail;
+  });
+
+  const setAutoMerge: GitHost['setAutoMerge'] = Effect.fn('GitHubAdapter.setAutoMerge')(function* ({
+    repo,
+    number,
+    enabled,
+    method,
+    expectedHeadSha,
+  }) {
+    const pr = yield* getPullRequestNodeId(repo, number);
+    if (enabled) {
+      yield* runGraphQl<unknown>(ENABLE_AUTO_MERGE_MUTATION, {
+        input: {
+          pullRequestId: pr.id,
+          mergeMethod: toGitHubMergeMethod(method ?? 'squash'),
+          ...(expectedHeadSha !== undefined ? { expectedHeadOid: expectedHeadSha } : {}),
+        },
+      });
+    } else {
+      yield* runGraphQl<unknown>(DISABLE_AUTO_MERGE_MUTATION, {
+        pullRequestId: pr.id,
+      });
+    }
+    yield* clearEtags(repo);
+    const refreshed = yield* getDetail({ repo, number, bypassEtag: true });
+    if (refreshed.notModified) {
+      return yield* new GitHostError({
+        reason: 'HostError',
+        detail: 'Expected refreshed Pull request detail after auto-merge change.',
+      });
+    }
+    return refreshed.detail;
+  });
+
   const host: GitHost = {
     kind: 'github',
     capabilities: GITHUB_CAPABILITIES,
@@ -993,6 +1170,8 @@ export const makeGitHubAdapter = Effect.gen(function* () {
     getSummaryByNumber,
     getDetail,
     getDiff,
+    merge,
+    setAutoMerge,
     clearEtags,
   };
 

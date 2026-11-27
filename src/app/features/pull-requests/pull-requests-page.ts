@@ -13,10 +13,15 @@ import { Effect, Exit } from 'effect';
 import { HlmBadgeImports } from '@ui/badge';
 import { HlmButtonImports } from '@ui/button';
 import { HlmInputImports } from '@ui/input';
+import { toast } from '@ui/toast';
 import type { ProjectId } from '../../../shared/projects/projects.rpc';
 import {
   PullRequestNumber,
   type CheckRollupStatus,
+  type HostCapabilities,
+  type LocalBaseUpdateResult,
+  type MergeMethod,
+  type PostMergeActionsState,
   type ProjectPullRequestsState,
   type PullRequestDetail,
   type PullRequestSummary,
@@ -160,7 +165,7 @@ type DetailLoadState =
             size="sm"
             class="h-7 px-2.5 text-xs"
             data-testid="pull-requests-refresh"
-            (click)="prState.refreshProject(pid)"
+            (click)="retryProject()"
             i18n
           >
             Refresh
@@ -444,8 +449,20 @@ type DetailLoadState =
                           [detail]="loaded.value"
                           [diffState]="diffLoad()"
                           [renderClient]="renderClient"
+                          [capabilities]="capabilities()"
+                          [readOnly]="degradedBanner() !== null"
+                          [merging]="merging()"
+                          [autoMergeBusy]="autoMergeBusy()"
+                          [lastBaseUpdate]="lastBaseUpdate()"
+                          [postMergeStatus]="postMergeStatus()"
+                          [updatingBase]="updatingBase()"
+                          [switchingBase]="switchingBase()"
                           (retryDiff)="reloadDiffOnly()"
                           (openLink)="openExternal($event)"
+                          (mergeRequested)="onMergeRequested($event)"
+                          (autoMergeToggled)="onAutoMergeToggled($event)"
+                          (updateLocalBase)="onUpdateLocalBase()"
+                          (switchToBase)="onSwitchToBase($event)"
                         />
                       }
                     }
@@ -483,12 +500,23 @@ export class PullRequestsPage {
   protected readonly extraSummaries = signal<ReadonlyArray<PullRequestSummary>>([]);
   protected readonly detailLoad = signal<DetailLoadState>({ status: 'idle' });
   protected readonly diffLoad = signal<DiffLoadState>({ status: 'loading' });
+  protected readonly merging = signal(false);
+  protected readonly autoMergeBusy = signal(false);
+  protected readonly updatingBase = signal(false);
+  protected readonly switchingBase = signal(false);
+  protected readonly lastBaseUpdate = signal<LocalBaseUpdateResult | null>(null);
+  protected readonly postMergeStatus = signal<PostMergeActionsState | null>(null);
 
   protected readonly prStateLabel = prStateLabel;
 
   protected readonly projectState = computed<ProjectPullRequestsState | null>(() =>
     this.prState.stateForProject(this.projectId()),
   );
+
+  protected readonly capabilities = computed<HostCapabilities | null>(() => {
+    const s = this.projectState();
+    return s?._tag === 'Available' ? s.capabilities : null;
+  });
 
   protected readonly selectedNumber = computed<PullRequestNumber | null>(() =>
     this.prState.selectedPrNumber(),
@@ -618,6 +646,8 @@ export class PullRequestsPage {
     const seq = ++this.loadSeq;
     this.detailLoad.set({ status: 'loading' });
     this.diffLoad.set({ status: 'loading' });
+    this.lastBaseUpdate.set(null);
+    this.postMergeStatus.set(null);
 
     void this.runtime.run(
       DesktopApi.use((api) =>
@@ -633,6 +663,9 @@ export class PullRequestsPage {
             if (seq !== this.loadSeq) return;
             if (Exit.isSuccess(exit)) {
               this.detailLoad.set({ status: 'loaded', value: exit.value });
+              if (exit.value.state === 'merged') {
+                this.loadPostMergeStatus(pid, exit.value.baseRef, exit.value.headRef);
+              }
             } else {
               this.detailLoad.set({
                 status: 'failed',
@@ -715,7 +748,10 @@ export class PullRequestsPage {
 
   protected retryProject(): void {
     const pid = this.projectId();
-    if (pid !== null) this.prState.refreshProject(pid);
+    if (pid === null) return;
+    this.prState.refreshProject(pid);
+    const num = this.selectedNumber();
+    if (num !== null) this.fetchPr(pid, num, true);
   }
 
   protected triggerOpenSettings(): void {
@@ -726,6 +762,168 @@ export class PullRequestsPage {
   protected openExternal(url: string): void {
     void this.runtime.run(
       DesktopApi.use((api) => api['Links.openExternal']({ url })).pipe(Effect.ignore),
+    );
+  }
+
+  private loadPostMergeStatus(pid: ProjectId, baseRef: string, headRef: string): void {
+    void this.runtime.run(
+      DesktopApi.use((api) =>
+        api['PullRequests.getPostMergeStatus']({ projectId: pid, baseRef, headRef }),
+      ).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            if (Exit.isSuccess(exit)) {
+              this.postMergeStatus.set(exit.value);
+            }
+          }),
+        ),
+      ),
+    );
+  }
+
+  protected onMergeRequested(input: {
+    readonly method: MergeMethod;
+    readonly expectedHeadSha: string;
+    readonly commitTitle?: string;
+    readonly commitMessage?: string;
+  }): void {
+    const pid = this.projectId();
+    const num = this.selectedNumber();
+    if (pid === null || num === null) return;
+    this.merging.set(true);
+    void this.runtime.run(
+      DesktopApi.use((api) =>
+        api['PullRequests.merge']({
+          projectId: pid,
+          number: num,
+          expectedHeadSha: input.expectedHeadSha,
+          method: input.method,
+          ...(input.commitTitle !== undefined ? { commitTitle: input.commitTitle } : {}),
+          ...(input.commitMessage !== undefined ? { commitMessage: input.commitMessage } : {}),
+        }),
+      ).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            this.merging.set(false);
+            if (Exit.isSuccess(exit)) {
+              const { detail, baseUpdate } = exit.value;
+              this.detailLoad.set({ status: 'loaded', value: detail });
+              this.lastBaseUpdate.set(baseUpdate);
+              this.prState.refreshProject(pid);
+              this.loadPostMergeStatus(pid, detail.baseRef, detail.headRef);
+              if (baseUpdate?._tag === 'Skipped') {
+                toast.info(baseUpdate.detail);
+              }
+            } else {
+              const errStr = String(exit.cause);
+              if (errStr.includes('Conflict')) {
+                toast.error($localize`Head commit changed on GitHub. Refreshed Pull request.`);
+                this.fetchPr(pid, num, true);
+              } else {
+                toast.error($localize`Could not merge Pull request.`);
+              }
+            }
+          }),
+        ),
+      ),
+    );
+  }
+
+  protected onAutoMergeToggled(input: {
+    readonly enabled: boolean;
+    readonly method?: MergeMethod;
+    readonly expectedHeadSha?: string;
+  }): void {
+    const pid = this.projectId();
+    const num = this.selectedNumber();
+    if (pid === null || num === null) return;
+    this.autoMergeBusy.set(true);
+    void this.runtime.run(
+      DesktopApi.use((api) =>
+        api['PullRequests.setAutoMerge']({
+          projectId: pid,
+          number: num,
+          enabled: input.enabled,
+          ...(input.method !== undefined ? { method: input.method } : {}),
+          ...(input.expectedHeadSha !== undefined
+            ? { expectedHeadSha: input.expectedHeadSha }
+            : {}),
+        }),
+      ).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            this.autoMergeBusy.set(false);
+            if (Exit.isSuccess(exit)) {
+              this.detailLoad.set({ status: 'loaded', value: exit.value });
+            } else {
+              toast.error($localize`Could not update auto-merge.`);
+            }
+          }),
+        ),
+      ),
+    );
+  }
+
+  protected onUpdateLocalBase(): void {
+    const pid = this.projectId();
+    const loaded = this.detailLoad();
+    if (pid === null || loaded.status !== 'loaded') return;
+    const { baseRef, headRef } = loaded.value;
+    this.updatingBase.set(true);
+    void this.runtime.run(
+      DesktopApi.use((api) =>
+        api['PullRequests.updateLocalBaseBranch']({ projectId: pid, baseRef }),
+      ).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            this.updatingBase.set(false);
+            if (Exit.isSuccess(exit)) {
+              this.lastBaseUpdate.set(exit.value);
+              this.loadPostMergeStatus(pid, baseRef, headRef);
+              if (exit.value._tag === 'Skipped') {
+                toast.error(exit.value.detail);
+              }
+            } else {
+              toast.error($localize`Could not update local base branch.`);
+            }
+          }),
+        ),
+      ),
+    );
+  }
+
+  protected onSwitchToBase(worktreePath: string): void {
+    const pid = this.projectId();
+    const loaded = this.detailLoad();
+    if (pid === null || loaded.status !== 'loaded') return;
+    const { baseRef, headRef } = loaded.value;
+    this.switchingBase.set(true);
+    void this.runtime.run(
+      DesktopApi.use((api) =>
+        api['PullRequests.switchToBaseBranch']({ projectId: pid, worktreePath, baseRef }),
+      ).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            this.switchingBase.set(false);
+            if (Exit.isSuccess(exit)) {
+              if (exit.value._tag === 'Switched') {
+                toast.success($localize`Switched Worktree to ${baseRef}.`);
+                this.prState.refreshProject(pid);
+              } else {
+                toast.error(exit.value.detail);
+              }
+              this.loadPostMergeStatus(pid, baseRef, headRef);
+            } else {
+              toast.error($localize`Could not switch to base branch.`);
+            }
+          }),
+        ),
+      ),
     );
   }
 

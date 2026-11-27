@@ -3,6 +3,7 @@ import {
   GitHostError,
   type GitHostKind,
   type HostCapabilities,
+  type MergeMethod,
   type PullRequestDetail,
   type PullRequestDiff,
   type PullRequestNumber,
@@ -239,6 +240,21 @@ export interface GitHost {
     readonly headSha: string;
     readonly baseSha: string;
   }) => Effect.Effect<PullRequestDiff, GitHostError>;
+  readonly merge: (input: {
+    readonly repo: RemoteRepoRef;
+    readonly number: PullRequestNumber;
+    readonly expectedHeadSha: string;
+    readonly method: MergeMethod;
+    readonly commitTitle?: string;
+    readonly commitMessage?: string;
+  }) => Effect.Effect<PullRequestDetail, GitHostError>;
+  readonly setAutoMerge: (input: {
+    readonly repo: RemoteRepoRef;
+    readonly number: PullRequestNumber;
+    readonly enabled: boolean;
+    readonly method?: MergeMethod;
+    readonly expectedHeadSha?: string;
+  }) => Effect.Effect<PullRequestDetail, GitHostError>;
   readonly clearEtags: (repo?: RemoteRepoRef) => Effect.Effect<void>;
 }
 

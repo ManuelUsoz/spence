@@ -11,11 +11,16 @@ import {
   ReviewId,
   ReviewThreadId,
   type HostCapabilities,
+  type LocalBaseUpdateResult,
+  type MergeMethod,
+  type MergePullRequestResult,
+  type PostMergeActionsState,
   type ProjectPullRequestsState,
   type PullRequestDetail,
   type PullRequestDiff,
   type PullRequestSummary,
   type RemoteRepoRef,
+  type SwitchToBaseResult,
 } from '../../../shared/pull-requests/pull-requests.rpc';
 import { LinksRpcs } from '../../../shared/links/links.rpc';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
@@ -195,6 +200,23 @@ const setupPage = (
       readonly activePrNumber: PullRequestNumber | null;
     }) => void;
     readonly openExternal?: (url: string) => void;
+    readonly merge?: (input: {
+      readonly number: PullRequestNumber;
+      readonly expectedHeadSha: string;
+      readonly method: MergeMethod;
+    }) => Effect.Effect<MergePullRequestResult, GitHostError>;
+    readonly setAutoMerge?: (input: {
+      readonly number: PullRequestNumber;
+      readonly enabled: boolean;
+    }) => Effect.Effect<PullRequestDetail, GitHostError>;
+    readonly updateLocalBaseBranch?: (
+      baseRef: string,
+    ) => Effect.Effect<LocalBaseUpdateResult, GitHostError>;
+    readonly switchToBaseBranch?: (
+      worktreePath: string,
+      baseRef: string,
+    ) => Effect.Effect<SwitchToBaseResult, GitHostError>;
+    readonly getPostMergeStatus?: () => Effect.Effect<PostMergeActionsState, GitHostError>;
   } = {},
 ) => {
   const layer = makeDesktopTestLayer(
@@ -234,6 +256,41 @@ const setupPage = (
           overrides.getDiff
             ? overrides.getDiff(number)
             : Effect.fail(new GitHostError({ reason: 'NotFound', detail: 'Not found' })),
+        'PullRequests.merge': ({ number, expectedHeadSha, method }) =>
+          overrides.merge
+            ? overrides.merge({ number, expectedHeadSha, method })
+            : Effect.succeed({
+                detail: { ...makeDetail(makeSummary(Number(number))), state: 'merged' },
+                baseUpdate: null,
+              }),
+        'PullRequests.setAutoMerge': ({ number, enabled }) =>
+          overrides.setAutoMerge
+            ? overrides.setAutoMerge({ number, enabled })
+            : Effect.succeed({
+                ...makeDetail(makeSummary(Number(number))),
+                autoMergeEnabled: enabled,
+              }),
+        'PullRequests.updateLocalBaseBranch': ({ baseRef }) =>
+          overrides.updateLocalBaseBranch
+            ? overrides.updateLocalBaseBranch(baseRef)
+            : Effect.succeed({
+                _tag: 'Updated',
+                strategy: 'fetch',
+                baseRef,
+                worktreePath: null,
+                detail: 'Fetched.',
+              }),
+        'PullRequests.switchToBaseBranch': ({ worktreePath, baseRef }) =>
+          overrides.switchToBaseBranch
+            ? overrides.switchToBaseBranch(worktreePath, baseRef)
+            : Effect.succeed({ _tag: 'Switched', baseRef, worktreePath }),
+        'PullRequests.getPostMergeStatus': () =>
+          overrides.getPostMergeStatus
+            ? overrides.getPostMergeStatus()
+            : Effect.succeed({
+                updateBase: { status: 'ready' },
+                switchToBase: { visible: false, enabled: false, worktreePath: null },
+              }),
       }),
       LinksRpcs.toLayer({
         'Links.openExternal': ({ url }) =>
@@ -460,5 +517,137 @@ describe('PullRequestsPage', () => {
 
     el.querySelector<HTMLButtonElement>('[data-testid="pr-degraded-reconnect"]')?.click();
     expect(reconnectEmitted).toBe(true);
+  });
+
+  it('gates Merge by mergeState, confirms in alert-dialog with method/base/headSha, toggles auto-merge, and shows merged actions', async () => {
+    const mergeCalls: Array<{ number: number; expectedHeadSha: string; method: string }> = [];
+    const autoMergeCalls: Array<{ number: number; enabled: boolean }> = [];
+    const s1 = makeSummary(1);
+    const baseDetail = makeDetail(s1);
+    let currentDetail: PullRequestDetail = {
+      ...baseDetail,
+      mergeState: 'blocked',
+      mergeStateReason: 'Required status checks have not passed.',
+      actions: { ...baseDetail.actions, canMerge: true },
+    };
+    const state: ProjectPullRequestsState = {
+      _tag: 'Available',
+      projectId,
+      repo,
+      targetRemoteName: 'origin',
+      headRemoteName: 'origin',
+      capabilities,
+      accountStatus: 'connected',
+      syncStatus: { status: 'idle' },
+      lastSyncedAt: 1_000,
+      summaries: [s1],
+      worktreeLinks: {},
+    };
+
+    const fixture = setupPage(state, {
+      getDetail: () => Effect.succeed(currentDetail),
+      getDiff: () => Effect.succeed(makeDiff(s1)),
+      merge: ({ number, expectedHeadSha, method }) =>
+        Effect.sync(() => {
+          mergeCalls.push({ number: Number(number), expectedHeadSha, method });
+          currentDetail = { ...currentDetail, state: 'merged' };
+          return {
+            detail: currentDetail,
+            baseUpdate: {
+              _tag: 'Updated',
+              strategy: 'pull',
+              baseRef: 'main',
+              worktreePath: '/tmp/spence',
+              detail: 'Fast-forwarded',
+            },
+          };
+        }),
+      setAutoMerge: ({ number, enabled }) =>
+        Effect.sync(() => {
+          autoMergeCalls.push({ number: Number(number), enabled });
+          currentDetail = { ...currentDetail, autoMergeEnabled: enabled };
+          return currentDetail;
+        }),
+      getPostMergeStatus: () =>
+        Effect.succeed({
+          updateBase: { status: 'disabled', reason: 'Worktree has uncommitted changes.' },
+          switchToBase: {
+            visible: true,
+            enabled: true,
+            worktreePath: '/tmp/spence-feat',
+          },
+        }),
+    });
+
+    await new Promise((r) => setTimeout(r, 30));
+    fixture.detectChanges();
+
+    const row1 = fixture.nativeElement.querySelector(
+      '[data-testid="pr-list-item-1"]',
+    ) as HTMLElement;
+    row1.click();
+    await new Promise((r) => setTimeout(r, 40));
+    fixture.detectChanges();
+
+    // Merge is disabled while blocked, and Merge when ready is available
+    const mergeBtn = fixture.nativeElement.querySelector(
+      '[data-testid="pr-merge-btn"]',
+    ) as HTMLButtonElement | null;
+    expect(mergeBtn).not.toBeNull();
+    expect(mergeBtn?.disabled).toBe(true);
+
+    const autoMergeBtn = fixture.nativeElement.querySelector(
+      '[data-testid="pr-auto-merge-btn"]',
+    ) as HTMLButtonElement | null;
+    expect(autoMergeBtn).not.toBeNull();
+    autoMergeBtn?.click();
+    await new Promise((r) => setTimeout(r, 30));
+    fixture.detectChanges();
+    expect(autoMergeCalls).toEqual([{ number: 1, enabled: true }]);
+
+    // Now make PR clean and reload
+    currentDetail = {
+      ...currentDetail,
+      mergeState: 'clean',
+      mergeStateReason: undefined,
+    };
+    const refreshBtn = fixture.nativeElement.querySelector(
+      '[data-testid="pull-requests-refresh"]',
+    ) as HTMLButtonElement | null;
+    expect(refreshBtn).not.toBeNull();
+    refreshBtn?.click();
+    await new Promise((r) => setTimeout(r, 40));
+    fixture.detectChanges();
+
+    const enabledMergeBtn = fixture.nativeElement.querySelector(
+      '[data-testid="pr-merge-btn"]',
+    ) as HTMLButtonElement | null;
+    expect(enabledMergeBtn?.disabled).toBe(false);
+    enabledMergeBtn?.click();
+    fixture.detectChanges();
+
+    // Confirmation alert-dialog opens with baseRef and short headSha
+    const dialog = document.querySelector('[data-testid="pr-merge-confirm-dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog?.textContent).toContain('main');
+    expect(dialog?.textContent).toContain('abcdef1');
+
+    const confirmBtn = document.querySelector<HTMLButtonElement>(
+      '[data-testid="pr-merge-confirm"]',
+    );
+    confirmBtn?.click();
+    await new Promise((r) => setTimeout(r, 40));
+    fixture.detectChanges();
+
+    expect(mergeCalls).toEqual([
+      { number: 1, expectedHeadSha: 'abcdef1234567890-1', method: 'squash' },
+    ]);
+
+    // Merged strip shows Switch to main
+    const switchBtn = fixture.nativeElement.querySelector(
+      '[data-testid="pr-switch-base-btn"]',
+    ) as HTMLButtonElement | null;
+    expect(switchBtn).not.toBeNull();
+    expect(switchBtn?.disabled).toBe(false);
   });
 });

@@ -3,19 +3,28 @@ import {
   Component,
   computed,
   effect,
+  inject,
   input,
   output,
   signal,
 } from '@angular/core';
+import { HlmAlertDialogImports } from '@ui/alert-dialog';
 import { HlmBadgeImports } from '@ui/badge';
 import { HlmButtonImports } from '@ui/button';
+import { HlmInputImports } from '@ui/input';
 import { MarkdownView, type MarkdownBlock } from '@ui/markdown';
+import { HlmSelectImports } from '@ui/select';
 import { isAllowedExternalUrl } from '../../../shared/links/link-policy';
 import type {
   CheckRun,
+  HostCapabilities,
+  LocalBaseUpdateResult,
+  MergeMethod,
+  PostMergeActionsState,
   PullRequestDetail,
   PullRequestDiff,
 } from '../../../shared/pull-requests/pull-requests.rpc';
+import { Keymap } from '../../core/keymap';
 import { PrDiffView } from './pr-diff-view';
 import type { PrRenderClient } from './pr-render-client';
 import {
@@ -40,7 +49,15 @@ export type DiffLoadState =
  */
 @Component({
   selector: 'app-pr-detail-pane',
-  imports: [HlmBadgeImports, HlmButtonImports, MarkdownView, PrDiffView],
+  imports: [
+    HlmAlertDialogImports,
+    HlmBadgeImports,
+    HlmButtonImports,
+    HlmInputImports,
+    HlmSelectImports,
+    MarkdownView,
+    PrDiffView,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'block space-y-6', 'data-testid': 'pr-detail-pane' },
   template: `
@@ -159,9 +176,198 @@ export type DiffLoadState =
       </dl>
 
       @if (detail().mergeStateReason) {
-        <p class="text-muted-foreground text-xs">{{ detail().mergeStateReason }}</p>
+        <p class="text-muted-foreground text-xs" data-testid="pr-merge-state-reason">
+          {{ detail().mergeStateReason }}
+        </p>
+      }
+
+      <!-- Merge & Auto-merge / Merged Actions -->
+      @if (detail().state === 'open' || detail().state === 'draft') {
+        <div
+          class="border-border/60 bg-muted/20 flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3.5 py-2.5"
+          data-testid="pr-merge-bar"
+        >
+          <div class="min-w-0 space-y-0.5">
+            <p class="text-sm font-medium">{{ mergeHeadline() }}</p>
+            <p class="text-muted-foreground text-xs">{{ mergeSubline() }}</p>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-2">
+            @if (detail().actions.allowedMergeMethods.length > 0) {
+              <hlm-select [value]="selectedMethod()" (valueChange)="onMethodChange($event)">
+                <hlm-select-trigger
+                  class="h-8 text-xs"
+                  data-testid="pr-merge-method-select"
+                  aria-label="Merge method"
+                  i18n-aria-label
+                >
+                  {{ mergeMethodLabel(selectedMethod()) }}
+                </hlm-select-trigger>
+                <hlm-select-content *hlmSelectPortal>
+                  @for (m of detail().actions.allowedMergeMethods; track m) {
+                    <hlm-select-item [value]="m" [attr.data-value]="m">
+                      {{ mergeMethodLabel(m) }}
+                    </hlm-select-item>
+                  }
+                </hlm-select-content>
+              </hlm-select>
+            }
+
+            <button
+              hlmBtn
+              type="button"
+              size="sm"
+              data-testid="pr-merge-btn"
+              [disabled]="!canMergeNow()"
+              (click)="openMergeConfirm()"
+            >
+              {{ merging() ? mergingLabel : mergeMethodLabel(selectedMethod()) }}
+            </button>
+
+            @if (capabilities()?.supportsAutoMerge && detail().state === 'open') {
+              @if (detail().autoMergeEnabled) {
+                <button
+                  hlmBtn
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  data-testid="pr-cancel-auto-merge-btn"
+                  [disabled]="readOnly() || autoMergeBusy()"
+                  (click)="emitAutoMerge(false)"
+                  i18n
+                >
+                  Cancel auto-merge
+                </button>
+              } @else if (detail().mergeState !== 'clean') {
+                <button
+                  hlmBtn
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  data-testid="pr-auto-merge-btn"
+                  [disabled]="readOnly() || autoMergeBusy() || !detail().actions.canMerge"
+                  (click)="emitAutoMerge(true)"
+                  i18n
+                >
+                  Merge when ready
+                </button>
+              }
+            }
+          </div>
+        </div>
+      } @else if (detail().state === 'merged') {
+        <div
+          class="border-border/60 bg-muted/20 flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3.5 py-2.5"
+          data-testid="pr-merged-strip"
+        >
+          <div class="min-w-0 space-y-0.5">
+            <p class="text-sm font-medium" i18n>Pull request merged</p>
+            @if (mergedUpdateMessage(); as msg) {
+              <p class="text-muted-foreground text-xs" data-testid="pr-merged-update-status">
+                {{ msg }}
+              </p>
+            }
+          </div>
+
+          <div class="flex flex-wrap items-center gap-2">
+            <button
+              hlmBtn
+              type="button"
+              variant="outline"
+              size="sm"
+              data-testid="pr-update-base-btn"
+              [disabled]="isUpdateBaseDisabled()"
+              [title]="updateBaseDisabledReason() ?? ''"
+              (click)="updateLocalBase.emit()"
+            >
+              {{ updatingBase() ? updatingLabel : updateBaseLabel() }}
+            </button>
+
+            @if (postMergeStatus()?.switchToBase?.visible) {
+              <button
+                hlmBtn
+                type="button"
+                variant="outline"
+                size="sm"
+                data-testid="pr-switch-base-btn"
+                [disabled]="isSwitchBaseDisabled()"
+                [title]="postMergeStatus()?.switchToBase?.reason ?? ''"
+                (click)="emitSwitchToBase()"
+              >
+                {{ switchingBase() ? switchingLabel : switchBaseLabel() }}
+              </button>
+            }
+          </div>
+        </div>
       }
     </header>
+
+    <!-- Merge Confirmation Modal -->
+    <hlm-alert-dialog
+      [state]="confirmMergeOpen() ? 'open' : 'closed'"
+      (stateChanged)="onConfirmDialogStateChange($event)"
+    >
+      <hlm-alert-dialog-content
+        *hlmAlertDialogPortal="let ctx"
+        data-testid="pr-merge-confirm-dialog"
+      >
+        <hlm-alert-dialog-header>
+          <h2 hlmAlertDialogTitle class="font-display text-xl font-normal" i18n>
+            {{ mergeMethodLabel(selectedMethod()) }} #{{ detail().ref.number }}?
+          </h2>
+          <p hlmAlertDialogDescription>
+            <span i18n>Target base branch:</span>
+            <code class="bg-muted mx-1 rounded px-1 py-0.5 font-mono text-xs">{{
+              detail().baseRef
+            }}</code>
+            ·
+            <span i18n>Head commit:</span>
+            <code class="bg-muted ml-1 rounded px-1 py-0.5 font-mono text-xs">{{
+              detail().headSha.slice(0, 7)
+            }}</code>
+          </p>
+        </hlm-alert-dialog-header>
+
+        @if (selectedMethod() !== 'rebase') {
+          <div class="space-y-2 py-1">
+            <input
+              hlmInput
+              type="text"
+              class="w-full text-xs"
+              placeholder="Commit title (optional)"
+              i18n-placeholder
+              data-testid="pr-merge-commit-title"
+              [value]="commitTitle()"
+              (input)="commitTitle.set($any($event.target).value)"
+            />
+            <textarea
+              hlmInput
+              rows="2"
+              class="w-full text-xs"
+              placeholder="Commit message (optional)"
+              i18n-placeholder
+              data-testid="pr-merge-commit-message"
+              [value]="commitMessage()"
+              (input)="commitMessage.set($any($event.target).value)"
+            ></textarea>
+          </div>
+        }
+
+        <hlm-alert-dialog-footer>
+          <button
+            hlmAlertDialogCancel
+            data-testid="pr-merge-cancel"
+            (click)="closeMergeConfirm()"
+            i18n
+          >
+            Cancel
+          </button>
+          <button hlmAlertDialogAction data-testid="pr-merge-confirm" (click)="confirmMerge()">
+            {{ mergeMethodLabel(selectedMethod()) }}
+          </button>
+        </hlm-alert-dialog-footer>
+      </hlm-alert-dialog-content>
+    </hlm-alert-dialog>
 
     <!-- Check Rollup & Expandable Check Runs -->
     <section class="border-border/60 bg-card rounded-lg border" data-testid="pr-checks-section">
@@ -423,11 +629,63 @@ export type DiffLoadState =
   `,
 })
 export class PrDetailPane {
+  private readonly keymap = inject(Keymap);
+
   readonly detail = input.required<PullRequestDetail>();
   readonly diffState = input.required<DiffLoadState>();
   readonly renderClient = input.required<PrRenderClient>();
+  readonly capabilities = input<HostCapabilities | null>(null);
+  readonly readOnly = input(false);
+  readonly merging = input(false);
+  readonly autoMergeBusy = input(false);
+  readonly lastBaseUpdate = input<LocalBaseUpdateResult | null>(null);
+  readonly postMergeStatus = input<PostMergeActionsState | null>(null);
+  readonly updatingBase = input(false);
+  readonly switchingBase = input(false);
+
   readonly retryDiff = output<void>();
   readonly openLink = output<string>();
+  readonly mergeRequested = output<{
+    readonly method: MergeMethod;
+    readonly expectedHeadSha: string;
+    readonly commitTitle?: string;
+    readonly commitMessage?: string;
+  }>();
+  readonly autoMergeToggled = output<{
+    readonly enabled: boolean;
+    readonly method?: MergeMethod;
+    readonly expectedHeadSha?: string;
+  }>();
+  readonly updateLocalBase = output<void>();
+  readonly switchToBase = output<string>();
+
+  protected readonly confirmMergeOpen = signal(false);
+  protected readonly commitTitle = signal('');
+  protected readonly commitMessage = signal('');
+  private readonly chosenMethod = signal<MergeMethod | null>(null);
+
+  protected readonly mergingLabel = $localize`Merging…`;
+  protected readonly updatingLabel = $localize`Updating…`;
+  protected readonly switchingLabel = $localize`Switching…`;
+
+  protected readonly selectedMethod = computed<MergeMethod>(() => {
+    const allowed = this.detail().actions.allowedMergeMethods;
+    const chosen = this.chosenMethod();
+    if (chosen !== null && allowed.includes(chosen)) return chosen;
+    if (allowed.includes('squash')) return 'squash';
+    return allowed[0] ?? 'merge';
+  });
+
+  protected readonly canMergeNow = computed(() => {
+    const d = this.detail();
+    return (
+      !this.readOnly() &&
+      !this.merging() &&
+      d.state === 'open' &&
+      d.actions.canMerge &&
+      d.mergeState === 'clean'
+    );
+  });
 
   protected readonly checksExpanded = signal(false);
   private readonly expandedCheckIds = signal<ReadonlySet<string>>(new Set());
@@ -466,6 +724,12 @@ export class PrDetailPane {
   );
 
   constructor() {
+    effect((onCleanup) => {
+      if (!this.confirmMergeOpen()) return;
+      const release = this.keymap.pushModal({ onEscape: () => this.closeMergeConfirm() });
+      onCleanup(release);
+    });
+
     effect(() => {
       const d = this.detail();
       const client = this.renderClient();
@@ -549,5 +813,115 @@ export class PrDetailPane {
     actors: ReadonlyArray<{ readonly login: string; readonly displayName: string | null }>,
   ): string {
     return actors.map((a) => a.displayName ?? a.login).join(', ');
+  }
+
+  protected mergeMethodLabel(method: MergeMethod): string {
+    switch (method) {
+      case 'merge':
+        return $localize`Merge`;
+      case 'squash':
+        return $localize`Squash and merge`;
+      case 'rebase':
+        return $localize`Rebase and merge`;
+    }
+  }
+
+  protected mergeHeadline(): string {
+    const d = this.detail();
+    if (d.autoMergeEnabled) return $localize`Auto-merge enabled`;
+    if (d.mergeState === 'clean' && d.actions.canMerge) return $localize`Ready to merge`;
+    return mergeStateLabel(d.mergeState);
+  }
+
+  protected mergeSubline(): string {
+    const d = this.detail();
+    if (d.mergeStateReason) return d.mergeStateReason;
+    if (!d.actions.canMerge)
+      return $localize`You do not have permission to merge this Pull request.`;
+    return $localize`All checks and merge requirements are satisfied.`;
+  }
+
+  protected onMethodChange(value: string | string[] | null | undefined): void {
+    const v = Array.isArray(value) ? value[0] : value;
+    if (v === 'merge' || v === 'squash' || v === 'rebase') {
+      this.chosenMethod.set(v);
+    }
+  }
+
+  protected openMergeConfirm(): void {
+    if (!this.canMergeNow()) return;
+    this.commitTitle.set('');
+    this.commitMessage.set('');
+    this.confirmMergeOpen.set(true);
+  }
+
+  protected closeMergeConfirm(): void {
+    this.confirmMergeOpen.set(false);
+  }
+
+  protected onConfirmDialogStateChange(next: string): void {
+    if (next === 'closed') this.confirmMergeOpen.set(false);
+  }
+
+  protected confirmMerge(): void {
+    const d = this.detail();
+    const title = this.commitTitle().trim();
+    const message = this.commitMessage().trim();
+    this.confirmMergeOpen.set(false);
+    this.mergeRequested.emit({
+      method: this.selectedMethod(),
+      expectedHeadSha: d.headSha,
+      ...(title.length > 0 ? { commitTitle: title } : {}),
+      ...(message.length > 0 ? { commitMessage: message } : {}),
+    });
+  }
+
+  protected emitAutoMerge(enabled: boolean): void {
+    const d = this.detail();
+    this.autoMergeToggled.emit({
+      enabled,
+      ...(enabled ? { method: this.selectedMethod(), expectedHeadSha: d.headSha } : {}),
+    });
+  }
+
+  protected updateBaseLabel(): string {
+    return $localize`Update ${this.detail().baseRef}`;
+  }
+
+  protected switchBaseLabel(): string {
+    return $localize`Switch to ${this.detail().baseRef}`;
+  }
+
+  protected updateBaseDisabledReason(): string | null {
+    const last = this.lastBaseUpdate();
+    if (last?._tag === 'Skipped') return last.detail;
+    const status = this.postMergeStatus();
+    if (status?.updateBase.status === 'disabled') {
+      return status.updateBase.reason ?? $localize`Cannot update local base branch.`;
+    }
+    return null;
+  }
+
+  protected isUpdateBaseDisabled(): boolean {
+    return this.updatingBase() || this.updateBaseDisabledReason() !== null;
+  }
+
+  protected isSwitchBaseDisabled(): boolean {
+    return this.switchingBase() || !(this.postMergeStatus()?.switchToBase.enabled ?? false);
+  }
+
+  protected mergedUpdateMessage(): string | null {
+    const last = this.lastBaseUpdate();
+    if (last?._tag === 'Updated') {
+      return last.strategy === 'pull'
+        ? $localize`Updated ${last.baseRef} locally (git pull --ff-only).`
+        : $localize`Updated ${last.baseRef} ref locally (git fetch).`;
+    }
+    return this.updateBaseDisabledReason() ?? this.postMergeStatus()?.switchToBase.reason ?? null;
+  }
+
+  protected emitSwitchToBase(): void {
+    const wt = this.postMergeStatus()?.switchToBase.worktreePath;
+    if (wt) this.switchToBase.emit(wt);
   }
 }

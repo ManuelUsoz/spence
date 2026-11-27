@@ -985,6 +985,42 @@
         <source>Labels:</source>
         <target state="translated">Etiquetas:</target>
       </trans-unit>
+      <trans-unit id="3834115380655810571" datatype="html">
+        <source>Merge method</source>
+        <target state="translated">Método de fusión</target>
+      </trans-unit>
+      <trans-unit id="4141715523504909341" datatype="html">
+        <source> Cancel auto-merge </source>
+        <target state="translated"> Cancelar fusión automática </target>
+      </trans-unit>
+      <trans-unit id="3629069444945012326" datatype="html">
+        <source> Merge when ready </source>
+        <target state="translated"> Fusionar cuando esté listo </target>
+      </trans-unit>
+      <trans-unit id="2606613809220503712" datatype="html">
+        <source>Pull request merged</source>
+        <target state="translated">Pull request fusionado</target>
+      </trans-unit>
+      <trans-unit id="1970754277370472778" datatype="html">
+        <source> <x id="INTERPOLATION" equiv-text="{{ mergeMethodLabel(selectedMethod()) }}"/> #<x id="INTERPOLATION_1" equiv-text="{{ detail().ref.number }}"/>? </source>
+        <target state="translated"> ¿<x id="INTERPOLATION" equiv-text="{{ mergeMethodLabel(selectedMethod()) }}"/> #<x id="INTERPOLATION_1" equiv-text="{{ detail().ref.number }}"/>? </target>
+      </trans-unit>
+      <trans-unit id="1840285892631693079" datatype="html">
+        <source>Target base branch:</source>
+        <target state="translated">Rama base destino:</target>
+      </trans-unit>
+      <trans-unit id="3303497251096144339" datatype="html">
+        <source>Head commit:</source>
+        <target state="translated">Commit head:</target>
+      </trans-unit>
+      <trans-unit id="1420928739336935112" datatype="html">
+        <source>Commit title (optional)</source>
+        <target state="translated">Título del commit (opcional)</target>
+      </trans-unit>
+      <trans-unit id="7877453511526549258" datatype="html">
+        <source>Commit message (optional)</source>
+        <target state="translated">Mensaje del commit (opcional)</target>
+      </trans-unit>
       <trans-unit id="6470676630806138346" datatype="html">
         <source> No check runs reported for this commit. </source>
         <target state="translated"> No se informaron comprobaciones para este commit. </target>
@@ -1033,6 +1069,18 @@
         <source>Could not load diff.</source>
         <target state="translated">No se pudo cargar el diff.</target>
       </trans-unit>
+      <trans-unit id="3059724265088373894" datatype="html">
+        <source>Merging…</source>
+        <target state="translated">Fusionando…</target>
+      </trans-unit>
+      <trans-unit id="2706312198973609080" datatype="html">
+        <source>Updating…</source>
+        <target state="translated">Actualizando…</target>
+      </trans-unit>
+      <trans-unit id="571951659775507951" datatype="html">
+        <source>Switching…</source>
+        <target state="translated">Cambiando…</target>
+      </trans-unit>
       <trans-unit id="5537741395993155396" datatype="html">
         <source>Show output</source>
         <target state="translated">Mostrar salida</target>
@@ -1060,6 +1108,54 @@
       <trans-unit id="1161299114153631702" datatype="html">
         <source>Completed</source>
         <target state="translated">Completado</target>
+      </trans-unit>
+      <trans-unit id="3206542606001340679" datatype="html">
+        <source>Merge</source>
+        <target state="translated">Fusionar</target>
+      </trans-unit>
+      <trans-unit id="5069308846936943992" datatype="html">
+        <source>Squash and merge</source>
+        <target state="translated">Squash y fusionar</target>
+      </trans-unit>
+      <trans-unit id="7131044248309274493" datatype="html">
+        <source>Rebase and merge</source>
+        <target state="translated">Rebase y fusionar</target>
+      </trans-unit>
+      <trans-unit id="851463805767142629" datatype="html">
+        <source>Auto-merge enabled</source>
+        <target state="translated">Fusión automática habilitada</target>
+      </trans-unit>
+      <trans-unit id="258499032258631392" datatype="html">
+        <source>Ready to merge</source>
+        <target state="translated">Listo para fusionar</target>
+      </trans-unit>
+      <trans-unit id="869316869752218926" datatype="html">
+        <source>You do not have permission to merge this Pull request.</source>
+        <target state="translated">No tienes permiso para fusionar este Pull request.</target>
+      </trans-unit>
+      <trans-unit id="3928701164371116934" datatype="html">
+        <source>All checks and merge requirements are satisfied.</source>
+        <target state="translated">Se cumplen todas las comprobaciones y requisitos de fusión.</target>
+      </trans-unit>
+      <trans-unit id="6697109866731379499" datatype="html">
+        <source>Update <x id="PH" equiv-text="this.detail().baseRef"/></source>
+        <target state="translated">Actualizar <x id="PH" equiv-text="this.detail().baseRef"/></target>
+      </trans-unit>
+      <trans-unit id="873498658750153318" datatype="html">
+        <source>Switch to <x id="PH" equiv-text="this.detail().baseRef"/></source>
+        <target state="translated">Cambiar a <x id="PH" equiv-text="this.detail().baseRef"/></target>
+      </trans-unit>
+      <trans-unit id="7686597560149898163" datatype="html">
+        <source>Cannot update local base branch.</source>
+        <target state="translated">No se puede actualizar la rama base local.</target>
+      </trans-unit>
+      <trans-unit id="3447057006302780995" datatype="html">
+        <source>Updated <x id="PH" equiv-text="last.baseRef"/> locally (git pull --ff-only).</source>
+        <target state="translated">Se actualizó <x id="PH" equiv-text="last.baseRef"/> localmente (git pull --ff-only).</target>
+      </trans-unit>
+      <trans-unit id="4879215955397992932" datatype="html">
+        <source>Updated <x id="PH" equiv-text="last.baseRef"/> ref locally (git fetch).</source>
+        <target state="translated">Se actualizó la referencia <x id="PH" equiv-text="last.baseRef"/> localmente (git fetch).</target>
       </trans-unit>
       <trans-unit id="5242351490836263910" datatype="html">
         <source> Changed files <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;text-muted-foreground ml-1 font-normal tabular-nums&quot;
@@ -1140,10 +1236,6 @@
       <trans-unit id="4369251043924996853" datatype="html">
         <source>No checks</source>
         <target state="translated">Sin comprobaciones</target>
-      </trans-unit>
-      <trans-unit id="258499032258631392" datatype="html">
-        <source>Ready to merge</source>
-        <target state="translated">Listo para fusionar</target>
       </trans-unit>
       <trans-unit id="4847064546132149947" datatype="html">
         <source>Merge blocked</source>
@@ -1308,6 +1400,30 @@
       <trans-unit id="4903640661686754480" datatype="html">
         <source>Pull request #<x id="PH" equiv-text="parsed"/> was not found.</source>
         <target state="translated">No se encontró el Pull request #<x id="PH" equiv-text="parsed"/>.</target>
+      </trans-unit>
+      <trans-unit id="5382881520074200085" datatype="html">
+        <source>Head commit changed on GitHub. Refreshed Pull request.</source>
+        <target state="translated">El commit head cambió en GitHub. Se actualizó el Pull request.</target>
+      </trans-unit>
+      <trans-unit id="5336029302783496250" datatype="html">
+        <source>Could not merge Pull request.</source>
+        <target state="translated">No se pudo fusionar el Pull request.</target>
+      </trans-unit>
+      <trans-unit id="497333208520628445" datatype="html">
+        <source>Could not update auto-merge.</source>
+        <target state="translated">No se pudo actualizar la fusión automática.</target>
+      </trans-unit>
+      <trans-unit id="8685173063581969521" datatype="html">
+        <source>Could not update local base branch.</source>
+        <target state="translated">No se pudo actualizar la rama base local.</target>
+      </trans-unit>
+      <trans-unit id="3333196252392884754" datatype="html">
+        <source>Switched Worktree to <x id="PH" equiv-text="baseRef"/>.</source>
+        <target state="translated">Se cambió el Worktree a <x id="PH" equiv-text="baseRef"/>.</target>
+      </trans-unit>
+      <trans-unit id="8244547621025933919" datatype="html">
+        <source>Could not switch to base branch.</source>
+        <target state="translated">No se pudo cambiar a la rama base.</target>
       </trans-unit>
       <trans-unit id="762864044091656147" datatype="html">
         <source>Folder not found</source>
@@ -3792,6 +3908,10 @@
         <source>Permissions</source>
         <target>Permisos</target>
       </trans-unit>
+      <trans-unit id="1019897759924590321" datatype="html">
+        <source>Pull requests</source>
+        <target state="translated">Pull requests</target>
+      </trans-unit>
       <trans-unit id="5247417012054982935" datatype="html">
         <source>Settings sections</source>
         <target>Secciones de Ajustes</target>
@@ -4040,6 +4160,14 @@
         <source>Could not change the Project settings.</source>
         <target>No se pudieron cambiar los ajustes del Proyecto.</target>
       </trans-unit>
+      <trans-unit id="8317452073044533705" datatype="html">
+        <source>Update local base branch after merge</source>
+        <target state="translated">Actualizar la rama base local tras fusionar</target>
+      </trans-unit>
+      <trans-unit id="1109403635624407653" datatype="html">
+        <source>Automatically fast-forward the local base branch when a Pull request is merged.</source>
+        <target state="translated">Avanzar automáticamente en fast-forward la rama base local cuando se fusiona un Pull request.</target>
+      </trans-unit>
       <trans-unit id="7292902857194439444" datatype="html">
         <source>Device</source>
         <target state="translated">Dispositivo</target>
@@ -4191,10 +4319,6 @@
       <trans-unit id="8747066693682957841" datatype="html">
         <source><x id="project" equiv-text="project.name"/> (<x id="device" equiv-text="device"/>) — Sessions</source>
         <target state="translated"><x id="project" equiv-text="project.name"/> (<x id="device" equiv-text="device"/>) — Sesiones</target>
-      </trans-unit>
-      <trans-unit id="1019897759924590321" datatype="html">
-        <source>Pull requests</source>
-        <target state="translated">Pull requests</target>
       </trans-unit>
       <trans-unit id="6357866423106114276" datatype="html">
         <source>Needs an answer</source>

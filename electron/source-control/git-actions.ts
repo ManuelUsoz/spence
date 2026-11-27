@@ -211,6 +211,74 @@ export const pullFastForward = async (
     : { _tag: 'Failed', detail: output };
 };
 
+/** Fast-forwards an unchecked-out local branch ref from `remote` without touching any working tree. */
+export const fetchBranchFastForward = async (
+  folder: string,
+  remote: string,
+  branch: string,
+  gitExecutable: string | null,
+  pathEnv: string,
+): Promise<RemoteOutcome> => {
+  const ctx = await resolveWorktreeContext(folder, gitExecutable, pathEnv);
+  if (ctx._tag !== 'Available') return ctx;
+  const remotes = await remotesOf(ctx, pathEnv);
+  if (remotes.length === 0) {
+    return { _tag: 'Rejected', reason: 'NoRemote', detail: 'This repository has no remote.' };
+  }
+  if (!remotes.includes(remote)) {
+    return {
+      _tag: 'Rejected',
+      reason: 'UnknownRemote',
+      detail: `Remote '${remote}' does not exist.`,
+    };
+  }
+  const result = await runGit(
+    ctx.executable,
+    ['fetch', remote, `${branch}:${branch}`],
+    ctx.toplevelRealPath,
+    pathEnv,
+    undefined,
+    NETWORK_TIMEOUT_MS,
+  );
+  if (result.ok) return { _tag: 'Done', detail: text(result) };
+  const output = text(result);
+  return /non-fast-forward|rejected|fetch first/i.test(output)
+    ? { _tag: 'Rejected', reason: 'Diverged', detail: output }
+    : { _tag: 'Failed', detail: output };
+};
+
+/** Returns `true` when the Worktree has no staged, unstaged, or untracked changes. */
+export const isWorktreeClean = async (
+  folder: string,
+  gitExecutable: string | null,
+  pathEnv: string,
+): Promise<boolean> => {
+  const ctx = await resolveWorktreeContext(folder, gitExecutable, pathEnv);
+  if (ctx._tag !== 'Available') return false;
+  const result = await runGit(
+    ctx.executable,
+    ['status', '--porcelain'],
+    ctx.toplevelRealPath,
+    pathEnv,
+  );
+  return result.ok && result.stdout.trim().length === 0;
+};
+
+/** Switches the Worktree's checked-out branch to `branch`. */
+export const checkoutBranch = async (
+  folder: string,
+  branch: string,
+  gitExecutable: string | null,
+  pathEnv: string,
+): Promise<RemoteOutcome> => {
+  const ctx = await resolveWorktreeContext(folder, gitExecutable, pathEnv);
+  if (ctx._tag !== 'Available') return ctx;
+  const result = await runGit(ctx.executable, ['checkout', branch], ctx.toplevelRealPath, pathEnv);
+  return result.ok
+    ? { _tag: 'Done', detail: text(result) }
+    : { _tag: 'Failed', detail: text(result) };
+};
+
 /**
  * Stages the new content of the paths (new, changed and deleted files). A path git no longer knows anywhere, such as
  * the old name of a rename that is already staged, is skipped. Returns the failure text, or null.

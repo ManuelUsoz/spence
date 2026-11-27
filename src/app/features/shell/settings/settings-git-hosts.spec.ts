@@ -122,6 +122,11 @@ const setup = (options?: {
       'PullRequests.unpinNumber': () => Effect.void,
       'PullRequests.getDetail': () => Effect.die('unused'),
       'PullRequests.getDiff': () => Effect.die('unused'),
+      'PullRequests.merge': () => Effect.die('unused'),
+      'PullRequests.setAutoMerge': () => Effect.die('unused'),
+      'PullRequests.updateLocalBaseBranch': () => Effect.die('unused'),
+      'PullRequests.switchToBaseBranch': () => Effect.die('unused'),
+      'PullRequests.getPostMergeStatus': () => Effect.die('unused'),
     }),
     LinksRpcs.toLayer({
       'Links.openExternal': () => Effect.void,

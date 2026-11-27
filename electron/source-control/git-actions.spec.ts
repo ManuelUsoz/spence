@@ -6,8 +6,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import {
+  checkoutBranch,
   commitChanges,
+  fetchBranchFastForward,
   fetchRemote,
+  isWorktreeClean,
   listRemotes,
   pullFastForward,
   pushBranch,
@@ -338,5 +341,50 @@ describe.concurrent('remotes', () => {
       _tag: 'Rejected',
       reason: 'NoUpstream',
     });
+  });
+
+  it('fast-forwards an unchecked-out local branch ref via fetch and refuses diverged refs', async () => {
+    const { dir, other } = await makeRepoWithRemote();
+    await git(dir, 'checkout', '-b', 'feat/x');
+
+    await writeFile(path.join(other, 'c.txt'), 'c\n');
+    await git(other, 'add', '.');
+    await git(other, 'commit', '-m', 'merged on remote');
+    await git(other, 'push');
+
+    const ff = await fetchBranchFastForward(dir, 'origin', 'main', 'git', pathEnv);
+    expect(ff).toMatchObject({ _tag: 'Done' });
+    expect(await subjects(dir, 'refs/heads/main')).toEqual(['merged on remote', 'initial']);
+
+    // Now diverge local main and verify refusal
+    await git(dir, 'branch', '-f', 'main', 'HEAD~0');
+    await git(dir, 'checkout', 'main');
+    await writeFile(path.join(dir, 'local-only.txt'), 'local\n');
+    await git(dir, 'add', '.');
+    await git(dir, 'commit', '-m', 'local diverge');
+    await git(dir, 'checkout', 'feat/x');
+
+    await writeFile(path.join(other, 'd.txt'), 'd\n');
+    await git(other, 'add', '.');
+    await git(other, 'commit', '-m', 'remote diverge');
+    await git(other, 'push');
+
+    const diverged = await fetchBranchFastForward(dir, 'origin', 'main', 'git', pathEnv);
+    expect(diverged).toMatchObject({ _tag: 'Rejected', reason: 'Diverged' });
+  });
+
+  it('reports worktree cleanliness and switches to target branch', async () => {
+    const { dir } = await makeRepo();
+    await git(dir, 'checkout', '-b', 'feat/y');
+
+    expect(await isWorktreeClean(dir, 'git', pathEnv)).toBe(true);
+    await writeFile(path.join(dir, 'dirty.txt'), 'dirty\n');
+    expect(await isWorktreeClean(dir, 'git', pathEnv)).toBe(false);
+    await rm(path.join(dir, 'dirty.txt'));
+    expect(await isWorktreeClean(dir, 'git', pathEnv)).toBe(true);
+
+    const switched = await checkoutBranch(dir, 'main', 'git', pathEnv);
+    expect(switched).toMatchObject({ _tag: 'Done' });
+    expect((await git(dir, 'branch', '--show-current')).trim()).toBe('main');
   });
 });

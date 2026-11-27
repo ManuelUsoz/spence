@@ -5,6 +5,7 @@ import {
   Effect,
   Fiber,
   Layer,
+  Option,
   PubSub,
   Scope,
   Semaphore,
@@ -17,15 +18,29 @@ import type { Project, ProjectId } from '../../src/shared/projects/projects.rpc'
 import {
   GitHostError,
   type GitHostKind,
+  type LocalBaseUpdateResult,
+  type MergeMethod,
+  type MergePullRequestResult,
+  type PostMergeActionsState,
   type ProjectPullRequestsState,
   type PullRequestDetail,
   type PullRequestDiff,
   type PullRequestNumber,
   type PullRequestSummary,
+  type SwitchToBaseResult,
   type SyncStatus,
   type WorktreePullRequestLink,
 } from '../../src/shared/pull-requests/pull-requests.rpc';
+import { DEFAULT_PULL_REQUEST_SETTINGS } from '../../src/shared/settings/settings.rpc';
+import { MergedPath } from '../agents/merged-path';
 import { Projects } from '../projects/projects';
+import { Settings } from '../settings/settings';
+import {
+  checkoutBranch as gitCheckoutBranch,
+  fetchBranchFastForward as gitFetchBranchFastForward,
+  isWorktreeClean as gitIsWorktreeClean,
+  pullFastForward as gitPullFastForward,
+} from '../source-control/git-actions';
 import { WindowFocus } from '../sessions/window-focus';
 import {
   GitHostRegistry,
@@ -180,10 +195,131 @@ export interface PullRequestsServiceShape {
     projectId: ProjectId,
     number: PullRequestNumber,
   ) => Effect.Effect<PullRequestDiff, GitHostError>;
+  readonly merge: (input: {
+    readonly projectId: ProjectId;
+    readonly number: PullRequestNumber;
+    readonly expectedHeadSha: string;
+    readonly method: MergeMethod;
+    readonly commitTitle?: string;
+    readonly commitMessage?: string;
+  }) => Effect.Effect<MergePullRequestResult, GitHostError>;
+  readonly setAutoMerge: (input: {
+    readonly projectId: ProjectId;
+    readonly number: PullRequestNumber;
+    readonly enabled: boolean;
+    readonly method?: MergeMethod;
+    readonly expectedHeadSha?: string;
+  }) => Effect.Effect<PullRequestDetail, GitHostError>;
+  readonly updateLocalBaseBranch: (
+    projectId: ProjectId,
+    baseRef: string,
+  ) => Effect.Effect<LocalBaseUpdateResult, GitHostError>;
+  readonly switchToBaseBranch: (
+    projectId: ProjectId,
+    worktreePath: string,
+    baseRef: string,
+  ) => Effect.Effect<SwitchToBaseResult, GitHostError>;
+  readonly getPostMergeStatus: (
+    projectId: ProjectId,
+    baseRef: string,
+    headRef: string,
+  ) => Effect.Effect<PostMergeActionsState, GitHostError>;
   readonly notifyTurnEnded: (projectId: ProjectId) => Effect.Effect<void>;
   readonly evictProject: (projectId: ProjectId) => Effect.Effect<void>;
   readonly evictAll: () => Effect.Effect<void>;
 }
+
+export interface LocalBranchCoordinatorShape {
+  readonly isWorktreeClean: (folder: string) => Effect.Effect<boolean>;
+  readonly pullFastForward: (
+    folder: string,
+  ) => Effect.Effect<
+    | { readonly _tag: 'Done'; readonly detail: string }
+    | { readonly _tag: 'Rejected'; readonly reason: string; readonly detail: string }
+    | { readonly _tag: 'Failed'; readonly detail: string }
+  >;
+  readonly fetchBranchFastForward: (
+    folder: string,
+    remote: string,
+    branch: string,
+  ) => Effect.Effect<
+    | { readonly _tag: 'Done'; readonly detail: string }
+    | { readonly _tag: 'Rejected'; readonly reason: string; readonly detail: string }
+    | { readonly _tag: 'Failed'; readonly detail: string }
+  >;
+  readonly checkoutBranch: (
+    folder: string,
+    branch: string,
+  ) => Effect.Effect<
+    | { readonly _tag: 'Done'; readonly detail: string }
+    | { readonly _tag: 'Rejected'; readonly reason: string; readonly detail: string }
+    | { readonly _tag: 'Failed'; readonly detail: string }
+  >;
+}
+
+/** Executes local Git branch fast-forward and checkout operations. */
+export class LocalBranchCoordinator extends Context.Service<
+  LocalBranchCoordinator,
+  LocalBranchCoordinatorShape
+>()('git-hosts/LocalBranchCoordinator') {}
+
+export interface WorktreeSessionCheckerShape {
+  readonly hasRunningSession: (
+    projectId: ProjectId,
+    worktreePath: string,
+  ) => Effect.Effect<boolean>;
+}
+
+/** Checks whether a Worktree currently has any active/running Session Turn. */
+export class WorktreeSessionChecker extends Context.Service<
+  WorktreeSessionChecker,
+  WorktreeSessionCheckerShape
+>()('git-hosts/WorktreeSessionChecker') {}
+
+export const layerLocalBranchCoordinatorLive = Layer.effect(
+  LocalBranchCoordinator,
+  Effect.gen(function* () {
+    const mergedPath = yield* MergedPath;
+    const toOutcome = (r: {
+      readonly _tag: string;
+      readonly reason?: string;
+      readonly detail: string;
+    }) => {
+      if (r._tag === 'Done') return { _tag: 'Done' as const, detail: r.detail };
+      if (r._tag === 'Rejected') {
+        return { _tag: 'Rejected' as const, reason: r.reason ?? 'Failed', detail: r.detail };
+      }
+      return { _tag: 'Failed' as const, detail: r.detail };
+    };
+    return {
+      isWorktreeClean: Effect.fnUntraced(function* (folder: string) {
+        const pathEnv = yield* mergedPath.get;
+        return yield* Effect.promise(() => gitIsWorktreeClean(folder, null, pathEnv));
+      }),
+      pullFastForward: Effect.fnUntraced(function* (folder: string) {
+        const pathEnv = yield* mergedPath.get;
+        const res = yield* Effect.promise(() => gitPullFastForward(folder, null, pathEnv));
+        return toOutcome(res);
+      }),
+      fetchBranchFastForward: Effect.fnUntraced(function* (
+        folder: string,
+        remote: string,
+        branch: string,
+      ) {
+        const pathEnv = yield* mergedPath.get;
+        const res = yield* Effect.promise(() =>
+          gitFetchBranchFastForward(folder, remote, branch, null, pathEnv),
+        );
+        return toOutcome(res);
+      }),
+      checkoutBranch: Effect.fnUntraced(function* (folder: string, branch: string) {
+        const pathEnv = yield* mergedPath.get;
+        const res = yield* Effect.promise(() => gitCheckoutBranch(folder, branch, null, pathEnv));
+        return toOutcome(res);
+      }),
+    };
+  }),
+);
 
 /** Coordinates PR discovery, ETag-gated focused polling, caching, and eviction. */
 export class PullRequestsService extends Context.Service<
@@ -238,6 +374,9 @@ export const layerPullRequestsService = Layer.effect(
     const auth = yield* HostAuth;
     const prStore = yield* PrStore;
     const focus = yield* WindowFocus;
+    const localBranchOpt = yield* Effect.serviceOption(LocalBranchCoordinator);
+    const sessionCheckerOpt = yield* Effect.serviceOption(WorktreeSessionChecker);
+    const settingsOpt = yield* Effect.serviceOption(Settings);
 
     const pubsub = yield* PubSub.unbounded<ProjectPullRequestsState>();
     const syncLock = yield* Semaphore.make(1);
@@ -305,6 +444,7 @@ export const layerPullRequestsService = Layer.effect(
       resolvedByProject.set(projectId, resolved);
       return {
         _tag: 'Available' as const,
+        projectPath: project.path,
         resolved,
         worktrees: inspection.worktrees,
       };
@@ -763,6 +903,328 @@ export const layerPullRequestsService = Layer.effect(
       yield* prStore.evictAll();
     });
 
+    const normalizeWtPath = (p: string): string =>
+      p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+
+    const mapRemoteReasonToSkipped = (
+      reason: string,
+    ): Extract<LocalBaseUpdateResult, { _tag: 'Skipped' }>['reason'] => {
+      switch (reason) {
+        case 'Diverged':
+          return 'Diverged';
+        case 'NoRemote':
+        case 'UnknownRemote':
+          return 'NoRemote';
+        case 'NoUpstream':
+          return 'NoUpstream';
+        case 'DetachedHead':
+          return 'DetachedHead';
+        case 'MissingGit':
+          return 'MissingGit';
+        default:
+          return 'Failed';
+      }
+    };
+
+    const resolveRemoteOrFail = Effect.fnUntraced(function* (projectId: ProjectId) {
+      const r = yield* resolveRemoteForProject(projectId);
+      if (r._tag === 'Unavailable') {
+        return yield* new GitHostError({ reason: 'NotFound', detail: r.state.detail });
+      }
+      return r;
+    });
+
+    const checkWorktreeBusy = (projectId: ProjectId, wtPath: string): Effect.Effect<boolean> =>
+      Option.isSome(sessionCheckerOpt)
+        ? sessionCheckerOpt.value.hasRunningSession(projectId, wtPath)
+        : Effect.succeed(false);
+
+    const checkWorktreeClean = (wtPath: string): Effect.Effect<boolean> =>
+      Option.isSome(localBranchOpt)
+        ? localBranchOpt.value.isWorktreeClean(wtPath)
+        : Effect.succeed(true);
+
+    const updateLocalBaseBranch: PullRequestsServiceShape['updateLocalBaseBranch'] =
+      Effect.fnUntraced(function* (projectId, baseRef) {
+        if (Option.isNone(localBranchOpt)) {
+          return {
+            _tag: 'Skipped',
+            reason: 'MissingGit',
+            baseRef,
+            worktreePath: null,
+            detail: 'Local branch coordinator is unavailable.',
+          } satisfies LocalBaseUpdateResult;
+        }
+        const coordinator = localBranchOpt.value;
+        const { projectPath, worktrees, resolved } = yield* resolveRemoteOrFail(projectId);
+        const baseWt = worktrees.find((wt) => !wt.isDetached && wt.branch === baseRef);
+
+        if (baseWt !== undefined) {
+          const clean = yield* checkWorktreeClean(baseWt.key);
+          if (!clean) {
+            return {
+              _tag: 'Skipped',
+              reason: 'Dirty',
+              baseRef,
+              worktreePath: baseWt.key,
+              detail: `Worktree at '${baseWt.key}' has uncommitted changes.`,
+            } satisfies LocalBaseUpdateResult;
+          }
+          const busy = yield* checkWorktreeBusy(projectId, baseWt.key);
+          if (busy) {
+            return {
+              _tag: 'Skipped',
+              reason: 'Busy',
+              baseRef,
+              worktreePath: baseWt.key,
+              detail: `A Session is currently running in '${baseWt.key}'.`,
+            } satisfies LocalBaseUpdateResult;
+          }
+          const pullRes = yield* coordinator.pullFastForward(baseWt.key);
+          if (pullRes._tag === 'Done') {
+            yield* syncProject(projectId, { bypassEtag: false }).pipe(Effect.ignore);
+            return {
+              _tag: 'Updated',
+              strategy: 'pull',
+              baseRef,
+              worktreePath: baseWt.key,
+              detail: pullRes.detail,
+            } satisfies LocalBaseUpdateResult;
+          }
+          return {
+            _tag: 'Skipped',
+            reason:
+              pullRes._tag === 'Rejected' ? mapRemoteReasonToSkipped(pullRes.reason) : 'Failed',
+            baseRef,
+            worktreePath: baseWt.key,
+            detail: pullRes.detail,
+          } satisfies LocalBaseUpdateResult;
+        }
+
+        const fetchRes = yield* coordinator.fetchBranchFastForward(
+          projectPath,
+          resolved.targetRemoteName,
+          baseRef,
+        );
+        if (fetchRes._tag === 'Done') {
+          return {
+            _tag: 'Updated',
+            strategy: 'fetch',
+            baseRef,
+            worktreePath: null,
+            detail: fetchRes.detail,
+          } satisfies LocalBaseUpdateResult;
+        }
+        return {
+          _tag: 'Skipped',
+          reason:
+            fetchRes._tag === 'Rejected' ? mapRemoteReasonToSkipped(fetchRes.reason) : 'Failed',
+          baseRef,
+          worktreePath: null,
+          detail: fetchRes.detail,
+        } satisfies LocalBaseUpdateResult;
+      });
+
+    const switchToBaseBranch: PullRequestsServiceShape['switchToBaseBranch'] = Effect.fnUntraced(
+      function* (projectId, worktreePath, baseRef) {
+        if (Option.isNone(localBranchOpt)) {
+          return {
+            _tag: 'Rejected',
+            reason: 'MissingGit',
+            detail: 'Local branch coordinator is unavailable.',
+          } satisfies SwitchToBaseResult;
+        }
+        const coordinator = localBranchOpt.value;
+        const { worktrees } = yield* resolveRemoteOrFail(projectId);
+        const normTarget = normalizeWtPath(worktreePath);
+        const otherWithBase = worktrees.find(
+          (wt) => !wt.isDetached && wt.branch === baseRef && normalizeWtPath(wt.key) !== normTarget,
+        );
+        if (otherWithBase !== undefined) {
+          return {
+            _tag: 'Rejected',
+            reason: 'CheckedOutElsewhere',
+            detail: `Branch '${baseRef}' is already checked out in '${otherWithBase.key}'.`,
+          } satisfies SwitchToBaseResult;
+        }
+        const clean = yield* checkWorktreeClean(worktreePath);
+        if (!clean) {
+          return {
+            _tag: 'Rejected',
+            reason: 'Dirty',
+            detail: 'Worktree has uncommitted changes.',
+          } satisfies SwitchToBaseResult;
+        }
+        const busy = yield* checkWorktreeBusy(projectId, worktreePath);
+        if (busy) {
+          return {
+            _tag: 'Rejected',
+            reason: 'Busy',
+            detail: 'A Session is currently running in this Worktree.',
+          } satisfies SwitchToBaseResult;
+        }
+        const checkoutRes = yield* coordinator.checkoutBranch(worktreePath, baseRef);
+        if (checkoutRes._tag === 'Done') {
+          yield* syncProject(projectId, { bypassEtag: false }).pipe(Effect.ignore);
+          return {
+            _tag: 'Switched',
+            baseRef,
+            worktreePath,
+          } satisfies SwitchToBaseResult;
+        }
+        return {
+          _tag: 'Rejected',
+          reason:
+            checkoutRes._tag === 'Rejected' && checkoutRes.reason === 'MissingGit'
+              ? 'MissingGit'
+              : 'Failed',
+          detail: checkoutRes.detail,
+        } satisfies SwitchToBaseResult;
+      },
+    );
+
+    const getPostMergeStatus: PullRequestsServiceShape['getPostMergeStatus'] = Effect.fnUntraced(
+      function* (projectId, baseRef, headRef) {
+        const { worktrees } = yield* resolveRemoteOrFail(projectId);
+        const baseWt = worktrees.find((wt) => !wt.isDetached && wt.branch === baseRef);
+
+        let updateBase: PostMergeActionsState['updateBase'] = { status: 'ready' };
+        if (baseWt !== undefined) {
+          const clean = yield* checkWorktreeClean(baseWt.key);
+          if (!clean) {
+            updateBase = {
+              status: 'disabled',
+              reason: `Worktree at '${baseWt.key}' has uncommitted changes.`,
+            };
+          } else {
+            const busy = yield* checkWorktreeBusy(projectId, baseWt.key);
+            if (busy) {
+              updateBase = {
+                status: 'disabled',
+                reason: `A Session is currently running in '${baseWt.key}'.`,
+              };
+            }
+          }
+        }
+
+        const mergedWt = worktrees.find((wt) => !wt.isDetached && wt.branch === headRef);
+        let switchToBase: PostMergeActionsState['switchToBase'] = {
+          visible: false,
+          enabled: false,
+          worktreePath: null,
+        };
+        if (mergedWt !== undefined) {
+          const otherWithBase = worktrees.find(
+            (wt) =>
+              !wt.isDetached &&
+              wt.branch === baseRef &&
+              normalizeWtPath(wt.key) !== normalizeWtPath(mergedWt.key),
+          );
+          if (otherWithBase !== undefined) {
+            switchToBase = {
+              visible: true,
+              enabled: false,
+              worktreePath: mergedWt.key,
+              reason: `Branch '${baseRef}' is already checked out in another Worktree.`,
+            };
+          } else {
+            const clean = yield* checkWorktreeClean(mergedWt.key);
+            if (!clean) {
+              switchToBase = {
+                visible: true,
+                enabled: false,
+                worktreePath: mergedWt.key,
+                reason: 'Worktree has uncommitted changes.',
+              };
+            } else {
+              const busy = yield* checkWorktreeBusy(projectId, mergedWt.key);
+              if (busy) {
+                switchToBase = {
+                  visible: true,
+                  enabled: false,
+                  worktreePath: mergedWt.key,
+                  reason: 'A Session is currently running in this Worktree.',
+                };
+              } else {
+                switchToBase = {
+                  visible: true,
+                  enabled: true,
+                  worktreePath: mergedWt.key,
+                };
+              }
+            }
+          }
+        }
+
+        return { updateBase, switchToBase };
+      },
+    );
+
+    const merge: PullRequestsServiceShape['merge'] = Effect.fnUntraced(function* ({
+      projectId,
+      number,
+      expectedHeadSha,
+      method,
+      commitTitle,
+      commitMessage,
+    }) {
+      const { resolved } = yield* resolveRemoteOrFail(projectId);
+      const host = yield* registry.get(resolved.repo.host);
+      const detail = yield* host
+        .merge({
+          repo: resolved.repo,
+          number,
+          expectedHeadSha,
+          method,
+          ...(commitTitle !== undefined ? { commitTitle } : {}),
+          ...(commitMessage !== undefined ? { commitMessage } : {}),
+        })
+        .pipe(
+          Effect.tapError((err) =>
+            err.reason === 'Conflict'
+              ? syncProject(projectId, { bypassEtag: true }).pipe(Effect.ignore)
+              : Effect.void,
+          ),
+        );
+      yield* prStore.saveDetail(projectId, detail);
+      yield* syncProject(projectId, { bypassEtag: true }).pipe(Effect.ignore);
+
+      let autoUpdate = DEFAULT_PULL_REQUEST_SETTINGS.autoUpdateBaseBranchAfterMerge;
+      if (Option.isSome(settingsOpt)) {
+        const s = yield* settingsOpt.value.get;
+        autoUpdate =
+          s.pullRequests?.autoUpdateBaseBranchAfterMerge ??
+          DEFAULT_PULL_REQUEST_SETTINGS.autoUpdateBaseBranchAfterMerge;
+      }
+
+      const baseUpdate = autoUpdate
+        ? yield* updateLocalBaseBranch(projectId, detail.baseRef)
+        : null;
+
+      return { detail, baseUpdate };
+    });
+
+    const setAutoMerge: PullRequestsServiceShape['setAutoMerge'] = Effect.fnUntraced(function* ({
+      projectId,
+      number,
+      enabled,
+      method,
+      expectedHeadSha,
+    }) {
+      const { resolved } = yield* resolveRemoteOrFail(projectId);
+      const host = yield* registry.get(resolved.repo.host);
+      const detail = yield* host.setAutoMerge({
+        repo: resolved.repo,
+        number,
+        enabled,
+        ...(method !== undefined ? { method } : {}),
+        ...(expectedHeadSha !== undefined ? { expectedHeadSha } : {}),
+      });
+      yield* prStore.saveDetail(projectId, detail);
+      yield* syncProject(projectId, { bypassEtag: true }).pipe(Effect.ignore);
+      return detail;
+    });
+
     return {
       changes: Stream.fromPubSub(pubsub),
       setActiveView,
@@ -772,6 +1234,11 @@ export const layerPullRequestsService = Layer.effect(
       unpinNumber,
       getDetail,
       getDiff,
+      merge,
+      setAutoMerge,
+      updateLocalBaseBranch,
+      switchToBaseBranch,
+      getPostMergeStatus,
       notifyTurnEnded,
       evictProject,
       evictAll,

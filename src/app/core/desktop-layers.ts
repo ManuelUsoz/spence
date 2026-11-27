@@ -289,6 +289,15 @@ export const layerPullRequestsUnused = PullRequestsRpcs.toLayer({
   'PullRequests.unpinNumber': () => Effect.void,
   'PullRequests.getDetail': () => Effect.die('PullRequests.getDetail is not served in this test'),
   'PullRequests.getDiff': () => Effect.die('PullRequests.getDiff is not served in this test'),
+  'PullRequests.merge': () => Effect.die('PullRequests.merge is not served in this test'),
+  'PullRequests.setAutoMerge': () =>
+    Effect.die('PullRequests.setAutoMerge is not served in this test'),
+  'PullRequests.updateLocalBaseBranch': () =>
+    Effect.die('PullRequests.updateLocalBaseBranch is not served in this test'),
+  'PullRequests.switchToBaseBranch': () =>
+    Effect.die('PullRequests.switchToBaseBranch is not served in this test'),
+  'PullRequests.getPostMergeStatus': () =>
+    Effect.die('PullRequests.getPostMergeStatus is not served in this test'),
 });
 
 /** Every domain's `layerXUnused`; the handlers a test passes replace the ones it exercises. */

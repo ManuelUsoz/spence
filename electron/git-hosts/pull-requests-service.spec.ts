@@ -16,7 +16,12 @@ import {
   type PullRequestSummary,
   type RemoteRepoRef,
 } from '../../src/shared/pull-requests/pull-requests.rpc';
+import {
+  DEFAULT_PULL_REQUEST_SETTINGS,
+  type Settings as AppSettings,
+} from '../../src/shared/settings/settings.rpc';
 import { Projects } from '../projects/projects';
+import { Settings } from '../settings/settings';
 import { layerWindowFocus, WindowFocus } from '../sessions/window-focus';
 import { layerStore } from '../store/store';
 import { layerGitHostRegistry, type GitHost } from './git-host';
@@ -25,8 +30,13 @@ import { HostAuth, type HostAuthShape } from './host-auth';
 import { PrStore, type StoredProjectSummaries } from './pr-store';
 import {
   layerPullRequestsService,
+  LocalBranchCoordinator,
   ProjectGitInspector,
   PullRequestsService,
+  WorktreeSessionChecker,
+  type InspectedWorktree,
+  type LocalBranchCoordinatorShape,
+  type WorktreeSessionCheckerShape,
 } from './pull-requests-service';
 
 const repo: RemoteRepoRef = { host: 'github', canonicalPath: 'org/repo' };
@@ -108,6 +118,12 @@ const makeHarness = (options: {
   readonly listForRepo: GitHost['listForRepo'];
   readonly getDetail?: GitHost['getDetail'];
   readonly getSummaryByNumber?: GitHost['getSummaryByNumber'];
+  readonly merge?: GitHost['merge'];
+  readonly setAutoMerge?: GitHost['setAutoMerge'];
+  readonly worktrees?: ReadonlyArray<InspectedWorktree>;
+  readonly localBranchCoordinator?: LocalBranchCoordinatorShape;
+  readonly sessionChecker?: WorktreeSessionCheckerShape;
+  readonly autoUpdateBaseBranchAfterMerge?: boolean;
 }) => {
   let accountStatus: HostAccount['status'] = 'connected';
   const fakeAuth: HostAuthShape = {
@@ -142,6 +158,13 @@ const makeHarness = (options: {
       (({ number }) => Effect.succeed({ notModified: false, detail: makeDetail(Number(number)) })),
     getDiff: ({ number, headSha, baseSha }) =>
       Effect.succeed({ ref: { repo, number }, headSha, baseSha, files: [] }),
+    merge:
+      options.merge ??
+      (({ number }) => Effect.succeed(makeDetail(Number(number), { state: 'merged' }))),
+    setAutoMerge:
+      options.setAutoMerge ??
+      (({ number, enabled }) =>
+        Effect.succeed(makeDetail(Number(number), { autoMergeEnabled: enabled }))),
     clearEtags: () => Effect.void,
   };
 
@@ -164,7 +187,7 @@ const makeHarness = (options: {
       Effect.succeed({
         _tag: 'Available' as const,
         remotesOutput: 'origin\thttps://github.com/org/repo.git (fetch)\n',
-        worktrees: [
+        worktrees: options.worktrees ?? [
           {
             key: '/tmp/spence',
             branch: 'feat/x',
@@ -175,6 +198,34 @@ const makeHarness = (options: {
       }),
   });
 
+  const fakeLocalCoordinator = Layer.succeed(
+    LocalBranchCoordinator,
+    options.localBranchCoordinator ?? {
+      isWorktreeClean: () => Effect.succeed(true),
+      pullFastForward: () => Effect.succeed({ _tag: 'Done', detail: 'Already up to date.' }),
+      fetchBranchFastForward: () => Effect.succeed({ _tag: 'Done', detail: 'Fetched.' }),
+      checkoutBranch: () => Effect.succeed({ _tag: 'Done', detail: 'Switched.' }),
+    },
+  );
+
+  const fakeSessionChecker = Layer.succeed(
+    WorktreeSessionChecker,
+    options.sessionChecker ?? {
+      hasRunningSession: () => Effect.succeed(false),
+    },
+  );
+
+  const fakeSettings = Layer.succeed(Settings, {
+    get: Effect.succeed({
+      pullRequests: {
+        ...DEFAULT_PULL_REQUEST_SETTINGS,
+        autoUpdateBaseBranchAfterMerge: options.autoUpdateBaseBranchAfterMerge ?? true,
+      },
+    } as AppSettings),
+    update: () => Effect.die('unused'),
+    changes: undefined as never,
+  });
+
   const base = Layer.mergeAll(
     layerStore(options.storeRoot),
     layerWindowFocus,
@@ -182,6 +233,9 @@ const makeHarness = (options: {
     layerGitHostRegistry([fakeHost]),
     fakeProjects,
     fakeInspector,
+    fakeLocalCoordinator,
+    fakeSessionChecker,
+    fakeSettings,
   );
   const summariesMap = new Map<ProjectId, StoredProjectSummaries>();
   const detailsMap = new Map<string, PullRequestDetail>();
@@ -372,5 +426,125 @@ describe('PullRequestsService polling & lifecycle', () => {
         Effect.ensuring(Effect.promise(() => rm(storeRoot, { recursive: true, force: true }))),
       );
     }),
+  );
+
+  it.effect(
+    'merges PR, auto-updates clean idle base worktree via pull, ref-only via fetch, and refuses dirty/busy',
+    () =>
+      Effect.gen(function* () {
+        const storeRoot = yield* Effect.promise(() =>
+          mkdtemp(path.join(tmpdir(), 'spence-pr-merge-svc-')),
+        );
+        const pullCalls: string[] = [];
+        const fetchCalls: Array<{ folder: string; remote: string; branch: string }> = [];
+        const checkoutCalls: Array<{ folder: string; branch: string }> = [];
+        const cleanMap: Record<string, boolean> = {
+          '/tmp/spence-main': true,
+          '/tmp/spence-feat': true,
+        };
+        const busyMap: Record<string, boolean> = {
+          '/tmp/spence-main': false,
+          '/tmp/spence-feat': false,
+        };
+        const worktrees: InspectedWorktree[] = [
+          { key: '/tmp/spence-main', branch: 'main', headSha: 'sha-main', isDetached: false },
+          { key: '/tmp/spence-feat', branch: 'feat/x', headSha: 'sha-1', isDetached: false },
+        ];
+
+        const layer = makeHarness({
+          storeRoot,
+          listForRepo: () => Effect.succeed({ notModified: false, summaries: [makeSummary(1)] }),
+          worktrees,
+          localBranchCoordinator: {
+            isWorktreeClean: (folder) => Effect.succeed(cleanMap[folder] ?? true),
+            pullFastForward: (folder) =>
+              Effect.sync(() => {
+                pullCalls.push(folder);
+                return { _tag: 'Done' as const, detail: 'Fast-forwarded' };
+              }),
+            fetchBranchFastForward: (folder, remote, branch) =>
+              Effect.sync(() => {
+                fetchCalls.push({ folder, remote, branch });
+                return { _tag: 'Done' as const, detail: 'Fetched ref' };
+              }),
+            checkoutBranch: (folder, branch) =>
+              Effect.sync(() => {
+                checkoutCalls.push({ folder, branch });
+                return { _tag: 'Done' as const, detail: 'Switched' };
+              }),
+          },
+          sessionChecker: {
+            hasRunningSession: (_pid, wt) => Effect.succeed(busyMap[wt] ?? false),
+          },
+        });
+
+        yield* Effect.gen(function* () {
+          const svc = yield* PullRequestsService;
+          yield* svc.refreshProject(projectId);
+
+          // 1. Merge with base branch checked out in clean, idle worktree -> pull --ff-only
+          const res1 = yield* svc.merge({
+            projectId,
+            number: PullRequestNumber.make(1),
+            expectedHeadSha: 'sha-1',
+            method: 'squash',
+          });
+          expect(res1.detail.state).toBe('merged');
+          expect(res1.baseUpdate).toMatchObject({
+            _tag: 'Updated',
+            strategy: 'pull',
+            baseRef: 'main',
+            worktreePath: '/tmp/spence-main',
+          });
+          expect(pullCalls).toEqual(['/tmp/spence-main']);
+
+          // 2. Dirty base worktree -> Skipped(Dirty)
+          cleanMap['/tmp/spence-main'] = false;
+          const dirtyUpdate = yield* svc.updateLocalBaseBranch(projectId, 'main');
+          expect(dirtyUpdate).toMatchObject({ _tag: 'Skipped', reason: 'Dirty' });
+          expect(pullCalls).toHaveLength(1);
+
+          // 3. Busy base worktree -> Skipped(Busy)
+          cleanMap['/tmp/spence-main'] = true;
+          busyMap['/tmp/spence-main'] = true;
+          const busyUpdate = yield* svc.updateLocalBaseBranch(projectId, 'main');
+          expect(busyUpdate).toMatchObject({ _tag: 'Skipped', reason: 'Busy' });
+          expect(pullCalls).toHaveLength(1);
+
+          // 4. Switch to base branch refused when checked out elsewhere
+          const switchBlocked = yield* svc.switchToBaseBranch(
+            projectId,
+            '/tmp/spence-feat',
+            'main',
+          );
+          expect(switchBlocked).toMatchObject({
+            _tag: 'Rejected',
+            reason: 'CheckedOutElsewhere',
+          });
+
+          // 5. When base branch is not checked out in any worktree -> fetch <remote> <base>:<base>
+          worktrees.splice(0, 1); // remove /tmp/spence-main
+          const fetchUpdate = yield* svc.updateLocalBaseBranch(projectId, 'main');
+          expect(fetchUpdate).toMatchObject({
+            _tag: 'Updated',
+            strategy: 'fetch',
+            baseRef: 'main',
+            worktreePath: null,
+          });
+          expect(fetchCalls).toEqual([{ folder: '/tmp/spence', remote: 'origin', branch: 'main' }]);
+
+          // 6. Switch to base branch succeeds on clean, idle merged worktree
+          const switched = yield* svc.switchToBaseBranch(projectId, '/tmp/spence-feat', 'main');
+          expect(switched).toMatchObject({
+            _tag: 'Switched',
+            baseRef: 'main',
+            worktreePath: '/tmp/spence-feat',
+          });
+          expect(checkoutCalls).toEqual([{ folder: '/tmp/spence-feat', branch: 'main' }]);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(Effect.promise(() => rm(storeRoot, { recursive: true, force: true }))),
+        );
+      }),
   );
 });
