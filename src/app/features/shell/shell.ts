@@ -406,11 +406,14 @@ export class Shell {
         this.prState.setActiveView({ projectId, prPageOpen, activePrNumber });
       });
     });
-    // Asking for a Tab (a Session row, a new Session, a shortcut) leaves the Settings page.
+    // Show the requested Tab when a Session is opened from a full-page view.
     effect(() => {
       this.tabs.activations();
       untracked(() => {
         this.settings.set(false);
+        if (this.prState.prPageOpen()) {
+          this.prState.closePrPage(this.activeProject()?.id ?? null);
+        }
       });
     });
     effect(() => {

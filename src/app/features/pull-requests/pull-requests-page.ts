@@ -11,9 +11,10 @@ import {
   viewChild,
 } from '@angular/core';
 import { Cause, Effect, Exit } from 'effect';
-import { HlmBadgeImports } from '@ui/badge';
+import { HlmBreadcrumbImports } from '@ui/breadcrumb';
 import { HlmButtonImports } from '@ui/button';
 import { HlmInputImports } from '@ui/input';
+import { HlmPopoverImports } from '@ui/popover';
 import { toast } from '@ui/toast';
 import type { ProjectId } from '../../../shared/projects/projects.rpc';
 import {
@@ -39,9 +40,14 @@ import {
 } from '../../../shared/pull-requests/pull-requests.rpc';
 import { DesktopApi, type DesktopApiShape } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
-import { PullRequestsState, checkRollupDotClass } from '../../core/pull-requests-state';
+import { PullRequestsState } from '../../core/pull-requests-state';
 import { PrCreateForm } from './pr-create-form';
-import { PrDetailPane, type DiffLoadState, type PrConflictState } from './pr-detail-pane';
+import {
+  PrDetailPane,
+  type DiffLoadState,
+  type PrConflictState,
+  type PrDetailTab,
+} from './pr-detail-pane';
 import { PrRenderClient } from './pr-render-client';
 import { formatCachedAge, formatResetTime, prStateLabel } from './pr-status';
 
@@ -61,7 +67,14 @@ type DetailLoadState =
  */
 @Component({
   selector: 'app-pull-requests-page',
-  imports: [HlmBadgeImports, HlmButtonImports, HlmInputImports, PrDetailPane, PrCreateForm],
+  imports: [
+    HlmBreadcrumbImports,
+    HlmButtonImports,
+    HlmInputImports,
+    HlmPopoverImports,
+    PrDetailPane,
+    PrCreateForm,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
     class: 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden',
@@ -73,122 +86,302 @@ type DetailLoadState =
       class="border-border/60 flex h-12 min-w-0 shrink-0 items-center justify-between gap-3 border-b px-4"
       data-testid="pull-requests-header"
     >
-      <div class="flex min-w-0 items-center gap-2">
-        @if (projectName(); as name) {
-          <span
-            class="text-foreground max-w-44 truncate text-sm font-medium"
-            data-testid="pull-requests-project-name"
-            >{{ name }}</span
-          >
-          <span class="text-border select-none" aria-hidden="true">/</span>
-        }
+      <nav hlmBreadcrumb aria-label="Breadcrumb" i18n-aria-label class="min-w-0 flex-1">
+        <ol hlmBreadcrumbList class="flex-nowrap items-center text-sm">
+          @if (projectName(); as name) {
+            <li hlmBreadcrumbItem class="min-w-0">
+              <span
+                class="text-muted-foreground max-w-36 truncate"
+                data-testid="pull-requests-project-name"
+                >{{ name }}</span
+              >
+            </li>
+            <li hlmBreadcrumbSeparator class="text-muted-foreground/60 select-none">/</li>
+          }
+          <li hlmBreadcrumbItem class="shrink-0">
+            @if (selectedNumber() !== null || createMode()) {
+              <button
+                type="button"
+                class="hover:bg-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring -mx-2 h-7 rounded-lg px-2 transition-colors outline-none focus-visible:ring-2"
+                data-testid="pr-breadcrumb-root"
+                (click)="clearSelection()"
+                i18n
+              >
+                Pull requests
+              </button>
+            } @else {
+              <span hlmBreadcrumbPage class="font-medium" data-testid="pr-breadcrumb-root" i18n
+                >Pull requests</span
+              >
+            }
+          </li>
+          @if (createMode()) {
+            <li hlmBreadcrumbSeparator class="text-muted-foreground/60 select-none">/</li>
+            <li hlmBreadcrumbItem class="shrink-0">
+              <span hlmBreadcrumbPage class="font-medium" data-testid="pr-breadcrumb-create" i18n
+                >New Pull request</span
+              >
+            </li>
+          } @else if (selectedNumber(); as num) {
+            <li hlmBreadcrumbSeparator class="text-muted-foreground/60 select-none">/</li>
+            <li hlmBreadcrumbItem class="shrink-0">
+              @if (activeTab() === 'files' && activeFilePath() !== null) {
+                <button
+                  type="button"
+                  class="hover:bg-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring -mx-2 h-7 rounded-lg px-2 font-mono text-xs tabular-nums transition-colors outline-none focus-visible:ring-2"
+                  data-testid="pr-breadcrumb-pr"
+                  (click)="onActiveTabChange('overview')"
+                >
+                  #{{ num }}
+                </button>
+              } @else {
+                <span
+                  hlmBreadcrumbPage
+                  class="font-mono text-xs font-medium tabular-nums"
+                  data-testid="pr-breadcrumb-pr"
+                  >#{{ num }}</span
+                >
+              }
+            </li>
+            @if (activeTab() === 'files' && activeFilePath(); as filePath) {
+              <li hlmBreadcrumbSeparator class="text-muted-foreground/60 select-none">/</li>
+              <li hlmBreadcrumbItem class="min-w-0">
+                <span
+                  hlmBreadcrumbPage
+                  class="max-w-64 truncate font-mono text-xs"
+                  [title]="filePath"
+                  data-testid="pr-breadcrumb-file"
+                  >{{ filePath }}</span
+                >
+              </li>
+            }
+          }
+        </ol>
+      </nav>
+
+      @if (projectId(); as pid) {
         <div
-          class="bg-muted/60 border-border/60 flex items-center rounded-lg border p-0.5 text-xs"
-          role="tablist"
-          aria-label="Pull request filters"
-          i18n-aria-label
+          class="border-border/40 bg-background/70 flex shrink-0 items-center gap-0.5 rounded-full border p-0.5 shadow-2xs backdrop-blur-md"
         >
-          <button
-            type="button"
-            role="tab"
-            [attr.aria-selected]="filter() === 'all'"
-            data-testid="pr-filter-all"
-            class="rounded-md px-2.5 py-1 transition-colors outline-none"
-            [class]="
-              filter() === 'all'
-                ? 'bg-background text-foreground font-medium shadow-2xs'
-                : 'text-muted-foreground hover:text-foreground'
-            "
-            (click)="filter.set('all')"
-            i18n
+          <!-- Filter Floating Menu -->
+          <hlm-popover
+            [sideOffset]="6"
+            align="end"
+            [state]="filterPopoverState()"
+            (stateChanged)="filterPopoverState.set($event === 'open' ? 'open' : 'closed')"
           >
-            All
-          </button>
-          <button
-            type="button"
-            role="tab"
-            [attr.aria-selected]="filter() === 'mine'"
-            data-testid="pr-filter-mine"
-            class="rounded-md px-2.5 py-1 transition-colors outline-none"
-            [class]="
-              filter() === 'mine'
-                ? 'bg-background text-foreground font-medium shadow-2xs'
-                : 'text-muted-foreground hover:text-foreground'
-            "
-            (click)="filter.set('mine')"
-            i18n
-          >
-            Mine
-          </button>
-          <button
-            type="button"
-            role="tab"
-            [attr.aria-selected]="filter() === 'reviewRequested'"
-            data-testid="pr-filter-review-requested"
-            class="rounded-md px-2.5 py-1 transition-colors outline-none"
-            [class]="
-              filter() === 'reviewRequested'
-                ? 'bg-background text-foreground font-medium shadow-2xs'
-                : 'text-muted-foreground hover:text-foreground'
-            "
-            (click)="filter.set('reviewRequested')"
-            i18n
-          >
-            Review requested
-          </button>
-        </div>
-
-        <input
-          hlmInput
-          type="search"
-          class="h-7 w-44 text-xs"
-          placeholder="Filter Pull requests…"
-          i18n-placeholder
-          data-testid="pr-search-input"
-          [value]="searchQuery()"
-          (input)="searchQuery.set($any($event.target).value)"
-        />
-      </div>
-
-      <div class="flex shrink-0 items-center gap-2">
-        @if (projectId(); as pid) {
-          <form class="flex items-center gap-1" (submit)="lookupNumber($event, pid)">
-            <input
-              hlmInput
-              type="text"
-              class="h-7 w-24 font-mono text-xs"
-              placeholder="#123"
-              aria-label="Look up Pull request by number"
-              i18n-aria-label
-              data-testid="pr-lookup-input"
-              [value]="lookupInput()"
-              (input)="lookupInput.set($any($event.target).value)"
-            />
             <button
+              hlmPopoverTrigger
               hlmBtn
-              type="submit"
-              variant="outline"
+              type="button"
+              variant="ghost"
               size="sm"
-              class="h-7 px-2 text-xs"
-              data-testid="pr-lookup-submit"
-              [disabled]="lookingUp()"
-              i18n
+              class="text-muted-foreground gap-1.5 rounded-full font-normal"
+              [class.bg-accent]="hasActiveFilter()"
+              [class.text-foreground]="hasActiveFilter()"
+              data-testid="pr-filter-trigger"
             >
-              Pin
+              <svg
+                class="size-3.5"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+              </svg>
+              <span i18n>Filter</span>
+              @if (hasActiveFilter()) {
+                <span class="bg-primary size-1.5 rounded-full" aria-hidden="true"></span>
+              }
             </button>
-          </form>
+            <div
+              *hlmPopoverPortal="let ctx"
+              hlmPopoverContent
+              class="w-72 gap-3 rounded-xl p-3"
+              data-testid="pr-filter-popover"
+            >
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-xs font-medium" i18n>Filter Pull requests</span>
+                @if (hasActiveFilter()) {
+                  <button
+                    type="button"
+                    class="text-muted-foreground hover:text-foreground text-xs underline underline-offset-2"
+                    data-testid="pr-filter-reset"
+                    (click)="resetFilters()"
+                    i18n
+                  >
+                    Reset
+                  </button>
+                }
+              </div>
+              <div
+                class="bg-muted/60 border-border/60 flex items-center rounded-lg border p-0.5 text-xs"
+                role="tablist"
+                aria-label="Pull request filters"
+                i18n-aria-label
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  [attr.aria-selected]="filter() === 'all'"
+                  data-testid="pr-filter-all"
+                  class="flex-1 rounded-md px-2 py-1 transition-colors outline-none"
+                  [class]="
+                    filter() === 'all'
+                      ? 'bg-background text-foreground font-medium shadow-2xs'
+                      : 'text-muted-foreground hover:text-foreground'
+                  "
+                  (click)="filter.set('all')"
+                  i18n
+                >
+                  All
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  [attr.aria-selected]="filter() === 'mine'"
+                  data-testid="pr-filter-mine"
+                  class="flex-1 rounded-md px-2 py-1 transition-colors outline-none"
+                  [class]="
+                    filter() === 'mine'
+                      ? 'bg-background text-foreground font-medium shadow-2xs'
+                      : 'text-muted-foreground hover:text-foreground'
+                  "
+                  (click)="filter.set('mine')"
+                  i18n
+                >
+                  Mine
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  [attr.aria-selected]="filter() === 'reviewRequested'"
+                  data-testid="pr-filter-review-requested"
+                  class="flex-1 rounded-md px-2 py-1 transition-colors outline-none"
+                  [class]="
+                    filter() === 'reviewRequested'
+                      ? 'bg-background text-foreground font-medium shadow-2xs'
+                      : 'text-muted-foreground hover:text-foreground'
+                  "
+                  (click)="filter.set('reviewRequested')"
+                  i18n
+                >
+                  Review requested
+                </button>
+              </div>
+              <input
+                hlmInput
+                type="search"
+                class="h-8 w-full text-xs"
+                placeholder="Filter Pull requests…"
+                i18n-placeholder
+                data-testid="pr-search-input"
+                [value]="searchQuery()"
+                (input)="searchQuery.set($any($event.target).value)"
+              />
+            </div>
+          </hlm-popover>
+
+          <!-- Pin by Number Floating Menu -->
+          <hlm-popover
+            [sideOffset]="6"
+            align="end"
+            [state]="lookupPopoverState()"
+            (stateChanged)="lookupPopoverState.set($event === 'open' ? 'open' : 'closed')"
+          >
+            <button
+              hlmPopoverTrigger
+              hlmBtn
+              type="button"
+              variant="ghost"
+              size="sm"
+              class="text-muted-foreground gap-1.5 rounded-full font-normal"
+              data-testid="pr-lookup-trigger"
+            >
+              <svg
+                class="size-3.5"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <line x1="4" x2="20" y1="9" y2="9" />
+                <line x1="4" x2="20" y1="15" y2="15" />
+                <line x1="10" x2="8" y1="3" y2="21" />
+                <line x1="16" x2="14" y1="3" y2="21" />
+              </svg>
+              <span i18n>Pin</span>
+            </button>
+            <div
+              *hlmPopoverPortal="let ctx"
+              hlmPopoverContent
+              class="w-64 gap-2.5 rounded-xl p-3"
+              data-testid="pr-lookup-popover"
+            >
+              <span class="text-xs font-medium" i18n>Pin by number</span>
+              <form class="flex items-center gap-1.5" (submit)="lookupNumber($event, pid)">
+                <input
+                  hlmInput
+                  type="text"
+                  class="h-7 flex-1 font-mono text-xs"
+                  placeholder="#123"
+                  aria-label="Look up Pull request by number"
+                  i18n-aria-label
+                  data-testid="pr-lookup-input"
+                  [value]="lookupInput()"
+                  (input)="lookupInput.set($any($event.target).value)"
+                />
+                <button
+                  hlmBtn
+                  type="submit"
+                  variant="outline"
+                  size="sm"
+                  class="h-7 px-2.5 text-xs"
+                  data-testid="pr-lookup-submit"
+                  [disabled]="lookingUp()"
+                  i18n
+                >
+                  Pin
+                </button>
+              </form>
+              @if (lookupError(); as err) {
+                <p class="text-destructive text-xs" data-testid="pr-lookup-error">{{ err }}</p>
+              }
+            </div>
+          </hlm-popover>
 
           <button
             hlmBtn
             type="button"
             variant="ghost"
             size="sm"
-            class="h-7 px-2.5 text-xs"
+            class="text-muted-foreground gap-1.5 rounded-full font-normal"
             data-testid="pull-requests-refresh"
             (click)="retryProject()"
-            i18n
           >
-            Refresh
+            <svg
+              class="size-3.5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+              <path d="M3 3v5h5" />
+              <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+              <path d="M16 16h5v5" />
+            </svg>
+            <span i18n>Refresh</span>
           </button>
 
           <button
@@ -196,15 +389,27 @@ type DetailLoadState =
             type="button"
             variant="default"
             size="sm"
-            class="h-7 px-2.5 text-xs"
+            class="h-7 gap-1 rounded-full px-3 text-xs"
             data-testid="pr-create-button"
             (click)="openCreate()"
-            i18n
           >
-            Create PR
+            <svg
+              class="size-3.5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M5 12h14" />
+              <path d="M12 5v14" />
+            </svg>
+            <span i18n>Create PR</span>
           </button>
-        }
-      </div>
+        </div>
+      }
     </header>
 
     <!-- Quiet Degraded Status Strip -->
@@ -241,23 +446,6 @@ type DetailLoadState =
             Retry
           </button>
         }
-      </div>
-    }
-
-    @if (lookupError(); as err) {
-      <div
-        class="border-border/60 bg-destructive/10 text-destructive flex shrink-0 items-center justify-between gap-2 border-b px-4 py-1.5 text-xs"
-        data-testid="pr-lookup-error"
-      >
-        <span>{{ err }}</span>
-        <button
-          type="button"
-          class="underline underline-offset-2"
-          (click)="lookupError.set(null)"
-          i18n
-        >
-          Dismiss
-        </button>
       </div>
     }
 
@@ -312,9 +500,13 @@ type DetailLoadState =
       } @else {
         <!-- Unified Master-Detail Frame (ChangesFrame geometry) -->
         <div class="@container flex min-h-0 min-w-0 flex-1" data-testid="pull-requests-view">
-          <!-- 340px Left PR List Pane -->
           <aside
-            class="border-border/60 flex min-h-0 w-full flex-col overflow-y-auto border-r data-[view=viewer]:@max-3xl:hidden @3xl:w-[340px] @3xl:shrink-0"
+            class="flex min-h-0 w-full flex-col overflow-y-auto @3xl:w-[768px] @3xl:max-w-[50%] @3xl:shrink-0 data-[view=viewer]:@max-3xl:hidden"
+            [class]="
+              selectedNumber() !== null || createMode()
+                ? 'border-border/60 @3xl:min-w-[320px] @3xl:resize-x @3xl:border-r'
+                : ''
+            "
             [attr.data-view]="narrowPane()"
             data-testid="pr-list-pane"
           >
@@ -323,64 +515,54 @@ type DetailLoadState =
                 No matching Pull requests.
               </p>
             } @else {
-              <ul class="divide-border/60 divide-y">
+              <ul class="flex w-full max-w-3xl flex-col gap-1 p-2">
                 @for (pr of filteredSummaries(); track pr.ref.number) {
                   @let selected = selectedNumber() === pr.ref.number && !createMode();
                   <li>
                     <div
-                      class="flex items-start gap-2 px-4 py-3 transition-colors"
+                      class="flex items-center gap-2 rounded-lg transition-colors"
                       [class]="selected ? 'bg-accent/70' : 'hover:bg-accent/40'"
                     >
                       <button
                         type="button"
-                        class="min-w-0 flex-1 text-left outline-none"
+                        class="focus-visible:ring-ring min-w-0 flex-1 rounded-lg px-3 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset"
                         [attr.data-testid]="'pr-list-item-' + pr.ref.number"
                         [attr.aria-current]="selected ? 'true' : null"
                         (click)="selectPr(pr.ref.number)"
                       >
-                        <div class="flex items-center gap-1.5">
-                          <span
-                            class="size-2 shrink-0 rounded-full"
-                            [class]="rollupDotClass(pr.checkRollup)"
-                            [attr.aria-label]="pr.checkRollup"
-                          ></span>
-                          <span class="text-muted-foreground font-mono text-xs tabular-nums">
-                            #{{ pr.ref.number }}
-                          </span>
-                          <span class="truncate text-sm font-medium">{{ pr.title }}</span>
-                        </div>
-                        <div
-                          class="text-muted-foreground mt-1 flex items-center gap-1.5 font-mono text-xs"
-                        >
-                          <span class="truncate">{{ pr.headRef }}</span>
-                          <span aria-hidden="true">→</span>
-                          <span class="truncate">{{ pr.baseRef }}</span>
-                        </div>
-                        <div
-                          class="text-muted-foreground mt-1.5 flex flex-wrap items-center gap-2 text-xs"
-                        >
-                          <span hlmBadge variant="outline" class="text-[10px]">{{
-                            prStateLabel(pr.state)
-                          }}</span>
-                          <span>{{ pr.author.login }}</span>
-                          <span class="tabular-nums">{{ pr.commentCount }} comments</span>
-                          @if (pr.unresolvedThreadCount !== null && pr.unresolvedThreadCount > 0) {
-                            <span class="tabular-nums"
-                              >{{ pr.unresolvedThreadCount }} unresolved</span
+                        <span class="line-clamp-2 text-sm font-medium" [title]="pr.title">
+                          {{ pr.title }}
+                        </span>
+                        <span class="text-muted-foreground mt-1 flex items-center gap-1.5 text-xs">
+                          <span class="font-mono tabular-nums">#{{ pr.ref.number }}</span>
+                          <span aria-hidden="true">·</span>
+                          <span class="shrink-0">{{ prStateLabel(pr.state) }}</span>
+                          <span aria-hidden="true">·</span>
+                          <span class="min-w-0 truncate">{{ pr.author.login }}</span>
+                          @if (pr.commentCount > 0) {
+                            <span aria-hidden="true">·</span>
+                            <span class="shrink-0 tabular-nums" i18n
+                              >{{ pr.commentCount }} comments</span
                             >
+                          }
+                          @if (
+                            (pr.state === 'open' || pr.state === 'draft') &&
+                            pr.checkRollup === 'failing'
+                          ) {
+                            <span aria-hidden="true">·</span>
+                            <span class="text-destructive shrink-0" i18n>Checks failing</span>
                           }
                           @if (pr.isPinned) {
-                            <span hlmBadge variant="secondary" class="text-[10px]" i18n
-                              >Pinned</span
-                            >
+                            <span aria-hidden="true">·</span>
+                            <span class="shrink-0" i18n>Pinned</span>
                           }
-                        </div>
+                        </span>
                       </button>
 
                       @if (pr.isPinned) {
                         <button
                           type="button"
-                          class="text-muted-foreground hover:text-foreground shrink-0 px-1 text-xs"
+                          class="text-muted-foreground hover:text-foreground mr-2 shrink-0 px-1 text-xs"
                           aria-label="Unpin Pull request"
                           i18n-aria-label
                           [attr.data-testid]="'pr-unpin-' + pr.ref.number"
@@ -396,109 +578,107 @@ type DetailLoadState =
             }
           </aside>
 
-          <!-- Primary Detail Pane (24px 32px padding) -->
-          <section
-            class="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto data-[view=list]:@max-3xl:hidden"
-            [attr.data-view]="narrowPane()"
-            data-testid="pr-viewer-pane"
-          >
-            <button
-              type="button"
-              class="text-muted-foreground hover:text-foreground focus-visible:ring-ring border-border/60 flex h-9 shrink-0 items-center gap-1 border-b px-3 text-left text-xs outline-none focus-visible:ring-2 @3xl:hidden"
-              data-testid="pr-viewer-back"
-              (click)="narrowPane.set('list')"
-              i18n
+          @if (createMode() || selectedNumber() !== null) {
+            <section
+              class="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto data-[view=list]:@max-3xl:hidden"
+              [attr.data-view]="narrowPane()"
+              data-testid="pr-viewer-pane"
             >
-              ← Back to Pull requests
-            </button>
+              <button
+                type="button"
+                class="text-muted-foreground hover:text-foreground focus-visible:ring-ring border-border/60 flex h-9 shrink-0 items-center gap-1 border-b px-3 text-left text-xs outline-none focus-visible:ring-2 @3xl:hidden"
+                data-testid="pr-viewer-back"
+                (click)="narrowPane.set('list')"
+                i18n
+              >
+                ← Back to Pull requests
+              </button>
 
-            <div class="min-h-0 flex-1">
-              @if (createMode()) {
-                @if (projectId(); as pid) {
-                  <app-pr-create-form
-                    [projectId]="pid"
-                    [worktreePath]="createWorktreePath()"
-                    (cancelled)="closeCreateMode()"
-                    (created)="onPrCreated($event)"
-                  />
-                }
-              } @else if (selectedNumber() === null) {
-                <div class="flex h-full items-center justify-center px-8 py-6">
-                  <p class="font-display text-muted-foreground text-xl font-normal" i18n>
-                    Select a Pull request to inspect.
-                  </p>
-                </div>
-              } @else {
-                @switch (detailLoad().status) {
-                  @case ('loading') {
-                    <p class="text-muted-foreground px-8 py-6 text-sm" i18n>
-                      Loading Pull request…
-                    </p>
+              <div class="min-h-0 flex-1">
+                @if (createMode()) {
+                  @if (projectId(); as pid) {
+                    <app-pr-create-form
+                      [projectId]="pid"
+                      [worktreePath]="createWorktreePath()"
+                      (cancelled)="closeCreateMode()"
+                      (created)="onPrCreated($event)"
+                    />
                   }
-                  @case ('failed') {
-                    @if (detailLoad(); as failed) {
-                      @if (failed.status === 'failed') {
-                        <div class="space-y-3 px-8 py-6" data-testid="pr-detail-error">
-                          <p class="text-muted-foreground text-sm">{{ failed.detail }}</p>
-                          <button
-                            hlmBtn
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            (click)="reloadSelected()"
-                            i18n
-                          >
-                            Retry
-                          </button>
-                        </div>
+                } @else {
+                  @switch (detailLoad().status) {
+                    @case ('loading') {
+                      <p class="text-muted-foreground px-8 py-6 text-sm" i18n>
+                        Loading Pull request…
+                      </p>
+                    }
+                    @case ('failed') {
+                      @if (detailLoad(); as failed) {
+                        @if (failed.status === 'failed') {
+                          <div class="space-y-3 px-8 py-6" data-testid="pr-detail-error">
+                            <p class="text-muted-foreground text-sm">{{ failed.detail }}</p>
+                            <button
+                              hlmBtn
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              (click)="reloadSelected()"
+                              i18n
+                            >
+                              Retry
+                            </button>
+                          </div>
+                        }
                       }
                     }
-                  }
-                  @case ('loaded') {
-                    @if (detailLoad(); as loaded) {
-                      @if (loaded.status === 'loaded') {
-                        <app-pr-detail-pane
-                          [detail]="loaded.value"
-                          [diffState]="diffLoad()"
-                          [renderClient]="renderClient"
-                          [selectedThreadId]="prState.selectedThreadId()"
-                          [selectedCheckId]="prState.selectedCheckId()"
-                          [capabilities]="projectCapabilities()"
-                          [readOnly]="degradedBanner() !== null"
-                          [merging]="merging()"
-                          [autoMergeBusy]="autoMergeBusy()"
-                          [lastBaseUpdate]="lastBaseUpdate()"
-                          [postMergeStatus]="postMergeStatus()"
-                          [updatingBase]="updatingBase()"
-                          [switchingBase]="switchingBase()"
-                          [mutating]="mutating()"
-                          [conflictState]="conflictState()"
-                          (retryDiff)="reloadDiffOnly()"
-                          (openLink)="openExternal($event)"
-                          (mergeRequested)="onMergeRequested($event)"
-                          (autoMergeToggled)="onAutoMergeToggled($event)"
-                          (updateLocalBase)="onUpdateLocalBase()"
-                          (switchToBase)="onSwitchToBase($event)"
-                          (referencePr)="referencePrInSession(loaded.value)"
-                          (startSession)="startSessionFromPr(loaded.value)"
-                          (referenceThread)="referenceThreadInSession(loaded.value, $event)"
-                          (referenceCheck)="referenceCheckInSession(loaded.value, $event)"
-                          (saveEdit)="handleSaveEdit($event)"
-                          (clearConflict)="conflictState.set(null)"
-                          (addComment)="handleAddComment($event)"
-                          (editComment)="handleEditComment($event)"
-                          (deleteComment)="handleDeleteComment($event)"
-                          (submitReview)="handleSubmitReview($event)"
-                          (deletePendingReview)="handleDeletePendingReview($event)"
-                          (resolveThread)="handleResolveThread($event)"
-                        />
+                    @case ('loaded') {
+                      @if (detailLoad(); as loaded) {
+                        @if (loaded.status === 'loaded') {
+                          <app-pr-detail-pane
+                            [detail]="loaded.value"
+                            [diffState]="diffLoad()"
+                            [renderClient]="renderClient"
+                            [selectedThreadId]="prState.selectedThreadId()"
+                            [selectedCheckId]="prState.selectedCheckId()"
+                            [capabilities]="projectCapabilities()"
+                            [readOnly]="degradedBanner() !== null"
+                            [merging]="merging()"
+                            [autoMergeBusy]="autoMergeBusy()"
+                            [lastBaseUpdate]="lastBaseUpdate()"
+                            [postMergeStatus]="postMergeStatus()"
+                            [updatingBase]="updatingBase()"
+                            [switchingBase]="switchingBase()"
+                            [mutating]="mutating()"
+                            [conflictState]="conflictState()"
+                            [activeTab]="activeTab()"
+                            (activeTabChange)="onActiveTabChange($event)"
+                            (activeFileChange)="onActiveFileChange($event)"
+                            (retryDiff)="reloadDiffOnly()"
+                            (openLink)="openExternal($event)"
+                            (mergeRequested)="onMergeRequested($event)"
+                            (autoMergeToggled)="onAutoMergeToggled($event)"
+                            (updateLocalBase)="onUpdateLocalBase()"
+                            (switchToBase)="onSwitchToBase($event)"
+                            (referencePr)="referencePrInSession(loaded.value)"
+                            (startSession)="startSessionFromPr(loaded.value)"
+                            (referenceThread)="referenceThreadInSession(loaded.value, $event)"
+                            (referenceCheck)="referenceCheckInSession(loaded.value, $event)"
+                            (saveEdit)="handleSaveEdit($event)"
+                            (clearConflict)="conflictState.set(null)"
+                            (addComment)="handleAddComment($event)"
+                            (editComment)="handleEditComment($event)"
+                            (deleteComment)="handleDeleteComment($event)"
+                            (submitReview)="handleSubmitReview($event)"
+                            (deletePendingReview)="handleDeletePendingReview($event)"
+                            (resolveThread)="handleResolveThread($event)"
+                          />
+                        }
                       }
                     }
                   }
                 }
-              }
-            </div>
-          </section>
+              </div>
+            </section>
+          }
         </div>
       }
     } @else {
@@ -526,6 +706,13 @@ export class PullRequestsPage {
   protected readonly createMode = signal(false);
   protected readonly createWorktreePath = signal<string | null>(null);
   protected readonly narrowPane = signal<'list' | 'viewer'>('list');
+  protected readonly activeTab = signal<PrDetailTab>('overview');
+  protected readonly activeFilePath = signal<string | null>(null);
+  protected readonly filterPopoverState = signal<'open' | 'closed'>('closed');
+  protected readonly lookupPopoverState = signal<'open' | 'closed'>('closed');
+  protected readonly hasActiveFilter = computed(
+    () => this.filter() !== 'all' || this.searchQuery().trim().length > 0,
+  );
   protected readonly extraSummaries = signal<ReadonlyArray<PullRequestSummary>>([]);
   protected readonly detailLoad = signal<DetailLoadState>({ status: 'idle' });
   protected readonly diffLoad = signal<DiffLoadState>({ status: 'loading' });
@@ -646,7 +833,40 @@ export class PullRequestsPage {
   protected openCreate(): void {
     this.createWorktreePath.set(null);
     this.createMode.set(true);
+    this.activeTab.set('overview');
+    this.activeFilePath.set(null);
     this.narrowPane.set('viewer');
+  }
+
+  protected clearSelection(): void {
+    this.createMode.set(false);
+    this.createWorktreePath.set(null);
+    this.prState.clearCreateRequest();
+    this.activeTab.set('overview');
+    this.activeFilePath.set(null);
+    this.narrowPane.set('list');
+    this.prState.selectedPrNumber.set(null);
+    this.prState.setActiveView({
+      projectId: this.projectId(),
+      prPageOpen: true,
+      activePrNumber: null,
+    });
+  }
+
+  protected onActiveTabChange(tab: PrDetailTab): void {
+    this.activeTab.set(tab);
+    if (tab === 'overview') {
+      this.activeFilePath.set(null);
+    }
+  }
+
+  protected onActiveFileChange(path: string | null): void {
+    this.activeFilePath.set(this.activeTab() === 'files' ? path : null);
+  }
+
+  protected resetFilters(): void {
+    this.filter.set('all');
+    this.searchQuery.set('');
   }
 
   protected closeCreateMode(): void {
@@ -668,6 +888,8 @@ export class PullRequestsPage {
 
   protected selectPr(num: PullRequestNumber): void {
     this.createMode.set(false);
+    this.activeTab.set('overview');
+    this.activeFilePath.set(null);
     this.narrowPane.set('viewer');
     this.prState.selectedPrNumber.set(num);
     this.prState.setActiveView({
@@ -785,6 +1007,7 @@ export class PullRequestsPage {
                 ...prev.filter((s) => s.ref.number !== summary.ref.number),
               ]);
               this.lookupInput.set('');
+              this.lookupPopoverState.set('closed');
               this.selectPr(summary.ref.number);
             } else {
               this.lookupError.set($localize`Pull request #${parsed} was not found.`);
@@ -800,6 +1023,8 @@ export class PullRequestsPage {
     if (pid === null) return;
     this.extraSummaries.update((prev) => prev.filter((s) => s.ref.number !== num));
     if (this.selectedNumber() === num) {
+      this.activeTab.set('overview');
+      this.activeFilePath.set(null);
       this.prState.selectedPrNumber.set(null);
       this.prState.setActiveView({ projectId: pid, prPageOpen: true, activePrNumber: null });
     }
@@ -1195,6 +1420,4 @@ export class PullRequestsPage {
           }),
     );
   }
-
-  protected readonly rollupDotClass = checkRollupDotClass;
 }

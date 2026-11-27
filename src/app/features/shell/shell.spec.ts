@@ -60,6 +60,7 @@ import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { Keymap, KEYMAP_PLATFORM, type KeymapPlatform } from '../../core/keymap';
 import { OverlayOcclusion } from '../../core/overlay-occlusion';
 import { PANEL_DEFINITION, type PanelDefinition } from '../../core/panel-registry';
+import { PullRequestsState } from '../../core/pull-requests-state';
 import { Tabs } from '../../core/tabs';
 import { ChangesPage } from '../changes/changes-page';
 import { WorkersPanelHost } from '../session/workers-panel';
@@ -636,6 +637,22 @@ describe('Shell keyboard shortcuts', () => {
     fixture.detectChanges();
     expect(settingsEvent.defaultPrevented).toBe(true);
     expect(settings.open()).toBe(true);
+  });
+
+  it('opens the new Session from the sidebar while viewing Pull requests', async () => {
+    const { fixture, tabs } = await mountShell('other', { projects: [project1] });
+    const prState = TestBed.inject(PullRequestsState);
+    prState.openPrPage(p1);
+    fixture.detectChanges();
+
+    const host = fixture.nativeElement as HTMLElement;
+    expect(prState.prPageOpen()).toBe(true);
+    host.querySelector<HTMLButtonElement>('[data-testid="new-session"]')?.click();
+    fixture.detectChanges();
+
+    expect(tabs.focusedPanel()?.spec).toEqual({ _tag: 'Session', draft: true });
+    expect(prState.prPageOpen()).toBe(false);
+    expect(host.querySelector('[data-testid="session-view-stub"]')).not.toBeNull();
   });
 
   it('cycles, jumps, opens, and closes active Project Tabs via keyboard shortcuts and honors modal suspension', async () => {

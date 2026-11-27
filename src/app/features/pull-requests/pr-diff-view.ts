@@ -74,6 +74,7 @@ export interface DiffCommentSelection {
               <button
                 type="button"
                 class="hover:bg-accent/50 focus-visible:ring-ring flex w-full items-center justify-between gap-3 px-3 py-2 text-left outline-none focus-visible:ring-2"
+                [class.bg-accent/30]="activeFilePath() === file.path"
                 [attr.aria-expanded]="expanded"
                 [attr.data-testid]="'pr-diff-file-toggle-' + file.path"
                 (click)="toggleFile(file)"
@@ -576,6 +577,7 @@ export class PrDiffView {
     readonly threadId: ReviewThreadId;
     readonly resolved: boolean;
   }>();
+  readonly activeFileChange = output<string | null>();
 
   protected readonly resolvedLabel = $localize`Resolved`;
   protected readonly unresolvedLabel = $localize`Unresolved`;
@@ -584,6 +586,7 @@ export class PrDiffView {
   protected readonly addToReviewLabel = $localize`Add to review`;
   protected readonly startReviewLabel = $localize`Start review`;
 
+  protected readonly activeFilePath = signal<string | null>(null);
   protected readonly commentSelection = signal<DiffCommentSelection | null>(null);
   protected readonly inlineDraftBody = signal('');
   protected readonly replyingThreadId = signal<ReviewThreadId | null>(null);
@@ -613,6 +616,9 @@ export class PrDiffView {
       const initialExpanded = new Set(currentDiff.files.slice(0, 3).map((f) => f.path));
       this.expandedPaths.set(initialExpanded);
       this.renderedFiles.set(new Map());
+      const firstPath = currentDiff.files[0]?.path ?? null;
+      this.activeFilePath.set(firstPath);
+      this.activeFileChange.emit(firstPath);
 
       for (const file of currentDiff.files) {
         if (!initialExpanded.has(file.path) || file.noPreviewReason !== undefined) continue;
@@ -630,10 +636,17 @@ export class PrDiffView {
     if (next.has(file.path)) {
       next.delete(file.path);
       this.expandedPaths.set(next);
+      if (this.activeFilePath() === file.path) {
+        const fallback = next.values().next().value ?? null;
+        this.activeFilePath.set(fallback);
+        this.activeFileChange.emit(fallback);
+      }
       return;
     }
     next.add(file.path);
     this.expandedPaths.set(next);
+    this.activeFilePath.set(file.path);
+    this.activeFileChange.emit(file.path);
 
     const already = untracked(() => this.renderedFiles().get(file.path));
     if (already === undefined && file.noPreviewReason === undefined) {

@@ -1061,9 +1061,17 @@
         <source>Pinned</source>
         <target state="translated">Fijado</target>
       </trans-unit>
+      <trans-unit id="6915442150918420124" datatype="html">
+        <source> Finish review </source>
+        <target> Finalizar revisión </target>
+      </trans-unit>
       <trans-unit id="8126276746536312359" datatype="html">
         <source> Start Session </source>
         <target state="translated"> Iniciar sesión </target>
+      </trans-unit>
+      <trans-unit id="8815456682593272279" datatype="html">
+        <source>More Pull request actions</source>
+        <target state="translated">Más acciones de la solicitud de cambios</target>
       </trans-unit>
       <trans-unit id="7580563219204704953" datatype="html">
         <source> Reference in Session </source>
@@ -1073,9 +1081,21 @@
         <source> Edit </source>
         <target state="translated"> Editar </target>
       </trans-unit>
-      <trans-unit id="6498416869507452450" datatype="html">
-        <source> Open in GitHub </source>
-        <target state="translated"> Abrir en GitHub </target>
+      <trans-unit id="3621773883250379288" datatype="html">
+        <source>Open in GitHub</source>
+        <target state="translated">Abrir en GitHub</target>
+      </trans-unit>
+      <trans-unit id="4436706933978779578" datatype="html">
+        <source>Pull request sections</source>
+        <target state="translated">Secciones del Pull request</target>
+      </trans-unit>
+      <trans-unit id="6492690912049633374" datatype="html">
+        <source> Overview </source>
+        <target state="translated"> Resumen </target>
+      </trans-unit>
+      <trans-unit id="4116911651502837995" datatype="html">
+        <source>Files</source>
+        <target state="translated">Archivos</target>
       </trans-unit>
       <trans-unit id="1152705163072141759" datatype="html">
         <source>Changed on GitHub</source>
@@ -1121,6 +1141,10 @@
         <source> Save </source>
         <target state="translated"> Guardar </target>
       </trans-unit>
+      <trans-unit id="3696759734324421631" datatype="html">
+        <source>No description provided.</source>
+        <target state="translated">No se proporcionó descripción.</target>
+      </trans-unit>
       <trans-unit id="1833493149202598338" datatype="html">
         <source>Mergeability:</source>
         <target state="translated">Estado de fusión:</target>
@@ -1161,10 +1185,6 @@
         <source> Merge when ready </source>
         <target state="translated"> Fusionar cuando esté listo </target>
       </trans-unit>
-      <trans-unit id="2606613809220503712" datatype="html">
-        <source>Pull request merged</source>
-        <target state="translated">Pull request fusionado</target>
-      </trans-unit>
       <trans-unit id="1970754277370472778" datatype="html">
         <source> <x id="INTERPOLATION" equiv-text="{{ mergeMethodLabel(selectedMethod()) }}"/> #<x id="INTERPOLATION_1" equiv-text="{{ detail().ref.number }}"/>? </source>
         <target state="translated"> ¿<x id="INTERPOLATION" equiv-text="{{ mergeMethodLabel(selectedMethod()) }}"/> #<x id="INTERPOLATION_1" equiv-text="{{ detail().ref.number }}"/>? </target>
@@ -1197,21 +1217,13 @@
         <source>Non-blocking</source>
         <target state="translated">No bloqueante</target>
       </trans-unit>
-      <trans-unit id="4423253549935469768" datatype="html">
-        <source> Details </source>
-        <target state="translated"> Detalles </target>
+      <trans-unit id="8728009387140099264" datatype="html">
+        <source>Open check details</source>
+        <target>Abrir detalles de la comprobación</target>
       </trans-unit>
-      <trans-unit id="3696759734324421631" datatype="html">
-        <source>No description provided.</source>
-        <target state="translated">No se proporcionó descripción.</target>
-      </trans-unit>
-      <trans-unit id="7242155934751141295" datatype="html">
-        <source> Conversation <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;text-muted-foreground ml-1 font-normal tabular-nums&quot;&gt;"/> (<x id="INTERPOLATION" equiv-text="{{ detail().reviews.length + detail().comments.length + detail().reviewThreads.length }}"/>) <x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></source>
-        <target state="translated"> Conversación <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;text-muted-foreground ml-1 font-normal tabular-nums&quot;&gt;"/> (<x id="INTERPOLATION" equiv-text="{{ detail().reviews.length + detail().comments.length + detail().reviewThreads.length }}"/>) <x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></target>
-      </trans-unit>
-      <trans-unit id="8380672513139416393" datatype="html">
-        <source>No reviews or comments yet.</source>
-        <target state="translated">Aún no hay revisiones ni comentarios.</target>
+      <trans-unit id="4717491147966397069" datatype="html">
+        <source>Conversation</source>
+        <target state="translated">Conversación</target>
       </trans-unit>
       <trans-unit id="1809722061470607737" datatype="html">
         <source> Review threads (<x id="INTERPOLATION" equiv-text="{{ detail().reviewThreads.length }}"/>) </source>
@@ -1229,13 +1241,29 @@
         <source>Leave a comment…</source>
         <target state="translated">Deja un comentario…</target>
       </trans-unit>
+      <trans-unit id="2662644497259948010" datatype="html">
+        <source>Comment</source>
+        <target>Comentario</target>
+      </trans-unit>
       <trans-unit id="3073555100582825289" datatype="html">
         <source> Comment </source>
         <target state="translated"> Comentar </target>
       </trans-unit>
+      <trans-unit id="4990629939000136195" datatype="html">
+        <source>Loading changed files…</source>
+        <target state="translated">Cargando archivos modificados…</target>
+      </trans-unit>
+      <trans-unit id="7207542995464755991" datatype="html">
+        <source>Could not load diff.</source>
+        <target state="translated">No se pudo cargar el diff.</target>
+      </trans-unit>
       <trans-unit id="6933917130302920891" datatype="html">
         <source>Finish review</source>
         <target state="translated">Finalizar revisión</target>
+      </trans-unit>
+      <trans-unit id="6328592176892803224" datatype="html">
+        <source>Choose how to submit your review.</source>
+        <target>Elige cómo enviar tu revisión.</target>
       </trans-unit>
       <trans-unit id="649519154635069825" datatype="html">
         <source> Pending (<x id="INTERPOLATION" equiv-text="{{ pendingInlineCommentCount() }}"/> inline) </source>
@@ -1256,14 +1284,6 @@
       <trans-unit id="9130434323505013089" datatype="html">
         <source> Request changes </source>
         <target state="translated"> Solicitar cambios </target>
-      </trans-unit>
-      <trans-unit id="4990629939000136195" datatype="html">
-        <source>Loading changed files…</source>
-        <target state="translated">Cargando archivos modificados…</target>
-      </trans-unit>
-      <trans-unit id="7207542995464755991" datatype="html">
-        <source>Could not load diff.</source>
-        <target state="translated">No se pudo cargar el diff.</target>
       </trans-unit>
       <trans-unit id="3059724265088373894" datatype="html">
         <source>Merging…</source>
@@ -1545,6 +1565,34 @@
         <source>Dismissed</source>
         <target state="translated">Descartado</target>
       </trans-unit>
+      <trans-unit id="7172610509240246759" datatype="html">
+        <source>Breadcrumb</source>
+        <target>Ruta de navegación</target>
+      </trans-unit>
+      <trans-unit id="2356843122274535765" datatype="html">
+        <source> Pull requests </source>
+        <target state="translated"> Pull requests </target>
+      </trans-unit>
+      <trans-unit id="1019897759924590321" datatype="html">
+        <source>Pull requests</source>
+        <target state="translated">Pull requests</target>
+      </trans-unit>
+      <trans-unit id="1416905217000585257" datatype="html">
+        <source>New Pull request</source>
+        <target state="translated">Nuevo Pull request</target>
+      </trans-unit>
+      <trans-unit id="8829497237648100098" datatype="html">
+        <source>Filter</source>
+        <target state="translated">Filtrar</target>
+      </trans-unit>
+      <trans-unit id="8926226212868989142" datatype="html">
+        <source>Filter Pull requests</source>
+        <target state="translated">Filtrar Pull requests</target>
+      </trans-unit>
+      <trans-unit id="5478121364779850827" datatype="html">
+        <source> Reset </source>
+        <target state="translated"> Restablecer </target>
+      </trans-unit>
       <trans-unit id="1504643220325756927" datatype="html">
         <source>Pull request filters</source>
         <target state="translated">Filtros de Pull requests</target>
@@ -1565,6 +1613,14 @@
         <source>Filter Pull requests…</source>
         <target state="translated">Filtrar Pull requests…</target>
       </trans-unit>
+      <trans-unit id="4475093671158329161" datatype="html">
+        <source>Pin</source>
+        <target state="translated">Fijar</target>
+      </trans-unit>
+      <trans-unit id="5985097630911498508" datatype="html">
+        <source>Pin by number</source>
+        <target state="translated">Fijar por número</target>
+      </trans-unit>
       <trans-unit id="216448594409046454" datatype="html">
         <source>Look up Pull request by number</source>
         <target state="translated">Buscar Pull request por número</target>
@@ -1573,13 +1629,9 @@
         <source> Pin </source>
         <target state="translated"> Fijar </target>
       </trans-unit>
-      <trans-unit id="2172902003676402663" datatype="html">
-        <source> Refresh </source>
-        <target state="translated"> Actualizar </target>
-      </trans-unit>
-      <trans-unit id="381630524456842375" datatype="html">
-        <source> Create PR </source>
-        <target state="translated"> Crear PR </target>
+      <trans-unit id="5066973974846952912" datatype="html">
+        <source>Create PR</source>
+        <target state="translated">Crear PR</target>
       </trans-unit>
       <trans-unit id="3533564343860030179" datatype="html">
         <source> Reconnect </source>
@@ -1605,6 +1657,10 @@
         <source> No matching Pull requests. </source>
         <target state="translated"> No hay Pull requests que coincidan. </target>
       </trans-unit>
+      <trans-unit id="6887242042077142786" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ pr.commentCount }}"/> comments</source>
+        <target state="translated"><x id="INTERPOLATION" equiv-text="{{ pr.commentCount }}"/> comentarios</target>
+      </trans-unit>
       <trans-unit id="8073638984473933978" datatype="html">
         <source>Unpin Pull request</source>
         <target state="translated">Desfijar Pull request</target>
@@ -1612,10 +1668,6 @@
       <trans-unit id="4313359842375603765" datatype="html">
         <source> ← Back to Pull requests </source>
         <target state="translated"> ← Volver a Pull requests </target>
-      </trans-unit>
-      <trans-unit id="7291767646559161996" datatype="html">
-        <source> Select a Pull request to inspect. </source>
-        <target state="translated"> Selecciona un Pull request para inspeccionar. </target>
       </trans-unit>
       <trans-unit id="3836497018043151420" datatype="html">
         <source> Loading Pull request… </source>
@@ -1757,10 +1809,6 @@
       <trans-unit id="7030969009417188983" datatype="html">
         <source>No changes</source>
         <target state="translated">Sin cambios</target>
-      </trans-unit>
-      <trans-unit id="5066973974846952912" datatype="html">
-        <source>Create PR</source>
-        <target state="translated">Crear PR</target>
       </trans-unit>
       <trans-unit id="5203279511751768967" datatype="html">
         <source>From</source>
@@ -2565,10 +2613,6 @@
       <trans-unit id="6438104683709175776" datatype="html">
         <source>No commands match.</source>
         <target>Ningún comando coincide.</target>
-      </trans-unit>
-      <trans-unit id="1019897759924590321" datatype="html">
-        <source>Pull requests</source>
-        <target state="translated">Pull requests</target>
       </trans-unit>
       <trans-unit id="6944624327744535984" datatype="html">
         <source><x id="START_BLOCK_IF" equiv-text="@if (prLookupLoading()) {"/> Looking up Pull request… <x id="CLOSE_BLOCK_IF" equiv-text="}"/><x id="START_BLOCK_ELSE" equiv-text="@else {"/> No matching Pull requests. <x id="CLOSE_BLOCK_ELSE" equiv-text="}"/></source>
@@ -4563,10 +4607,6 @@
       <trans-unit id="2346024984047785710" datatype="html">
         <source>Toggle sidebar</source>
         <target>Mostrar u ocultar la barra lateral</target>
-      </trans-unit>
-      <trans-unit id="7172610509240246759" datatype="html">
-        <source>Breadcrumb</source>
-        <target>Ruta de navegación</target>
       </trans-unit>
       <trans-unit id="4930506384627295710" datatype="html">
         <source>Settings</source>

@@ -436,18 +436,24 @@ describe('PullRequestsPage', () => {
     const el = fixture.nativeElement as HTMLElement;
     expect(el.querySelectorAll('[data-testid^="pr-list-item-"]')).toHaveLength(2);
 
-    el.querySelector<HTMLButtonElement>('[data-testid="pr-filter-mine"]')?.click();
+    el.querySelector<HTMLButtonElement>('[data-testid="pr-filter-trigger"]')?.click();
+    fixture.detectChanges();
+    await flush(fixture);
+
+    document.querySelector<HTMLButtonElement>('[data-testid="pr-filter-mine"]')?.click();
     fixture.detectChanges();
     expect(el.querySelectorAll('[data-testid^="pr-list-item-"]')).toHaveLength(1);
     expect(el.querySelector('[data-testid="pr-list-item-10"]')).not.toBeNull();
 
-    el.querySelector<HTMLButtonElement>('[data-testid="pr-filter-review-requested"]')?.click();
+    document
+      .querySelector<HTMLButtonElement>('[data-testid="pr-filter-review-requested"]')
+      ?.click();
     fixture.detectChanges();
     expect(el.querySelectorAll('[data-testid^="pr-list-item-"]')).toHaveLength(1);
     expect(el.querySelector('[data-testid="pr-list-item-20"]')).not.toBeNull();
 
-    el.querySelector<HTMLButtonElement>('[data-testid="pr-filter-all"]')?.click();
-    const search = el.querySelector<HTMLInputElement>('[data-testid="pr-search-input"]')!;
+    document.querySelector<HTMLButtonElement>('[data-testid="pr-filter-all"]')?.click();
+    const search = document.querySelector<HTMLInputElement>('[data-testid="pr-search-input"]')!;
     search.value = 'auth';
     search.dispatchEvent(new Event('input'));
     fixture.detectChanges();
@@ -482,10 +488,14 @@ describe('PullRequestsPage', () => {
     fixture.detectChanges();
 
     const el = fixture.nativeElement as HTMLElement;
-    const input = el.querySelector<HTMLInputElement>('[data-testid="pr-lookup-input"]')!;
+    el.querySelector<HTMLButtonElement>('[data-testid="pr-lookup-trigger"]')?.click();
+    fixture.detectChanges();
+    await flush(fixture);
+
+    const input = document.querySelector<HTMLInputElement>('[data-testid="pr-lookup-input"]')!;
     input.value = '#99';
     input.dispatchEvent(new Event('input'));
-    el.querySelector<HTMLButtonElement>('[data-testid="pr-lookup-submit"]')?.click();
+    document.querySelector<HTMLButtonElement>('[data-testid="pr-lookup-submit"]')?.click();
     await flush(fixture);
     fixture.detectChanges();
 
@@ -540,13 +550,8 @@ describe('PullRequestsPage', () => {
     expect(el.querySelector('[data-testid="pr-detail-milestone"]')?.textContent).toContain('v1.0');
     expect(el.querySelector('[data-testid="pr-review-rev-1"]')).not.toBeNull();
     expect(el.querySelector('[data-testid="pr-comment-c-1"]')).not.toBeNull();
-    await vi.waitFor(() => {
-      fixture.detectChanges();
-      expect(el.querySelector('[data-testid="pr-diff-inline-thread-thr-1"]')).not.toBeNull();
-    });
-    expect(el.querySelector('[data-testid="pr-diff-no-preview"]')?.textContent).toContain(
-      'Binary file not shown.',
-    );
+    expect(el.querySelector('[data-testid="pr-breadcrumb-pr"]')?.textContent?.trim()).toBe('#42');
+    expect(el.querySelector('[data-testid="pr-breadcrumb-file"]')).toBeNull();
 
     // Expand check runs and verify neutral non-blocking check
     el.querySelector<HTMLButtonElement>('[data-testid="pr-checks-toggle"]')?.click();
@@ -555,10 +560,41 @@ describe('PullRequestsPage', () => {
       'Non-blocking',
     );
 
+    // Switch to Files tab and verify diff hunks, inline threads, and file breadcrumb
+    el.querySelector<HTMLButtonElement>('[data-testid="pr-tab-files"]')?.click();
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(el.querySelector('[data-testid="pr-diff-inline-thread-thr-1"]')).not.toBeNull();
+    });
+    expect(el.querySelector('[data-testid="pr-diff-no-preview"]')?.textContent).toContain(
+      'Binary file not shown.',
+    );
+    expect(el.querySelector('[data-testid="pr-breadcrumb-file"]')?.textContent?.trim()).toBe(
+      'src/app.ts',
+    );
+
+    // Clicking the PR breadcrumb returns to Overview and clears the file crumb
+    el.querySelector<HTMLButtonElement>('[data-testid="pr-breadcrumb-pr"]')?.click();
+    fixture.detectChanges();
+    expect(el.querySelector('[data-testid="pr-tabpanel-overview"]')).not.toBeNull();
+    expect(el.querySelector('[data-testid="pr-breadcrumb-file"]')).toBeNull();
+
     // Open external link
-    el.querySelector<HTMLButtonElement>('[data-testid="pr-open-external"]')?.click();
+    el.querySelector<HTMLButtonElement>('[data-testid="pr-more-actions"]')?.click();
+    await flush(fixture);
+    const externalAction = document.querySelector<HTMLButtonElement>(
+      '[data-testid="pr-open-external"]',
+    );
+    expect(externalAction?.querySelector('[data-testid="pr-open-external-icon"]')).toBeTruthy();
+    externalAction?.click();
     await flush(fixture);
     expect(openedUrls).toEqual(['https://github.com/org/repo/pull/42']);
+
+    // Clicking the Pull requests root breadcrumb clears PR selection
+    el.querySelector<HTMLButtonElement>('[data-testid="pr-breadcrumb-root"]')?.click();
+    fixture.detectChanges();
+    expect(el.querySelector('[data-testid="pr-detail-pane"]')).toBeNull();
   });
 
   it('shows degraded status strip for offline/rate-limited/needs-reconnect while keeping cached PRs readable', async () => {
@@ -794,7 +830,9 @@ describe('PullRequestsPage', () => {
     fixture.detectChanges();
 
     // Open edit form
-    el.querySelector<HTMLButtonElement>('[data-testid="pr-edit-button"]')?.click();
+    el.querySelector<HTMLButtonElement>('[data-testid="pr-more-actions"]')?.click();
+    await flush(fixture);
+    document.querySelector<HTMLButtonElement>('[data-testid="pr-edit-button"]')?.click();
     fixture.detectChanges();
 
     const titleInput = el.querySelector<HTMLInputElement>('[data-testid="pr-edit-title"]');
@@ -911,17 +949,26 @@ describe('PullRequestsPage', () => {
     await flush(fixture);
     fixture.detectChanges();
 
+    // The conversation composer is available without opening another panel.
+    expect(el.querySelector('[data-testid="pr-general-comment-input"]')).not.toBeNull();
+    el.querySelector<HTMLButtonElement>('[data-testid="pr-finish-review"]')?.click();
+    await flush(fixture);
+    fixture.detectChanges();
+
     // Own-PR guard: Approve & Request changes disabled
-    const approveBtn = el.querySelector<HTMLButtonElement>(
+    const approveBtn = document.querySelector<HTMLButtonElement>(
       '[data-testid="pr-review-submit-approve"]',
     );
-    const reqChangesBtn = el.querySelector<HTMLButtonElement>(
+    const reqChangesBtn = document.querySelector<HTMLButtonElement>(
       '[data-testid="pr-review-submit-request-changes"]',
     );
     expect(approveBtn?.disabled).toBe(true);
     expect(reqChangesBtn?.disabled).toBe(true);
 
-    // Post general comment
+    // Close the review dialog and post a general comment.
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flush(fixture);
+    fixture.detectChanges();
     const commentInput = el.querySelector<HTMLTextAreaElement>(
       '[data-testid="pr-general-comment-input"]',
     );
@@ -943,7 +990,10 @@ describe('PullRequestsPage', () => {
     expect(actionsCalled).toContain('resolve:thr-1');
 
     // Finish review as Comment
-    const reviewInput = el.querySelector<HTMLTextAreaElement>(
+    el.querySelector<HTMLButtonElement>('[data-testid="pr-finish-review"]')?.click();
+    await flush(fixture);
+    fixture.detectChanges();
+    const reviewInput = document.querySelector<HTMLTextAreaElement>(
       '[data-testid="pr-review-summary-input"]',
     );
     if (reviewInput) {
@@ -951,7 +1001,7 @@ describe('PullRequestsPage', () => {
       reviewInput.dispatchEvent(new Event('input'));
     }
     fixture.detectChanges();
-    el.querySelector<HTMLButtonElement>('[data-testid="pr-review-submit-comment"]')?.click();
+    document.querySelector<HTMLButtonElement>('[data-testid="pr-review-submit-comment"]')?.click();
     await flush(fixture);
     fixture.detectChanges();
     expect(actionsCalled).toContain('review:comment:Summary note');
