@@ -294,6 +294,15 @@ export const layerPullRequestsUnused = PullRequestsRpcs.toLayer({
   'PullRequests.draftCreate': () =>
     Effect.die('PullRequests.draftCreate is not served in this test'),
   'PullRequests.create': () => Effect.die('PullRequests.create is not served in this test'),
+  'PullRequests.merge': () => Effect.die('PullRequests.merge is not served in this test'),
+  'PullRequests.setAutoMerge': () =>
+    Effect.die('PullRequests.setAutoMerge is not served in this test'),
+  'PullRequests.updateLocalBaseBranch': () =>
+    Effect.die('PullRequests.updateLocalBaseBranch is not served in this test'),
+  'PullRequests.switchToBaseBranch': () =>
+    Effect.die('PullRequests.switchToBaseBranch is not served in this test'),
+  'PullRequests.getPostMergeStatus': () =>
+    Effect.die('PullRequests.getPostMergeStatus is not served in this test'),
   'PullRequests.update': () => Effect.die('PullRequests.update is not served in this test'),
   'PullRequests.addComment': () => Effect.die('PullRequests.addComment is not served in this test'),
   'PullRequests.editComment': () =>

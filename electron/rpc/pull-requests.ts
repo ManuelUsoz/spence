@@ -10,15 +10,19 @@ import { layerGitHubHttpLive } from '../git-hosts/github-http';
 import { HostAuth, layerGhCliLive, layerHostAuth } from '../git-hosts/host-auth';
 import { layerPrStore } from '../git-hosts/pr-store';
 import {
+  layerLocalBranchCoordinatorLive,
   layerProjectGitInspectorLive,
   layerPullRequestsService,
   PullRequestsService,
+  WorktreeSessionChecker,
 } from '../git-hosts/pull-requests-service';
 import { layerProjectsLive } from '../projects/projects';
+import { Sessions } from '../sessions/sessions';
 import { layerWindowFocus } from '../sessions/window-focus';
 import { layerSettingsMain } from '../settings/window';
 import { layerStoreUserData } from '../store/store';
 import { layerBranchOrigins } from '../worktrees/branch-origins';
+import { layerSessionsLive } from './sessions';
 
 /** Production `HostAuth` layer for the Local device. */
 export const layerHostAuthMain = layerHostAuth.pipe(
@@ -43,6 +47,33 @@ const layerPrStoreMain = layerPrStore.pipe(Layer.provide(layerStoreUserData));
 
 const layerBranchOriginsMain = layerBranchOrigins.pipe(Layer.provide(layerStoreUserData));
 
+const normalizeWtPath = (p: string): string =>
+  p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+
+const layerWorktreeSessionCheckerLive = Layer.effect(
+  WorktreeSessionChecker,
+  Effect.gen(function* () {
+    const sessions = yield* Sessions;
+    return {
+      hasRunningSession: Effect.fnUntraced(function* (projectId, worktreePath) {
+        const list = yield* sessions.list(projectId);
+        const target = normalizeWtPath(worktreePath);
+        for (const s of list) {
+          if (s.archivedAt !== undefined) continue;
+          if (s.status !== 'working' && s.status !== 'blocked') continue;
+          const folder = yield* sessions
+            .folderOf(s.id)
+            .pipe(Effect.catch(() => Effect.succeed('')));
+          if (folder.length > 0 && normalizeWtPath(folder) === target) {
+            return true;
+          }
+        }
+        return false;
+      }),
+    };
+  }),
+).pipe(Layer.provide(layerSessionsLive));
+
 /** Production `PullRequestsService` layer for the Local device. */
 export const layerPullRequestsServiceMain = layerPullRequestsService.pipe(
   Layer.provideMerge(
@@ -56,6 +87,11 @@ export const layerPullRequestsServiceMain = layerPullRequestsService.pipe(
       layerBranchOriginsMain,
       layerSettingsMain,
       layerAcpClientMain,
+      layerLocalBranchCoordinatorLive.pipe(
+        Layer.provide(layerMergedPathMain),
+        Layer.provide(layerPathSources),
+      ),
+      layerWorktreeSessionCheckerLive,
     ),
   ),
 );
@@ -134,6 +170,40 @@ export const layerPullRequestsHandlersWith = PullRequestsRpcs.toLayer({
     PullRequestsService.use((svc) => svc.prepareCreate(input)),
   'PullRequests.draftCreate': (input) => PullRequestsService.use((svc) => svc.draftCreate(input)),
   'PullRequests.create': (input) => PullRequestsService.use((svc) => svc.create(input)),
+  'PullRequests.merge': ({
+    projectId,
+    number,
+    expectedHeadSha,
+    method,
+    commitTitle,
+    commitMessage,
+  }) =>
+    PullRequestsService.use((svc) =>
+      svc.merge({
+        projectId,
+        number,
+        expectedHeadSha,
+        method,
+        ...(commitTitle !== undefined ? { commitTitle } : {}),
+        ...(commitMessage !== undefined ? { commitMessage } : {}),
+      }),
+    ),
+  'PullRequests.setAutoMerge': ({ projectId, number, enabled, method, expectedHeadSha }) =>
+    PullRequestsService.use((svc) =>
+      svc.setAutoMerge({
+        projectId,
+        number,
+        enabled,
+        ...(method !== undefined ? { method } : {}),
+        ...(expectedHeadSha !== undefined ? { expectedHeadSha } : {}),
+      }),
+    ),
+  'PullRequests.updateLocalBaseBranch': ({ projectId, baseRef }) =>
+    PullRequestsService.use((svc) => svc.updateLocalBaseBranch(projectId, baseRef)),
+  'PullRequests.switchToBaseBranch': ({ projectId, worktreePath, baseRef }) =>
+    PullRequestsService.use((svc) => svc.switchToBaseBranch(projectId, worktreePath, baseRef)),
+  'PullRequests.getPostMergeStatus': ({ projectId, baseRef, headRef }) =>
+    PullRequestsService.use((svc) => svc.getPostMergeStatus(projectId, baseRef, headRef)),
   'PullRequests.update': (input) => PullRequestsService.use((svc) => svc.update(input)),
   'PullRequests.addComment': (input) => PullRequestsService.use((svc) => svc.addComment(input)),
   'PullRequests.editComment': (input) => PullRequestsService.use((svc) => svc.editComment(input)),

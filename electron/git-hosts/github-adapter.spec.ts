@@ -47,7 +47,7 @@ const makeTestLayer = (
     for (const [k, v] of Object.entries(res.headers ?? {})) {
       if (typeof v === 'string') responseHeaders[k] = v;
     }
-    const bodyText =
+    const resBodyText =
       typeof res.body === 'string'
         ? res.body
         : res.body === undefined
@@ -56,7 +56,7 @@ const makeTestLayer = (
     return Effect.succeed(
       HttpClientResponse.fromWeb(
         req,
-        new Response(res.status === 304 ? null : bodyText, {
+        new Response(res.status === 304 ? null : resBodyText, {
           status: res.status,
           headers: responseHeaders,
         }),
@@ -804,6 +804,199 @@ describe('GitHubAdapter', () => {
             threadId: ReviewThreadId.make('THR_1'),
           });
           expect(unresolved.reviewThreads[0]?.isResolved).toBe(false);
+        }).pipe(Effect.provide(layer)),
+      );
+    } finally {
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('merges a PR with expectedHeadSha, surfaces Conflict on SHA mismatch, and toggles auto-merge', async () => {
+    const graphqlCalls: Array<{
+      readonly query: string;
+      readonly variables: Record<string, unknown>;
+    }> = [];
+    let merged = false;
+    let autoMerge = false;
+    let simulateShaMismatch = false;
+
+    const storeRoot = await mkdtemp(path.join(tmpdir(), 'spence-gh-merge-'));
+    try {
+      const layer = makeTestLayer(storeRoot, (req) => {
+        if (req.url.endsWith('/user')) {
+          return {
+            status: 200,
+            headers: { 'x-oauth-scopes': 'repo, read:org' },
+            body: { login: 'alice', name: 'Alice', avatar_url: null },
+          };
+        }
+        if (req.url.endsWith('/graphql')) {
+          const parsed = JSON.parse(req.bodyText) as {
+            query: string;
+            variables: Record<string, unknown>;
+          };
+          graphqlCalls.push(parsed);
+
+          if (parsed.query.includes('PullRequestNodeId')) {
+            return {
+              status: 200,
+              body: {
+                data: {
+                  repository: {
+                    pullRequest: { id: 'PR_node_42', headRefOid: 'sha-expected' },
+                  },
+                },
+              },
+            };
+          }
+          if (parsed.query.includes('MergePullRequest')) {
+            if (simulateShaMismatch) {
+              return {
+                status: 200,
+                body: {
+                  data: { mergePullRequest: null },
+                  errors: [
+                    {
+                      type: 'UNPROCESSABLE',
+                      message: 'Head sha expected-stale does not match head sha sha-newer',
+                    },
+                  ],
+                },
+              };
+            }
+            merged = true;
+            return {
+              status: 200,
+              body: { data: { mergePullRequest: { pullRequest: { number: 42 } } } },
+            };
+          }
+          if (parsed.query.includes('EnablePullRequestAutoMerge')) {
+            autoMerge = true;
+            return {
+              status: 200,
+              body: { data: { enablePullRequestAutoMerge: { pullRequest: { number: 42 } } } },
+            };
+          }
+          if (parsed.query.includes('DisablePullRequestAutoMerge')) {
+            autoMerge = false;
+            return {
+              status: 200,
+              body: { data: { disablePullRequestAutoMerge: { pullRequest: { number: 42 } } } },
+            };
+          }
+          // PullRequestDetail
+          return {
+            status: 200,
+            body: {
+              data: {
+                repository: {
+                  mergeCommitAllowed: true,
+                  squashMergeAllowed: true,
+                  rebaseMergeAllowed: false,
+                  viewerPermission: 'WRITE',
+                  labels: { nodes: [] },
+                  milestones: { nodes: [] },
+                  assignableUsers: { nodes: [] },
+                  pullRequest: {
+                    id: 'PR_node_42',
+                    number: 42,
+                    title: 'Mergeable PR',
+                    url: 'https://github.com/org/repo/pull/42',
+                    body: '',
+                    state: merged ? 'MERGED' : 'OPEN',
+                    isDraft: false,
+                    headRefName: 'feat/merge',
+                    headRefOid: 'sha-expected',
+                    baseRefName: 'main',
+                    updatedAt: '2026-11-20T12:00:00Z',
+                    isCrossRepository: false,
+                    headRepository: { nameWithOwner: 'org/repo' },
+                    mergeStateStatus: merged ? 'UNKNOWN' : 'CLEAN',
+                    autoMergeRequest: autoMerge ? { mergeMethod: 'SQUASH' } : null,
+                    reviewDecision: 'APPROVED',
+                    viewerCanUpdate: true,
+                    viewerDidAuthor: false,
+                    author: { login: 'alice', name: 'Alice', avatarUrl: null },
+                    labels: { nodes: [] },
+                    reviewRequests: { nodes: [] },
+                    assignees: { nodes: [] },
+                    milestone: null,
+                    comments: { totalCount: 0, nodes: [] },
+                    reviewThreads: { totalCount: 0, nodes: [] },
+                    reviews: { nodes: [] },
+                    commits: { nodes: [] },
+                  },
+                },
+              },
+            },
+          };
+        }
+        return { status: 404, body: {} };
+      });
+
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const auth = yield* HostAuth;
+          const registry = yield* GitHostRegistry;
+          yield* auth.connectPat('github', 'ghp_test', 'secure');
+          const host = yield* registry.get('github');
+          const num = PullRequestNumber.make(42);
+
+          // 1. Enable auto-merge
+          const enabledDetail = yield* host.setAutoMerge({
+            repo,
+            number: num,
+            enabled: true,
+            method: 'squash',
+            expectedHeadSha: 'sha-expected',
+          });
+          expect(enabledDetail.autoMergeEnabled).toBe(true);
+
+          // 2. Disable auto-merge
+          const disabledDetail = yield* host.setAutoMerge({
+            repo,
+            number: num,
+            enabled: false,
+          });
+          expect(disabledDetail.autoMergeEnabled).toBe(false);
+
+          // 3. Conflict on SHA mismatch
+          simulateShaMismatch = true;
+          const conflictExit = yield* host
+            .merge({
+              repo,
+              number: num,
+              expectedHeadSha: 'expected-stale',
+              method: 'squash',
+            })
+            .pipe(Effect.exit);
+          expect(conflictExit._tag).toBe('Failure');
+          if (conflictExit._tag === 'Failure') {
+            expect(JSON.stringify(conflictExit.cause)).toContain('Conflict');
+          }
+
+          // 4. Successful merge with commitTitle/commitMessage
+          simulateShaMismatch = false;
+          const mergedDetail = yield* host.merge({
+            repo,
+            number: num,
+            expectedHeadSha: 'sha-expected',
+            method: 'squash',
+            commitTitle: 'feat: merge PR #42',
+            commitMessage: 'Closes #42',
+          });
+          expect(mergedDetail.state).toBe('merged');
+
+          const mergeCall = graphqlCalls.filter((c) => c.query.includes('MergePullRequest')).at(-1);
+          expect(mergeCall?.variables).toMatchObject({
+            input: {
+              pullRequestId: 'PR_node_42',
+              expectedHeadOid: 'sha-expected',
+              mergeMethod: 'SQUASH',
+              commitHeadline: 'feat: merge PR #42',
+              commitBody: 'Closes #42',
+            },
+          });
         }).pipe(Effect.provide(layer)),
       );
     } finally {

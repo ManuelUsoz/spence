@@ -5,6 +5,7 @@ import {
   type CommentId,
   type GitHostKind,
   type HostCapabilities,
+  type MergeMethod,
   type PullRequestCommentKind,
   type PullRequestDetail,
   type PullRequestDiff,
@@ -254,6 +255,21 @@ export interface GitHost {
     readonly base: string;
     readonly draft: boolean;
   }) => Effect.Effect<PullRequestSummary, GitHostError>;
+  readonly merge: (input: {
+    readonly repo: RemoteRepoRef;
+    readonly number: PullRequestNumber;
+    readonly expectedHeadSha: string;
+    readonly method: MergeMethod;
+    readonly commitTitle?: string;
+    readonly commitMessage?: string;
+  }) => Effect.Effect<PullRequestDetail, GitHostError>;
+  readonly setAutoMerge: (input: {
+    readonly repo: RemoteRepoRef;
+    readonly number: PullRequestNumber;
+    readonly enabled: boolean;
+    readonly method?: MergeMethod;
+    readonly expectedHeadSha?: string;
+  }) => Effect.Effect<PullRequestDetail, GitHostError>;
   readonly update: (input: {
     readonly repo: RemoteRepoRef;
     readonly number: PullRequestNumber;

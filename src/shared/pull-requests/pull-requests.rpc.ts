@@ -557,6 +557,78 @@ export const DraftPullRequestResult = Schema.Struct({
 }).annotate({ identifier: 'DraftPullRequestResult' });
 export type DraftPullRequestResult = typeof DraftPullRequestResult.Type;
 
+/** Outcome of fast-forwarding the local base branch after a Pull request merge. */
+export const LocalBaseUpdateResult = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal('Updated'),
+    strategy: Schema.Literals(['pull', 'fetch']),
+    baseRef: Schema.String,
+    worktreePath: Schema.NullOr(Schema.String),
+    detail: Schema.String,
+  }),
+  Schema.Struct({
+    _tag: Schema.Literal('Skipped'),
+    reason: Schema.Literals([
+      'Dirty',
+      'Busy',
+      'Diverged',
+      'NoRemote',
+      'NoUpstream',
+      'DetachedHead',
+      'MissingGit',
+      'Failed',
+    ]),
+    baseRef: Schema.String,
+    worktreePath: Schema.NullOr(Schema.String),
+    detail: Schema.String,
+  }),
+]).annotate({ identifier: 'LocalBaseUpdateResult' });
+export type LocalBaseUpdateResult = typeof LocalBaseUpdateResult.Type;
+
+/** Outcome of switching a merged Worktree back to the base branch. */
+export const SwitchToBaseResult = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal('Switched'),
+    baseRef: Schema.String,
+    worktreePath: Schema.String,
+  }),
+  Schema.Struct({
+    _tag: Schema.Literal('Rejected'),
+    reason: Schema.Literals([
+      'Dirty',
+      'Busy',
+      'CheckedOutElsewhere',
+      'MissingGit',
+      'UnknownBranch',
+      'Failed',
+    ]),
+    detail: Schema.String,
+  }),
+]).annotate({ identifier: 'SwitchToBaseResult' });
+export type SwitchToBaseResult = typeof SwitchToBaseResult.Type;
+
+/** Availability and exact disabled reasons for post-merge local actions on a merged PR. */
+export const PostMergeActionsState = Schema.Struct({
+  updateBase: Schema.Struct({
+    status: Schema.Literals(['ready', 'disabled']),
+    reason: Schema.optionalKey(Schema.String),
+  }),
+  switchToBase: Schema.Struct({
+    visible: Schema.Boolean,
+    enabled: Schema.Boolean,
+    worktreePath: Schema.NullOr(Schema.String),
+    reason: Schema.optionalKey(Schema.String),
+  }),
+}).annotate({ identifier: 'PostMergeActionsState' });
+export type PostMergeActionsState = typeof PostMergeActionsState.Type;
+
+/** Result of merging a Pull request, including any automatic post-merge local base branch update. */
+export const MergePullRequestResult = Schema.Struct({
+  detail: PullRequestDetail,
+  baseUpdate: Schema.NullOr(LocalBaseUpdateResult),
+}).annotate({ identifier: 'MergePullRequestResult' });
+export type MergePullRequestResult = typeof MergePullRequestResult.Type;
+
 /**
  * Local-only RPC group for Git host authentication and Pull requests.
  * Merged into `DesktopRpcs` only; never exposed in `DeviceScopedRpcs` or `RemoteRpcs`.
@@ -680,6 +752,55 @@ export const PullRequestsRpcs = RpcGroup.make(
       pushFirst: Schema.Boolean,
     },
     success: PullRequestSummary,
+    error: GitHostError,
+  }),
+  Rpc.make('PullRequests.merge', {
+    payload: {
+      projectId: ProjectId,
+      number: PullRequestNumber,
+      expectedHeadSha: Schema.String,
+      method: MergeMethod,
+      commitTitle: Schema.optionalKey(Schema.String),
+      commitMessage: Schema.optionalKey(Schema.String),
+    },
+    success: MergePullRequestResult,
+    error: GitHostError,
+  }),
+  Rpc.make('PullRequests.setAutoMerge', {
+    payload: {
+      projectId: ProjectId,
+      number: PullRequestNumber,
+      enabled: Schema.Boolean,
+      method: Schema.optionalKey(MergeMethod),
+      expectedHeadSha: Schema.optionalKey(Schema.String),
+    },
+    success: PullRequestDetail,
+    error: GitHostError,
+  }),
+  Rpc.make('PullRequests.updateLocalBaseBranch', {
+    payload: {
+      projectId: ProjectId,
+      baseRef: Schema.String,
+    },
+    success: LocalBaseUpdateResult,
+    error: GitHostError,
+  }),
+  Rpc.make('PullRequests.switchToBaseBranch', {
+    payload: {
+      projectId: ProjectId,
+      worktreePath: Schema.String,
+      baseRef: Schema.String,
+    },
+    success: SwitchToBaseResult,
+    error: GitHostError,
+  }),
+  Rpc.make('PullRequests.getPostMergeStatus', {
+    payload: {
+      projectId: ProjectId,
+      baseRef: Schema.String,
+      headRef: Schema.String,
+    },
+    success: PostMergeActionsState,
     error: GitHostError,
   }),
   Rpc.make('PullRequests.update', {

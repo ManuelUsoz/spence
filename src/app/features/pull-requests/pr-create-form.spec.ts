@@ -97,6 +97,11 @@ const setupForm = async (options?: {
           options?.onCreate?.(input);
           return createdSummary;
         }),
+      'PullRequests.merge': () => Effect.die('unused'),
+      'PullRequests.setAutoMerge': () => Effect.die('unused'),
+      'PullRequests.updateLocalBaseBranch': () => Effect.die('unused'),
+      'PullRequests.switchToBaseBranch': () => Effect.die('unused'),
+      'PullRequests.getPostMergeStatus': () => Effect.die('unused'),
       'PullRequests.update': () => Effect.die('unused'),
       'PullRequests.addComment': () => Effect.die('unused'),
       'PullRequests.editComment': () => Effect.die('unused'),

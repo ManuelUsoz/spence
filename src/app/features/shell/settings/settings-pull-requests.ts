@@ -9,6 +9,7 @@ import {
 import { SettingsRow } from './settings-row';
 import { SettingsStore } from './settings-store';
 
+/** Pull requests: AI drafting and post-merge local base branch behavior. */
 @Component({
   selector: 'app-settings-pull-requests',
   imports: [SettingsRow, HlmSelectImports, HlmSwitch],
@@ -89,6 +90,21 @@ import { SettingsStore } from './settings-store';
             }
           </hlm-select-content>
         </hlm-select>
+      </app-settings-row>
+
+      <app-settings-row
+        label="Update local base branch after merge"
+        i18n-label
+        hint="Automatically fast-forward the local base branch when a Pull request is merged."
+        i18n-hint
+        controlId="pr-auto-update-base"
+      >
+        <hlm-switch
+          id="pr-auto-update-base"
+          data-testid="settings-pr-auto-update-base"
+          [checked]="pr.autoUpdateBaseBranchAfterMerge"
+          (checkedChange)="patch({ autoUpdateBaseBranchAfterMerge: $event })"
+        />
       </app-settings-row>
     }
   `,
